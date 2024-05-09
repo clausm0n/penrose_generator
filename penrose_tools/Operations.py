@@ -13,53 +13,55 @@ class Operations:
     def __init__(self):
         # Fifth roots of unity.
         self.zeta = [cmath.exp(2j * cmath.pi * i / 5) for i in range(5)]
+        self.config = configparser.ConfigParser()
 
-    # def write_config_file(self,filename, height, width, scale, size):
-    #     config = configparser.ConfigParser()
-    #     config['Settings'] = {
-    #         'height': str(height),
-    #         'width': str(width),
-    #         'size': str(size),
-    #         'scale': str(scale)
-    #     }
-    #     with open(filename, 'w') as configfile:
-    #         config.write(configfile)
+    def write_config_file(self, height, width, scale, size, gamma, color1, color2):
+        self.filename = 'config.ini'
+        self.config['Settings'] = {
+            'height': str(height),
+            'width': str(width),
+            'scale': str(scale),
+            'size': str(size),
+            'gamma': ','.join(map(str, gamma)),
+            'color1': ','.join(map(str, color1)),
+            'color2': ','.join(map(str, color2))
+        }
+        with open(self.filename, 'w') as configfile:
+            self.config.write(configfile)
 
     def read_config_file(self, filename):
-        config = configparser.ConfigParser()
-        config.read(filename)
-        settings = config['Settings']
+        self.config.read(filename)
+        settings = self.config['Settings']
         return {
-            'height': config.getint('Settings', 'height'),
-            'width': config.getint('Settings', 'width'),
-            'size': config.getint('Settings', 'size'),
-            'scale': config.getfloat('Settings', 'scale'),
-            'gamma': [float(g) for g in config.get('Settings', 'gamma').split(',')],
-            'color1': [int(c) for c in config.get('Settings', 'color1').split(',')],
-            'color2': [int(c) for c in config.get('Settings', 'color2').split(',')]
+            'height': self.config.getint('Settings', 'height'),
+            'width': self.config.getint('Settings', 'width'),
+            'size': self.config.getint('Settings', 'size'),
+            'scale': self.config.getfloat('Settings', 'scale'),
+            'gamma': [float(g) for g in self.config.get('Settings', 'gamma').split(',')],
+            'color1': [int(c) for c in self.config.get('Settings', 'color1').split(',')],
+            'color2': [int(c) for c in self.config.get('Settings', 'color2').split(',')]
         }
 
     def update_config_file(self, filename, height=None, width=None, scale=None, size=None, gamma=None, color1=None, color2=None):
-        config = configparser.ConfigParser()
-        config.read(filename)
+        self.config.read(filename)
         
         if height is not None:
-            config['Settings']['height'] = str(height)
+            self.config['Settings']['height'] = str(height)
         if width is not None:
-            config['Settings']['width'] = str(width)
+            self.config['Settings']['width'] = str(width)
         if scale is not None:
-            config['Settings']['scale'] = str(scale)
+            self.config['Settings']['scale'] = str(scale)
         if size is not None:
-            config['Settings']['size'] = str(size)
+            self.config['Settings']['size'] = str(size)
         if gamma is not None:
-            config['Settings']['gamma'] = ', '.join(map(str, gamma))
+            self.config['Settings']['gamma'] = ', '.join(map(str, gamma))
         if color1 is not None:
-            config['Settings']['color1'] = ', '.join(map(str, color1))
+            self.config['Settings']['color1'] = ', '.join(map(str, color1))
         if color2 is not None:
-            config['Settings']['color2'] = ', '.join(map(str, color2))
+            self.config['Settings']['color2'] = ', '.join(map(str, color2))
 
         with open(filename, 'w') as configfile:
-            config.write(configfile)
+            self.config.write(configfile)
 
     def calculate_centroid(self,vertices):
         """ Calculate the centroid from a list of vertices. """

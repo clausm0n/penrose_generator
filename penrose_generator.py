@@ -1,19 +1,30 @@
-import pygame # type: ignore
+import os.path
+from penrose_tools.Operations import Operations
 import time
+
+path = 'config.ini'
+config_exists = os.path.isfile(path)
+op = Operations()
+if not config_exists:
+    print("Config file not found. Creating a new one...")
+    op.write_config_file(1040, 1860, 56.0, 6, [1.0, 0.7, 0.5,0.3,0.1], [205, 255, 255], [0, 0, 255])
+
+
+import pygame # type: ignore
 from threading import Event, Thread
 from collections import OrderedDict
 from penrose_tools.Tile import Tile
-from penrose_tools.Operations import Operations
+
 from penrose_tools.Slider import Slider
 from penrose_tools.Shaders import Shader
-from penrose_tools.Server import run_server, update_event
+from penrose_tools.Server import run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
 
 
-op = Operations()
+
 shaders = Shader()
 
 def main():
-
+    
     config_data = op.read_config_file("config.ini")
     pygame.init()
     clock = pygame.time.Clock()
@@ -26,7 +37,7 @@ def main():
 
     gamma = config_data['gamma']
     sliders = [Slider(100, 50 + 40 * i, 200, 20, -1.0, 1.0, gamma[i], f'Gamma {i}') for i in range(5)]
-    print("Number of Gamma Sliders:", len(sliders))
+    #print("Number of Gamma Sliders:", len(sliders))
     size_slider = Slider(100, 300, 200, 20, 1, 8, size, 'Size')
     scale_slider = Slider(100, 350, 200, 20, 25, 100, scale, 'Scale')
     color_sliders =[    
@@ -68,7 +79,7 @@ def main():
 
             for i, slider in enumerate(sliders[:5]):
                 if i < len(gamma_values):  # Safeguard against index error
-                    print("Updating Gamma slider", i, "with value", gamma_values[i])
+                    #print("Updating Gamma slider", i, "with value", gamma_values[i])
                     slider.val = gamma_values[i]
 
             
@@ -82,29 +93,57 @@ def main():
             color_sliders[3].val = config_data['color2'][0]  # Red of color2
             color_sliders[4].val = config_data['color2'][1]  # Green of color2
             color_sliders[5].val = config_data['color2'][2]  # Blue of color2
-
+        
         current_time = time.time() * 1000 - start_time
+        #print("Current Time:", current_time)
         screen.fill((0, 0, 0))
         center = complex(width // 2,height // 2)
         scale = scale_slider.get_value()
         color1 = tuple(slider.get_value() for slider in color_sliders[:3])
         color2 = tuple(slider.get_value() for slider in color_sliders[3:6])
+        # Check for custom toggle events outside the pygame.KEYDOWN event checking
+        if toggle_shader_event.is_set():
+            tiles_cache.clear()
+            tile_colors_cache.clear()
+            shader_index = (shader_index + 1) % len(shader_functions)
+            toggle_shader_event.clear()
+            print("Shader toggled via API")
+
+        if toggle_regions_event.is_set():
+            show_regions = not show_regions
+            # Clear cache when toggling region display
+            tiles_cache.clear()
+            tile_colors_cache.clear()
+            print("Region display toggled via API")
+            toggle_regions_event.clear()
+
+        if toggle_gui_event.is_set():
+            gui_visible = not gui_visible
+            print("GUI visibility toggled via API")
+            toggle_gui_event.clear()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN:
+            # Now handle pygame specific events
+            if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     tiles_cache.clear()
                     tile_colors_cache.clear()
                     shader_index = (shader_index + 1) % len(shader_functions)
+                    print("Shader toggled via keyboard")
+
                 if event.key == pygame.K_r:
                     show_regions = not show_regions
-                    # clear cache when toggling region display
+                    # Clear cache when toggling region display
                     tiles_cache.clear()
-                    print("Region display toggled")
+                    tile_colors_cache.clear()
+                    print("Region display toggled via keyboard")
+
                 if event.key == pygame.K_g:
                     gui_visible = not gui_visible
-                    print("GUI visibility toggled")
+                    print("GUI visibility toggled via keyboard")
+
             elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
                 for slider in sliders:
                     slider.handle_event(event)
@@ -113,7 +152,7 @@ def main():
                     for tile in tiles_objects:
                         if op.point_in_polygon((mouse_x, mouse_y), op.to_canvas(tile.vertices, scale, center)):
                             print("Neighbors:", len(tile.neighbors))
-                            #toggle highlight when click on a tile and reverse it when click again
+                            # Toggle highlight when click on a tile and reverse it when click again
                             tile.highlighted = not tile.highlighted
                             if tile.highlighted:
                                 tile.update_color(tile.highlighted_color)

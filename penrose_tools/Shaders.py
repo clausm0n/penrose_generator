@@ -11,7 +11,6 @@ class Shader:
     def __init__(self):
         # Read configuration data
         self.config_data = op.read_config_file("config.ini")
-        print(self.config_data)
         # Initialize state variables for various shaders
         self.initialize_shader_states()
 

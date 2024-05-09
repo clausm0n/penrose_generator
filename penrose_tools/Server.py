@@ -8,33 +8,53 @@ PORT = 8080
 CONFIG_FILE = 'config.ini'
 
 update_event = Event()
+toggle_shader_event = Event()
+toggle_regions_event = Event()
+toggle_gui_event = Event()
+
 
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
 
-    def do_GET(self):
-        # Fetch and send the current configuration settings as JSON
-        config_data = self.operations.read_config_file(CONFIG_FILE)
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(config_data).encode('utf-8'))
-
     def do_POST(self):
-        # Read JSON data sent by the client
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         data = json.loads(post_data.decode())
 
-        # Use the existing Operations method to update the config file
-        try:
-            self.operations.update_config_file(CONFIG_FILE, **data)
-            response = {'status': 'success', 'message': 'Configuration updated successfully'}
-            update_event.set()
-            self.send_response(200)  # OK status
-        except Exception as e:
-            response = {'status': 'error', 'message': str(e)}
-            self.send_response(500)  # Internal Server Error status
+        response = {'status': 'error', 'message': 'Invalid command'}
+
+        # Check if the POST data contains configuration update parameters
+        if all(key in data for key in ['height', 'width', 'scale', 'size', 'gamma', 'color1', 'color2']):
+            try:
+                self.operations.update_config_file(CONFIG_FILE, **data)
+                response = {'status': 'success', 'message': 'Configuration updated successfully'}
+                update_event.set()
+            except Exception as e:
+                response = {'status': 'error', 'message': str(e)}
+                self.send_response(500)
+            else:
+                self.send_response(200)
+        # Check for specific commands and handle them
+        elif 'command' in data:
+            try:
+                if data['command'] == 'toggle_shader':
+                    toggle_shader_event.set()
+                    response = {'status': 'success', 'message': 'Shader toggled'}
+                elif data['command'] == 'toggle_regions':
+                    toggle_regions_event.set()
+                    response = {'status': 'success', 'message': 'Regions display toggled'}
+                elif data['command'] == 'toggle_gui':
+                    toggle_gui_event.set()
+                    response = {'status': 'success', 'message': 'GUI visibility toggled'}
+                # Set the event to indicate a configuration update
+                update_event.set()
+            except Exception as e:
+                response = {'status': 'error', 'message': str(e)}
+                self.send_response(500)
+            else:
+                self.send_response(200)
+        else:
+            self.send_response(400)  # Bad Request if neither configuration update nor command provided
 
         self.send_header('Content-type', 'application/json')
         self.end_headers()
