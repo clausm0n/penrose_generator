@@ -19,8 +19,6 @@ from penrose_tools.Slider import Slider
 from penrose_tools.Shaders import Shader
 from penrose_tools.Server import run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
 
-
-
 shaders = Shader()
 
 def main():
