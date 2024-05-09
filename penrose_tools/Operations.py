@@ -14,23 +14,32 @@ class Operations:
         # Fifth roots of unity.
         self.zeta = [cmath.exp(2j * cmath.pi * i / 5) for i in range(5)]
 
-    def write_config_file(self,filename, height, width):
-        config = configparser.ConfigParser()
-        config['Settings'] = {
-            'height': str(height),
-            'width': str(width)
-        }
-        with open(filename, 'w') as configfile:
-            config.write(configfile)
+    # def write_config_file(self,filename, height, width, scale, size):
+    #     config = configparser.ConfigParser()
+    #     config['Settings'] = {
+    #         'height': str(height),
+    #         'width': str(width),
+    #         'size': str(size),
+    #         'scale': str(scale)
+    #     }
+    #     with open(filename, 'w') as configfile:
+    #         config.write(configfile)
 
-    def read_config_file(self,filename):
+    def read_config_file(self, filename):
         config = configparser.ConfigParser()
         config.read(filename)
-        height = config.getint('Settings', 'height')
-        width = config.getint('Settings', 'width')
-        return {'height': height, 'width': width}
+        settings = config['Settings']
+        return {
+            'height': config.getint('Settings', 'height'),
+            'width': config.getint('Settings', 'width'),
+            'size': config.getint('Settings', 'size'),
+            'scale': config.getfloat('Settings', 'scale'),
+            'gamma': [float(g) for g in config.get('Settings', 'gamma').split(',')],
+            'color1': [int(c) for c in config.get('Settings', 'color1').split(',')],
+            'color2': [int(c) for c in config.get('Settings', 'color2').split(',')]
+        }
 
-    def update_config_file(self,filename, height=None, width=None):
+    def update_config_file(self, filename, height=None, width=None, scale=None, size=None, gamma=None, color1=None, color2=None):
         config = configparser.ConfigParser()
         config.read(filename)
         
@@ -38,7 +47,17 @@ class Operations:
             config['Settings']['height'] = str(height)
         if width is not None:
             config['Settings']['width'] = str(width)
-        
+        if scale is not None:
+            config['Settings']['scale'] = str(scale)
+        if size is not None:
+            config['Settings']['size'] = str(size)
+        if gamma is not None:
+            config['Settings']['gamma'] = ', '.join(map(str, gamma))
+        if color1 is not None:
+            config['Settings']['color1'] = ', '.join(map(str, color1))
+        if color2 is not None:
+            config['Settings']['color2'] = ', '.join(map(str, color2))
+
         with open(filename, 'w') as configfile:
             config.write(configfile)
 
