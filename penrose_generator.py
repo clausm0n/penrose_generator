@@ -1,221 +1,145 @@
-import os.path
-from penrose_tools.Operations import Operations
-import time
-
-path = 'config.ini'
-config_exists = os.path.isfile(path)
-op = Operations()
-if not config_exists:
-    print("Config file not found. Creating a new one...")
-    op.write_config_file(1040, 1860, 56.0, 6, [1.0, 0.7, 0.5,0.3,0.1], [205, 255, 255], [0, 0, 255])
-
-
-import pygame # type: ignore
-from threading import Event, Thread
+import os
+import pygame  # type: ignore
+from threading import Thread
 from collections import OrderedDict
-from penrose_tools.Tile import Tile
+from penrose_tools import Operations, Shader, Slider,Tile, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
 
-from penrose_tools.Slider import Slider
-from penrose_tools.Shaders import Shader
-from penrose_tools.Server import run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
+# Configuration and initialization
+CONFIG_PATH = 'config.ini'
+DEFAULT_CONFIG = {
+    'width': 1040,
+    'height': 1860,
+    'size': 56,
+    'scale': 6,
+    'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
+    'color1': [205, 255, 255],
+    'color2': [0, 0, 255]
+}
 
-shaders = Shader()
+op = Operations()
+gui_visible = False
+
+def initialize_config(path):
+    if not os.path.isfile(path):
+        print("Config file not found. Creating a new one...")
+        op.write_config_file(*DEFAULT_CONFIG.values())
+    return op.read_config_file(path)
+
+def setup_sliders(config_data):
+    sliders = [Slider(100, 50 + 40 * i, 200, 20, -1.0, 1.0, config_data['gamma'][i], f'Gamma {i}') for i in range(5)]
+    # Ensure size and scale sliders use integer steps
+    sliders.extend([
+        Slider(100, 300, 200, 20, 1, 10, int(config_data['size']), 'Size', step=1),
+        Slider(100, 350, 200, 5, 10, 100, int(config_data['scale']), 'Scale', step=1),
+        # Color sliders
+        Slider(100, 490, 200, 20, 0, 255, int(config_data["color1"][0]), 'Red Color1'),
+        Slider(100, 520, 200, 20, 0, 255, int(config_data["color1"][1]), 'Green Color1'),
+        Slider(100, 550, 200, 20, 0, 255, int(config_data["color1"][2]), 'Blue Color1'),
+        Slider(100, 580, 200, 20, 0, 255, int(config_data["color2"][0]), 'Red Color2'),
+        Slider(100, 610, 200, 20, 0, 255, int(config_data["color2"][1]), 'Green Color2'),
+        Slider(100, 640, 200, 20, 0, 255, int(config_data["color2"][2]), 'Blue Color2')
+    ])
+    return sliders
+
+def handle_events(sliders, shaders, screen, config_data):
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            return False
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                toggle_shader_event.set()
+            elif event.key == pygame.K_g:
+                global gui_visible
+                gui_visible = not gui_visible
+        elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
+            for slider in sliders:
+                slider.handle_event(event)
+    return True
+
+def update_toggles(config_data, sliders,shaders):
+    print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set())
+    if update_event.is_set():
+        config_data.update(op.read_config_file(CONFIG_PATH))
+        print(config_data)
+        update_sliders_from_config(config_data, sliders)
+        update_event.clear()
+    if toggle_shader_event.is_set():
+        shaders.next_shader()
+        toggle_shader_event.clear()
+    if toggle_regions_event.is_set():
+        toggle_regions_event.clear()
+    if toggle_gui_event.is_set():
+        toggle_gui_event.clear()
+
+def update_sliders_from_config(config_data, sliders):
+    for i, slider in enumerate(sliders):
+        if 'gamma' in slider.label.lower():
+            slider.val = config_data['gamma'][i]
+        elif 'size' in slider.label.lower():
+            slider.val = config_data['size']
+        elif 'scale' in slider.label.lower():
+            slider.val = config_data['scale']
+        elif 'color' in slider.label.lower():
+            color_index = int(slider.label[-1])
+            color_key = 'color1' if 'color1' in slider.label else 'color2'
+            slider.val = config_data[color_key][color_index - 1]
+            print(slider.label, slider.val)
+
+def render_tiles(screen, tiles_cache, sliders, shaders, config_data):
+    width, height = config_data['width'], config_data['height']
+    current_time = pygame.time.get_ticks()
+    gamma_values = [slider.get_value() for slider in sliders if 'gamma' in slider.label.lower()]
+    size_value = next(slider.get_value() for slider in sliders if 'size' in slider.label.lower())
+    scale_value = next(slider.get_value() for slider in sliders if 'scale' in slider.label.lower())
+    color1 = tuple(next(slider.get_value() for slider in sliders if f'{color} Color1' in slider.label) for color in ['Red', 'Green', 'Blue'])
+    color2 = tuple(next(slider.get_value() for slider in sliders if f'{color} Color2' in slider.label) for color in ['Red', 'Green', 'Blue'])
+    config_key = (tuple(gamma_values), size_value, color1, color2)
+    if config_key not in tiles_cache:
+        print("Generating new tile cache...")
+        tiles_data = op.tiling(gamma_values, size_value)
+        tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
+        op.calculate_neighbors(tiles_objects)
+        tiles_cache[config_key] = tiles_objects
+    tiles_objects = tiles_cache[config_key]
+    screen.fill((0, 0, 0))
+    center = complex(width // 2, height // 2)
+    shader_func = shaders.current_shader()
+    for tile in tiles_objects:
+        modified_color = shader_func(tile, current_time, tiles_objects, color1, color2)
+        vertices = Operations().to_canvas(tile.vertices, scale_value, center)
+        pygame.draw.polygon(screen, modified_color, vertices)
 
 def main():
-    
-    config_data = op.read_config_file("config.ini")
+    config_data = initialize_config(CONFIG_PATH)
     pygame.init()
-    clock = pygame.time.Clock()
-    width = config_data['width']
-    height = config_data['height']
-    size = config_data['size']
-    scale = config_data['scale']
-    screen = pygame.display.set_mode((width,height))
+    screen = pygame.display.set_mode((config_data['width'], config_data['height']))
     pygame.display.set_caption("Penrose Tiling")
 
-    gamma = config_data['gamma']
-    sliders = [Slider(100, 50 + 40 * i, 200, 20, -1.0, 1.0, gamma[i], f'Gamma {i}') for i in range(5)]
-    #print("Number of Gamma Sliders:", len(sliders))
-    size_slider = Slider(100, 300, 200, 20, 1, 8, size, 'Size')
-    scale_slider = Slider(100, 350, 200, 20, 25, 100, scale, 'Scale')
-    color_sliders =[    
-        Slider(100, 450, 200, 20, 0, 255, config_data["color1"][0], 'Red Color1'),
-        Slider(100, 480, 200, 20, 0, 255, config_data['color1'][1], 'Green Color1'),
-        Slider(100, 510, 200, 20, 0, 255, config_data['color1'][2], 'Blue Color1'),
-        Slider(100, 540, 200, 20, 0, 255, config_data["color2"][0], 'Red Color2'),
-        Slider(100, 570, 200, 20, 0, 255, config_data["color2"][1], 'Green Color2'),
-        Slider(100, 600, 200, 20, 0, 255, config_data["color2"][2], 'Blue Color2')]
-    sliders.extend([size_slider, scale_slider])
-    sliders.extend(color_sliders)
-    shader_functions = [shaders.shader_no_effect, shaders.shader_shift_effect,shaders.shader_temperature_to_color, shaders.shader_decay_trail, shaders.shader_game_of_life, shaders.shader_color_wave]
+    sliders = setup_sliders(config_data)
+    shaders = Shader()  # Instance of the Shader class
 
-    shader_index = 0
-
-    start_time = time.time() * 1000
+    clock = pygame.time.Clock()
     running = True
-    show_regions = False
-    gui_visible = False
-    # Initialize caches
     tiles_cache = OrderedDict()
-    tile_colors_cache = OrderedDict()
 
-    # Initialize previous values for gamma, size, and scale
-    previous_gamma = None
-    previous_size = None
-    previous_scale = None
-
-    
+    # Start server thread
     server_thread = Thread(target=run_server, daemon=True)
     server_thread.start()
+
     while running:
-        if update_event.is_set():
-            update_event.clear()
-            config_data = op.read_config_file("config.ini")
-            
-            gamma_values = config_data['gamma']
+        handle_events(sliders, shaders, screen, config_data)  # Pass the Shader instance here
 
+        if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event]):
+            update_toggles(config_data, sliders,shaders)
 
-            for i, slider in enumerate(sliders[:5]):
-                if i < len(gamma_values):  # Safeguard against index error
-                    #print("Updating Gamma slider", i, "with value", gamma_values[i])
-                    slider.val = gamma_values[i]
-
-            
-            size_slider.val = config_data['size']
-            scale_slider.val = config_data['scale']
-            
-            # Assuming color_sliders is a list of sliders for RGB values of two colors
-            color_sliders[0].val = config_data['color1'][0]  # Red of color1
-            color_sliders[1].val = config_data['color1'][1]  # Green of color1
-            color_sliders[2].val = config_data['color1'][2]  # Blue of color1
-            color_sliders[3].val = config_data['color2'][0]  # Red of color2
-            color_sliders[4].val = config_data['color2'][1]  # Green of color2
-            color_sliders[5].val = config_data['color2'][2]  # Blue of color2
-        
-        current_time = time.time() * 1000 - start_time
-        #print("Current Time:", current_time)
-        screen.fill((0, 0, 0))
-        center = complex(width // 2,height // 2)
-        scale = scale_slider.get_value()
-        color1 = tuple(slider.get_value() for slider in color_sliders[:3])
-        color2 = tuple(slider.get_value() for slider in color_sliders[3:6])
-        # Check for custom toggle events outside the pygame.KEYDOWN event checking
-        if toggle_shader_event.is_set():
-            tiles_cache.clear()
-            tile_colors_cache.clear()
-            shader_index = (shader_index + 1) % len(shader_functions)
-            toggle_shader_event.clear()
-            print("Shader toggled via API")
-
-        if toggle_regions_event.is_set():
-            show_regions = not show_regions
-            # Clear cache when toggling region display
-            tiles_cache.clear()
-            tile_colors_cache.clear()
-            print("Region display toggled via API")
-            toggle_regions_event.clear()
-
-        if toggle_gui_event.is_set():
-            gui_visible = not gui_visible
-            print("GUI visibility toggled via API")
-            toggle_gui_event.clear()
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            # Now handle pygame specific events
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    tiles_cache.clear()
-                    tile_colors_cache.clear()
-                    shader_index = (shader_index + 1) % len(shader_functions)
-                    print("Shader toggled via keyboard")
-
-                if event.key == pygame.K_r:
-                    show_regions = not show_regions
-                    # Clear cache when toggling region display
-                    tiles_cache.clear()
-                    tile_colors_cache.clear()
-                    print("Region display toggled via keyboard")
-
-                if event.key == pygame.K_g:
-                    gui_visible = not gui_visible
-                    print("GUI visibility toggled via keyboard")
-
-            elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
-                for slider in sliders:
-                    slider.handle_event(event)
-                if event.type == pygame.MOUSEBUTTONUP:
-                    mouse_x, mouse_y = pygame.mouse.get_pos()
-                    for tile in tiles_objects:
-                        if op.point_in_polygon((mouse_x, mouse_y), op.to_canvas(tile.vertices, scale, center)):
-                            print("Neighbors:", len(tile.neighbors))
-                            # Toggle highlight when click on a tile and reverse it when click again
-                            tile.highlighted = not tile.highlighted
-                            if tile.highlighted:
-                                tile.update_color(tile.highlighted_color)
-                            else:
-                                tile.update_color(tile.original_color)
-                            break
-
-    # Get updated values from sliders
-        gamma_updated = [slider.get_value() for slider in sliders[:-2]]
-        size_updated = int(size_slider.get_value())
-        scale_updated = scale_slider.get_value()
-
-    # Clear cache if parameters have changed
-        if gamma_updated != previous_gamma or size_updated != previous_size or scale_updated != previous_scale:
-            tiles_cache.clear()
-            tile_colors_cache.clear()
-            print("Cache cleared due to parameter change")
-
-    # Update previous values
-        previous_gamma = gamma_updated
-        previous_size = size_updated
-        previous_scale = scale_updated
-
-        current_config = (tuple(gamma_updated), size_updated, scale_updated)
-
-        if current_config not in tiles_cache:
-            tiles_data = list(op.tiling(gamma_updated, size_updated))
-            tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
-            
-            op.calculate_neighbors(tiles_objects, grid_size=10)
-            print("Neighbors calculated")
-
-            # Remove orphan tiles
-            tiles_objects = [tile for tile in tiles_objects if tile.neighbors]
-            op.remove_small_components(tiles_objects, min_size=0)
-            tile_colors = {tuple(vertices): color for vertices, color in tiles_data}
-
-            tiles_cache[current_config] = tiles_objects
-            tile_colors_cache[current_config] = tile_colors
-            # Detect and update star patterns
-            if show_regions:
-                op.update_star_patterns(tiles_objects)
-                op.update_starburst_patterns(tiles_objects)
-        else:
-            tiles_objects = tiles_cache[current_config]
-            tile_colors = tile_colors_cache[current_config]
-
-        for tile in tiles_objects:
-            shader_func = shader_functions[shader_index]
-            modified_color = shader_func(tile, current_time, tiles_objects,color1,color2)
-            #print("Drawing color:", modified_color)  # Debug print
-            vertices = op.to_canvas(tile.vertices, scale_updated, complex(width // 2,height // 2))
-            pygame.draw.polygon(screen, modified_color, vertices)
+        render_tiles(screen, tiles_cache, sliders, shaders, config_data)  # Pass the Shader instance here
         if gui_visible:
             for slider in sliders:
                 slider.draw(screen)
 
         pygame.display.flip()
         clock.tick(80)
-        
-
     pygame.quit()
-
 
 if __name__ == '__main__':
     main()
-
-

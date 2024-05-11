@@ -9,10 +9,32 @@ op = Operations()
 class Shader:
 
     def __init__(self):
+        self.shader_index = 0
         # Read configuration data
         self.config_data = op.read_config_file("config.ini")
         # Initialize state variables for various shaders
         self.initialize_shader_states()
+        self.shaders = [
+        self.shader_no_effect,
+        self.shader_shift_effect,
+        self.shader_temperature_to_color,
+        self.shader_decay_trail,
+        self.shader_game_of_life,
+        self.shader_color_wave
+        ]
+    
+    def next_shader(self):
+        """
+        Increments the shader index and wraps it around if it exceeds the number of shaders.
+
+        Returns:
+            int: The new shader index.
+        """
+        self.shader_index = (self.shader_index + 1) % len(self.shaders)
+        return self.shader_index
+    
+    def current_shader(self):
+        return self.shaders[self.shader_index]
 
     def initialize_shader_states(self):
         self.trail_memory = {}
@@ -160,3 +182,65 @@ class Shader:
         alpha = 255 * (1 - intensity)  # Transparency decreases as the tile cools
         return op.clamp_color((red, 0, blue, alpha))  # RGBA tuple
 
+    def is_valid_star_kite(self,tile):
+        """ Check if a kite has exactly two darts as neighbors. """
+        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
+        return len(dart_neighbors) == 2
+
+    def is_valid_starburst_dart(self,tile):
+        """ Check if a dart has exactly two darts as neighbors. """
+        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
+        return len(dart_neighbors) == 2
+
+    def find_common_vertex(self,kites):
+        """ Find a common vertex among a given set of kites. """
+        vertex_sets = [set(kite.vertices) for kite in kites]
+        common_vertices = set.intersection(*vertex_sets)
+        return common_vertices
+
+    def update_star_patterns(self,tiles):
+        """ Check each tile to see if it's part of a star pattern. """
+        stars_colored = 0
+        for tile in tiles:
+            if tile.is_kite and self.is_valid_star_kite(tile):
+                # Check combinations of two neighbors to find a star
+                kite_neighbors = [neighbor for neighbor in tile.neighbors if neighbor.is_kite and self.is_valid_star_kite(neighbor)]
+                if len(kite_neighbors) >= 2:
+                    for n1 in kite_neighbors:
+                        for n2 in kite_neighbors:
+                            if n1 is not n2:
+                                # Check if these three kites share a common vertex
+                                possible_star = [tile, n1, n2]
+                                common_vertex = self.find_common_vertex(possible_star)
+                                if common_vertex:
+                                    # Check for two more kites sharing the same vertex
+                                    extended_star = [t for t in tiles if set(t.vertices) & common_vertex and t.is_kite and self.is_valid_star_kite(t)]
+                                    if len(extended_star) == 5:
+                                        star_color = (255, 215, 0)  # Gold color for star pattern
+                                        for star_tile in extended_star:
+                                            star_tile.update_color(star_color)
+                                        stars_colored += 1
+                                        break  # Found a valid star, break out of loops
+        return stars_colored
+
+
+    def update_starburst_patterns(self,tiles):
+        """ Check each dart to see if it's part of a starburst pattern. """
+        starbursts_colored = 0
+        for tile in tiles:
+            if not tile.is_kite and self.is_valid_starburst_dart(tile):
+                # Ensure the potential starburst darts all share a common vertex
+                dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite and self.is_valid_starburst_dart(neighbor)]
+                potential_starburst = [tile] + dart_neighbors
+                if len(potential_starburst) >= 3:  # Start checking when there are at least 3 darts
+                    common_vertex = self.find_common_vertex(potential_starburst)
+                    if common_vertex:
+                        # Extend to find all darts sharing this vertex
+                        extended_starburst = [t for t in tiles if set(t.vertices) & common_vertex and not t.is_kite and self.is_valid_starburst_dart(t)]
+                        if len(extended_starburst) == 10:
+                            starburst_color = (255, 165, 0)  # Orange color for starburst pattern
+                            for starburst_tile in extended_starburst:
+                                starburst_tile.update_color(starburst_color)
+                            starbursts_colored += 1
+                            break  # Found a valid starburst, break out of loops
+        return starbursts_colored

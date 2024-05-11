@@ -46,8 +46,6 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
                 elif data['command'] == 'toggle_gui':
                     toggle_gui_event.set()
                     response = {'status': 'success', 'message': 'GUI visibility toggled'}
-                # Set the event to indicate a configuration update
-                update_event.set()
             except Exception as e:
                 response = {'status': 'error', 'message': str(e)}
                 self.send_response(500)
