@@ -54,6 +54,7 @@ def handle_events(sliders, shaders, screen, config_data):
         elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
             for slider in sliders:
                 slider.handle_event(event)
+
     return True
 
 def update_toggles(config_data, sliders,shaders):
@@ -72,18 +73,31 @@ def update_toggles(config_data, sliders,shaders):
         toggle_gui_event.clear()
 
 def update_sliders_from_config(config_data, sliders):
-    for i, slider in enumerate(sliders):
-        if 'gamma' in slider.label.lower():
-            slider.val = config_data['gamma'][i]
-        elif 'size' in slider.label.lower():
+    for slider in sliders:
+        label_lower = slider.label.lower()
+        if 'gamma' in label_lower:
+            # Gamma sliders are indexed numerically at the end
+            index = int(label_lower.split()[-1])  # Using split to directly access the numeric index
+            slider.val = config_data['gamma'][index]
+        elif 'size' in label_lower:
             slider.val = config_data['size']
-        elif 'scale' in slider.label.lower():
+        elif 'scale' in label_lower:
             slider.val = config_data['scale']
-        elif 'color' in slider.label.lower():
-            color_index = int(slider.label[-1])
-            color_key = 'color1' if 'color1' in slider.label else 'color2'
-            slider.val = config_data[color_key][color_index - 1]
-            print(slider.label, slider.val)
+        elif 'color' in label_lower:
+            # Determine which color array to use ('color1' or 'color2')
+            color_key = 'color1' if 'color1' in label_lower else 'color2'
+            color_values = config_data[color_key]
+            # Map 'red', 'green', 'blue' to the respective index 0, 1, 2
+            if 'red' in label_lower:
+                color_index = 0
+            elif 'green' in label_lower:
+                color_index = 1
+            elif 'blue' in label_lower:
+                color_index = 2
+            slider.val = color_values[color_index]
+            print("setting colors from sliders as:", slider.label, slider.val)
+
+
 
 def render_tiles(screen, tiles_cache, sliders, shaders, config_data):
     width, height = config_data['width'], config_data['height']

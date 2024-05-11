@@ -1,6 +1,7 @@
 import http.server
 import socketserver
 import json
+import configparser
 from penrose_tools.Operations import Operations
 from threading import Event
 
@@ -12,9 +13,21 @@ toggle_shader_event = Event()
 toggle_regions_event = Event()
 toggle_gui_event = Event()
 
-
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
+
+    def do_GET(self):
+        # Handling CORS
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+
+        # Read configuration and send it back as JSON
+        config = configparser.ConfigParser()
+        config.read(CONFIG_FILE)
+        settings = dict(config['Settings'])
+        self.wfile.write(json.dumps(settings).encode('utf-8'))
 
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
@@ -22,41 +35,36 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         data = json.loads(post_data.decode())
 
         response = {'status': 'error', 'message': 'Invalid command'}
-
-        # Check if the POST data contains configuration update parameters
-        if all(key in data for key in ['height', 'width', 'scale', 'size', 'gamma', 'color1', 'color2']):
-            try:
-                self.operations.update_config_file(CONFIG_FILE, **data)
+        try:
+            if 'command' in data:  # Handle specific commands
+                self.handle_commands(data, response)
+            else:  # Assume remaining data is for configuration update
+                updated = self.operations.update_config_file(CONFIG_FILE, **data)
                 response = {'status': 'success', 'message': 'Configuration updated successfully'}
                 update_event.set()
-            except Exception as e:
-                response = {'status': 'error', 'message': str(e)}
-                self.send_response(500)
-            else:
                 self.send_response(200)
-        # Check for specific commands and handle them
-        elif 'command' in data:
-            try:
-                if data['command'] == 'toggle_shader':
-                    toggle_shader_event.set()
-                    response = {'status': 'success', 'message': 'Shader toggled'}
-                elif data['command'] == 'toggle_regions':
-                    toggle_regions_event.set()
-                    response = {'status': 'success', 'message': 'Regions display toggled'}
-                elif data['command'] == 'toggle_gui':
-                    toggle_gui_event.set()
-                    response = {'status': 'success', 'message': 'GUI visibility toggled'}
-            except Exception as e:
-                response = {'status': 'error', 'message': str(e)}
-                self.send_response(500)
-            else:
-                self.send_response(200)
-        else:
-            self.send_response(400)  # Bad Request if neither configuration update nor command provided
+        except Exception as e:
+            response = {'status': 'error', 'message': str(e)}
+            self.send_response(500)
 
         self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(response).encode('utf-8'))
+
+    def handle_commands(self, data, response):
+        command = data['command']
+        if command == 'toggle_shader':
+            toggle_shader_event.set()
+            response.update({'status': 'success', 'message': 'Shader toggled'})
+        elif command == 'toggle_regions':
+            toggle_regions_event.set()
+            response.update({'status': 'success', 'message': 'Regions display toggled'})
+        elif command == 'toggle_gui':
+            toggle_gui_event.set()
+            response.update({'status': 'success', 'message': 'GUI visibility toggled'})
+        self.send_response(200)
+
 
 def run_server():
     with socketserver.TCPServer(("", PORT), APIRequestHandler) as httpd:

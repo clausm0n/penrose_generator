@@ -16,20 +16,22 @@ class Operations:
         self.config = configparser.ConfigParser()
 
     def write_config_file(self, height, width, scale, size, gamma, color1, color2):
-        self.filename = 'config.ini'
-        self.config['Settings'] = {
-            'height': str(height),
-            'width': str(width),
-            'scale': str(scale),
-            'size': str(size),
-            'gamma': ','.join(map(str, gamma)),
-            'color1': ','.join(map(str, color1)),
-            'color2': ','.join(map(str, color2))
-        }
-        with open(self.filename, 'w') as configfile:
-            self.config.write(configfile)
+            # Write complete configuration to file
+            self.filename = 'config.ini'
+            self.config['Settings'] = {
+                'height': str(height),
+                'width': str(width),
+                'scale': str(scale),
+                'size': str(size),
+                'gamma': ','.join(map(str, gamma)),
+                'color1': ','.join(map(str, color1)),
+                'color2': ','.join(map(str, color2))
+            }
+            with open(self.filename, 'w') as configfile:
+                self.config.write(configfile)
 
     def read_config_file(self, filename):
+        # Read configurations from file
         self.config.read(filename)
         settings = self.config['Settings']
         return {
@@ -42,23 +44,17 @@ class Operations:
             'color2': [int(c) for c in self.config.get('Settings', 'color2').split(',')]
         }
 
-    def update_config_file(self, filename, height=None, width=None, scale=None, size=None, gamma=None, color1=None, color2=None):
+    def update_config_file(self, filename, **kwargs):
+        # Update configuration file with any provided settings
         self.config.read(filename)
+        settings = self.config['Settings']
         
-        if height is not None:
-            self.config['Settings']['height'] = str(height)
-        if width is not None:
-            self.config['Settings']['width'] = str(width)
-        if scale is not None:
-            self.config['Settings']['scale'] = str(scale)
-        if size is not None:
-            self.config['Settings']['size'] = str(size)
-        if gamma is not None:
-            self.config['Settings']['gamma'] = ', '.join(map(str, gamma))
-        if color1 is not None:
-            self.config['Settings']['color1'] = ', '.join(map(str, color1))
-        if color2 is not None:
-            self.config['Settings']['color2'] = ', '.join(map(str, color2))
+        for key, value in kwargs.items():
+            if value is not None:
+                if key in ['gamma', 'color1', 'color2']:
+                    settings[key] = ', '.join(map(str, value))
+                else:
+                    settings[key] = str(value)
 
         with open(filename, 'w') as configfile:
             self.config.write(configfile)
