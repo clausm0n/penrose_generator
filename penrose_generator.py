@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import pygame  # type: ignore
 from threading import Thread
 from collections import OrderedDict
@@ -97,31 +98,50 @@ def update_sliders_from_config(config_data, sliders):
             slider.val = color_values[color_index]
             print("setting colors from sliders as:", slider.label, slider.val)
 
-
-
 def render_tiles(screen, tiles_cache, sliders, shaders, config_data):
     width, height = config_data['width'], config_data['height']
     current_time = pygame.time.get_ticks()
-    gamma_values = [slider.get_value() for slider in sliders if 'gamma' in slider.label.lower()]
-    size_value = next(slider.get_value() for slider in sliders if 'size' in slider.label.lower())
-    scale_value = next(slider.get_value() for slider in sliders if 'scale' in slider.label.lower())
-    color1 = tuple(next(slider.get_value() for slider in sliders if f'{color} Color1' in slider.label) for color in ['Red', 'Green', 'Blue'])
-    color2 = tuple(next(slider.get_value() for slider in sliders if f'{color} Color2' in slider.label) for color in ['Red', 'Green', 'Blue'])
+    
+    # Retrieve slider values efficiently as optimized before
+    slider_values = {slider.label.lower(): slider.get_value() for slider in sliders}
+    gamma_values = [value for label, value in slider_values.items() if 'gamma' in label]
+    size_value = slider_values['size']
+    scale_value = slider_values['scale']
+    color1 = tuple(slider_values[f'{color.lower()} color1'] for color in ['Red', 'Green', 'Blue'])
+    color2 = tuple(slider_values[f'{color.lower()} color2'] for color in ['Red', 'Green', 'Blue'])
     config_key = (tuple(gamma_values), size_value, color1, color2)
+
     if config_key not in tiles_cache:
-        print("Generating new tile cache...")
         tiles_data = op.tiling(gamma_values, size_value)
         tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
         op.calculate_neighbors(tiles_objects)
         tiles_cache[config_key] = tiles_objects
+        # Initialize visited_count for each tile
+        for tile in tiles_objects:
+            if tile not in shaders.visited_count:
+                shaders.visited_count[tile] = 0
+
+
     tiles_objects = tiles_cache[config_key]
     screen.fill((0, 0, 0))
     center = complex(width // 2, height // 2)
+
+    # Calculate the geometric center of all tiles
+    all_vertices = np.concatenate([tile.vertices for tile in tiles_objects])
+    geometric_center = np.mean(all_vertices, axis=0)
+
+    # Define a threshold based on typical distances within the central body
+    distance_threshold = np.std(all_vertices) * 0.5  # Adjust this value based on observed clustering
+
+    central_tiles = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
+
     shader_func = shaders.current_shader()
-    for tile in tiles_objects:
-        modified_color = shader_func(tile, current_time, tiles_objects, color1, color2)
-        vertices = Operations().to_canvas(tile.vertices, scale_value, center)
+    for tile in central_tiles:
+        modified_color = shader_func(tile, current_time, central_tiles, color1, color2)
+        vertices = op.to_canvas(tile.vertices, scale_value, center)
         pygame.draw.polygon(screen, modified_color, vertices)
+
+    pygame.display.flip()  # Update the entire screen
 
 def main():
     config_data = initialize_config(CONFIG_PATH)
@@ -152,7 +172,7 @@ def main():
                 slider.draw(screen)
 
         pygame.display.flip()
-        clock.tick(80)
+        clock.tick(100)
     pygame.quit()
 
 if __name__ == '__main__':

@@ -70,12 +70,18 @@ class Shader:
             self.last_update_time = current_time
             neighbors = self.current_tile.neighbors
             if neighbors:
-                min_visits = min(self.visited_count[n] for n in neighbors)
-                least_visited_neighbors = [n for n in neighbors if self.visited_count[n] == min_visits]
-                next_tile = random.choice(least_visited_neighbors)
-                self.current_tile = next_tile
-                self.trail_memory[next_tile] = color2
-                self.visited_count[next_tile] += 1
+                min_visits = min(self.visited_count.get(n, 0) for n in neighbors)
+                least_visited_neighbors = [n for n in neighbors if self.visited_count.get(n, float('inf')) == min_visits]
+
+                # Check if there are any eligible neighbors
+                if least_visited_neighbors:
+                    next_tile = random.choice(least_visited_neighbors)
+                    self.current_tile = next_tile
+                    self.trail_memory[next_tile] = color2
+                    self.visited_count[next_tile] += 1
+                else:
+                    # Fallback strategy if no neighbors have the min visit count
+                    self.current_tile = random.choice(neighbors)  # Default to a random neighbor
 
             new_trail_memory = {}
             for t, color in self.trail_memory.items():
@@ -89,6 +95,7 @@ class Shader:
             interpolated_color = [int(current + (target - current) * 0.1) for current, target in zip(current_color, target_color)]
             return tuple(interpolated_color)
         return color2
+
 
 
     def shader_color_wave(self, tile, time_ms, tiles, color1, color2):
