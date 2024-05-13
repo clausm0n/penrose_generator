@@ -14,6 +14,7 @@ toggle_shader_event = threading.Event()
 toggle_regions_event = threading.Event()
 toggle_gui_event = threading.Event()
 shutdown_event = threading.Event()  # Shutdown event
+randomize_colors_event = threading.Event()
 
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
@@ -66,6 +67,9 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         elif command == 'shutdown':  # Shutdown command
             shutdown_event.set()  # Set the shutdown event
             response.update({'status': 'success', 'message': 'Server is shutting down'})
+        elif command == 'randomize_colors':
+            randomize_colors_event.set()
+            response.update({'status': 'success', 'message': 'Colors randomized'})
         self.send_response(200)
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

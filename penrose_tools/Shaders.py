@@ -218,47 +218,49 @@ class Shader:
         common_vertices = set.intersection(*vertex_sets)
         return common_vertices
 
-    def update_star_patterns(self,tiles):
-        """ Check each tile to see if it's part of a star pattern. """
+    def blend_colors(self,color1, color2):
+        """Blend two RGB colors by averaging their components."""
+        return (
+            (color1[0] + color2[0]) // 2,
+            (color1[1] + color2[1]) // 2,
+            (color1[2] + color2[2]) // 2
+        )
+
+    def update_star_patterns(self, tiles, color1, color2):
+        """Check each tile to see if it's part of a star pattern and color them with a blend of two colors."""
         stars_colored = 0
+        star_color = self.blend_colors(color1, color2)  # Blend colors once and use for all stars
         for tile in tiles:
             if tile.is_kite and self.is_valid_star_kite(tile):
-                # Check combinations of two neighbors to find a star
                 kite_neighbors = [neighbor for neighbor in tile.neighbors if neighbor.is_kite and self.is_valid_star_kite(neighbor)]
                 if len(kite_neighbors) >= 2:
                     for n1 in kite_neighbors:
                         for n2 in kite_neighbors:
                             if n1 is not n2:
-                                # Check if these three kites share a common vertex
                                 possible_star = [tile, n1, n2]
                                 common_vertex = self.find_common_vertex(possible_star)
                                 if common_vertex:
-                                    # Check for two more kites sharing the same vertex
                                     extended_star = [t for t in tiles if set(t.vertices) & common_vertex and t.is_kite and self.is_valid_star_kite(t)]
                                     if len(extended_star) == 5:
-                                        star_color = (255, 215, 0)  # Gold color for star pattern
                                         for star_tile in extended_star:
                                             star_tile.update_color(star_color)
                                         stars_colored += 1
                                         break  # Found a valid star, break out of loops
         return stars_colored
 
-
-    def update_starburst_patterns(self,tiles):
-        """ Check each dart to see if it's part of a starburst pattern. """
+    def update_starburst_patterns(self, tiles, color1, color2):
+        """Check each dart to see if it's part of a starburst pattern and color them with a blend of two colors."""
         starbursts_colored = 0
+        starburst_color = self.blend_colors(color1, color2)  # Blend colors once and use for all starbursts
         for tile in tiles:
             if not tile.is_kite and self.is_valid_starburst_dart(tile):
-                # Ensure the potential starburst darts all share a common vertex
                 dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite and self.is_valid_starburst_dart(neighbor)]
                 potential_starburst = [tile] + dart_neighbors
-                if len(potential_starburst) >= 3:  # Start checking when there are at least 3 darts
+                if len(potential_starburst) >= 3:
                     common_vertex = self.find_common_vertex(potential_starburst)
                     if common_vertex:
-                        # Extend to find all darts sharing this vertex
                         extended_starburst = [t for t in tiles if set(t.vertices) & common_vertex and not t.is_kite and self.is_valid_starburst_dart(t)]
                         if len(extended_starburst) == 10:
-                            starburst_color = (255, 165, 0)  # Orange color for starburst pattern
                             for starburst_tile in extended_starburst:
                                 starburst_tile.update_color(starburst_color)
                             starbursts_colored += 1

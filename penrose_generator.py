@@ -4,7 +4,7 @@ import numpy as np
 import pygame  # type: ignore
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Shader, Slider,Tile, run_server,update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
+from penrose_tools import Operations, Shader, Slider,Tile, run_server,update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -59,6 +59,11 @@ def handle_events(sliders, shaders, screen, config_data):
             elif event.key == pygame.K_g:
                 global gui_visible
                 gui_visible = not gui_visible
+            elif event.key == pygame.K_r:
+                toggle_regions_event.set()
+            elif event.key == pygame.K_c:
+                randomize_colors_event.set()
+                print("Randomizing colors...")
             elif event.key == pygame.K_ESCAPE:  # Ensure this is directly under KEYDOWN
                 running = False
                 print("Exiting...")
@@ -70,7 +75,7 @@ def handle_events(sliders, shaders, screen, config_data):
 
 
 def update_toggles(config_data, sliders,shaders):
-    print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set())
+    print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data.update(op.read_config_file(CONFIG_PATH))
         print(config_data)
@@ -83,6 +88,16 @@ def update_toggles(config_data, sliders,shaders):
         toggle_regions_event.clear()
     if toggle_gui_event.is_set():
         toggle_gui_event.clear()
+    if randomize_colors_event.is_set():
+        for i in range(3):
+            config_data['color1'][i] = np.random.randint(0, 256)
+            config_data['color2'][i] = np.random.randint(0, 256)
+        op.write_config_file(**config_data)
+        print(config_data)
+        update_sliders_from_config(config_data, sliders)
+        update_event.set()
+        print("Randomizing colors...")
+        randomize_colors_event.clear()
 
 def update_sliders_from_config(config_data, sliders):
     for slider in sliders:
@@ -170,7 +185,7 @@ def main():
         if not handle_events(sliders, shaders, screen, config_data):
             running = False  # Set running to False to exit loop
 
-        if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event]):
+        if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
             update_toggles(config_data, sliders, shaders)
         render_tiles(screen, tiles_cache, sliders, shaders, config_data)
         if gui_visible:
