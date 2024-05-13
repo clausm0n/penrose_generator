@@ -20,7 +20,8 @@ class Shader:
         self.shader_temperature_to_color,
         self.shader_decay_trail,
         self.shader_game_of_life,
-        self.shader_color_wave
+        self.shader_color_wave,
+        self.shader_region_blend
         ]
     
     def next_shader(self):
@@ -96,8 +97,6 @@ class Shader:
             return tuple(interpolated_color)
         return color2
 
-
-
     def shader_color_wave(self, tile, time_ms, tiles, color1, color2):
         center = complex(self.config_data['width'] // 2, self.config_data['height'] // 2)
 
@@ -125,7 +124,6 @@ class Shader:
         blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
 
         return op.clamp_color((red, green, blue))
-
 
     def shader_game_of_life(self, tile, time_ms, tiles, color1, color2):
         if not self.game_of_life_initialized or self.initialized_tiles_set != set(tiles):
@@ -201,68 +199,47 @@ class Shader:
 
         # Return the clamped RGBA color tuple
         return op.clamp_color((int(red), int(green), int(blue), int(alpha)))
+    
+    def invert_color(self, color):
+        """Invert an RGB color."""
+        return tuple(255 - component for component in color)
 
-    def is_valid_star_kite(self,tile):
-        """ Check if a kite has exactly two darts as neighbors. """
-        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
-        return len(dart_neighbors) == 2
-
-    def is_valid_starburst_dart(self,tile):
-        """ Check if a dart has exactly two darts as neighbors. """
-        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
-        return len(dart_neighbors) == 2
-
-    def find_common_vertex(self,kites):
-        """ Find a common vertex among a given set of kites. """
-        vertex_sets = [set(kite.vertices) for kite in kites]
-        common_vertices = set.intersection(*vertex_sets)
-        return common_vertices
-
-    def blend_colors(self,color1, color2):
-        """Blend two RGB colors by averaging their components."""
-        return (
-            (color1[0] + color2[0]) // 2,
-            (color1[1] + color2[1]) // 2,
-            (color1[2] + color2[2]) // 2
+    def blend_colors(self, color1, color2, blend_factor):
+        """Blend two RGB colors based on the blend factor [0, 1]."""
+        return tuple(
+            int(color1[i] * (1 - blend_factor) + color2[i] * blend_factor)
+            for i in range(3)
         )
 
-    def update_star_patterns(self, tiles, color1, color2):
-        """Check each tile to see if it's part of a star pattern and color them with a blend of two colors."""
-        stars_colored = 0
-        star_color = self.blend_colors(color1, color2)  # Blend colors once and use for all stars
-        for tile in tiles:
-            if tile.is_kite and self.is_valid_star_kite(tile):
-                kite_neighbors = [neighbor for neighbor in tile.neighbors if neighbor.is_kite and self.is_valid_star_kite(neighbor)]
-                if len(kite_neighbors) >= 2:
-                    for n1 in kite_neighbors:
-                        for n2 in kite_neighbors:
-                            if n1 is not n2:
-                                possible_star = [tile, n1, n2]
-                                common_vertex = self.find_common_vertex(possible_star)
-                                if common_vertex:
-                                    extended_star = [t for t in tiles if set(t.vertices) & common_vertex and t.is_kite and self.is_valid_star_kite(t)]
-                                    if len(extended_star) == 5:
-                                        for star_tile in extended_star:
-                                            star_tile.update_color(star_color)
-                                        stars_colored += 1
-                                        break  # Found a valid star, break out of loops
-        return stars_colored
+    def shader_region_blend(self, tile, time_ms, tiles, color1, color2):
+        """Color each tile based on the number of kite or dart neighbors and special patterns."""
+        kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
+        total_neighbors = kite_count + dart_count
 
-    def update_starburst_patterns(self, tiles, color1, color2):
-        """Check each dart to see if it's part of a starburst pattern and color them with a blend of two colors."""
-        starbursts_colored = 0
-        starburst_color = self.blend_colors(color1, color2)  # Blend colors once and use for all starbursts
-        for tile in tiles:
-            if not tile.is_kite and self.is_valid_starburst_dart(tile):
-                dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite and self.is_valid_starburst_dart(neighbor)]
-                potential_starburst = [tile] + dart_neighbors
-                if len(potential_starburst) >= 3:
-                    common_vertex = self.find_common_vertex(potential_starburst)
-                    if common_vertex:
-                        extended_starburst = [t for t in tiles if set(t.vertices) & common_vertex and not t.is_kite and self.is_valid_starburst_dart(t)]
-                        if len(extended_starburst) == 10:
-                            for starburst_tile in extended_starburst:
-                                starburst_tile.update_color(starburst_color)
-                            starbursts_colored += 1
-                            break  # Found a valid starburst, break out of loops
-        return starbursts_colored
+        # Determine the basic blend factor
+        blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+
+        #Blend factor for the special patterns
+        star_blend_factor = 0.3
+        dart_blend_factor = 0.7
+
+        # Basic blended color
+        color = self.blend_colors(color1, color2, blend_factor)
+
+        # Check for special patterns and adjust color
+        if tile.is_kite and op.is_valid_star_kite(tile):
+            extended_star = op.find_star(tile, tiles)
+            if len(extended_star) == 5:
+                # Use inverted color with the same blend_factor used originally
+                color = self.invert_color(self.blend_colors(color1, color2, star_blend_factor))
+        
+        if not tile.is_kite and op.is_valid_starburst_dart(tile):
+            extended_starburst = op.find_starburst(tile, tiles)
+            if len(extended_starburst) == 10:
+                # Use inverted color with the same blend_factor used originally
+                color = self.invert_color(self.blend_colors(color1, color2, dart_blend_factor))
+        
+        return color
+
+
+    

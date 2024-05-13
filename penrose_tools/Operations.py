@@ -30,34 +30,32 @@ class Operations:
             with open(self.filename, 'w') as configfile:
                 self.config.write(configfile)
 
-    def read_config_file(self, filename):
-        # Read configurations from file
-        self.config.read(filename)
-        settings = self.config['Settings']
-        return {
-            'height': self.config.getint('Settings', 'height'),
-            'width': self.config.getint('Settings', 'width'),
-            'size': self.config.getint('Settings', 'size'),
-            'scale': self.config.getfloat('Settings', 'scale'),
-            'gamma': [float(g) for g in self.config.get('Settings', 'gamma').split(',')],
-            'color1': [int(c) for c in self.config.get('Settings', 'color1').split(',')],
-            'color2': [int(c) for c in self.config.get('Settings', 'color2').split(',')]
-        }
+    def read_config_file(self, config_path):
+            self.config.read(config_path)
+            settings = {
+                'height': self.config.getint('Settings', 'height'),
+                'width': self.config.getint('Settings', 'width'),
+                'scale': self.config.getint('Settings', 'scale'),
+                'size': self.config.getint('Settings', 'size'),
+                'gamma': [float(x.strip()) for x in self.config.get('Settings', 'gamma').split(',')],
+                'color1': [int(x.strip()) for x in self.config.get('Settings', 'color1').split(',')],
+                'color2': [int(x.strip()) for x in self.config.get('Settings', 'color2').split(',')]
+            }
+            return settings
 
-    def update_config_file(self, filename, **kwargs):
-        # Update configuration file with any provided settings
-        self.config.read(filename)
-        settings = self.config['Settings']
-        
+    def update_config_file(self, config_path, **kwargs):
+        # Ensure the configparser instance is set to the correct file
+        self.config.read(config_path)
         for key, value in kwargs.items():
-            if value is not None:
-                if key in ['gamma', 'color1', 'color2']:
-                    settings[key] = ', '.join(map(str, value))
-                else:
-                    settings[key] = str(value)
-
-        with open(filename, 'w') as configfile:
+            if isinstance(value, list):
+                # Sanitize list input by filtering out empty strings and joining correctly
+                cleaned_value = ', '.join(str(v).strip() for v in value if str(v).strip())
+                self.config.set('Settings', key, cleaned_value)
+            else:
+                self.config.set('Settings', key, str(value))
+        with open(config_path, 'w') as configfile:
             self.config.write(configfile)
+
 
     def calculate_centroid(self,vertices):
         """ Calculate the centroid from a list of vertices. """
@@ -188,3 +186,89 @@ class Operations:
         centroid1 = self.calculate_centroid(tile1.vertices)
         centroid2 = self.calculate_centroid(tile2.vertices)
         return abs(centroid1 - centroid2)
+    
+    def find_common_vertex(self, tiles, precision=3):
+        """Find a common vertex among a group of tiles with given precision."""
+        if not tiles:
+            return None
+        
+        # Collect all vertices from all tiles with specified precision
+        all_vertices = [self.clamp_vertices(tile.vertices, precision) for tile in tiles]
+        vertex_count = {}
+        for vertices in all_vertices:
+            for vertex in vertices:
+                if vertex in vertex_count:
+                    vertex_count[vertex] += 1
+                else:
+                    vertex_count[vertex] = 1
+
+        # Check for vertices that appear in all tile sets
+        for vertex, count in vertex_count.items():
+            if count >= len(tiles):  # Vertex must be common to all tiles
+                return vertex
+        return None
+    
+    def clamp_vertices(self, vertices, precision=3):
+        """Clamp vertices to a specified precision."""
+        return [complex(round(v.real, precision), round(v.imag, precision)) for v in vertices]
+    
+    def find_common_vertex_count(self, tile, precision=2):
+        """Find the highest count of common vertices among a given set of tiles with specified precision."""
+        # Adjust vertex precision
+        precise_vertices = [tile.clamp_vertices([v], precision) for v in tile.vertices]
+        tile_vertex_set = {v[0] for v in precise_vertices}
+
+        max_common_count = 0
+        for neighbor in tile.neighbors:
+            # Use the same precision for neighbor vertices
+            neighbor_precise_vertices = [neighbor.clamp_vertices([v], precision) for v in neighbor.vertices]
+            neighbor_vertex_set = {v[0] for v in neighbor_precise_vertices}
+
+            common_vertices = tile_vertex_set & neighbor_vertex_set
+            common_count = len(common_vertices)
+            if common_count > max_common_count:
+                max_common_count = common_count
+
+        return max_common_count
+    
+    def find_star(self, tile, tiles):
+        """Find if the tile is part of a star (5 kites with a common vertex)."""
+        kite_neighbors = [neighbor for neighbor in tile.neighbors if neighbor.is_kite and self.is_valid_star_kite(neighbor)]
+        for n1 in kite_neighbors:
+            for n2 in kite_neighbors:
+                if n1 != n2:
+                    possible_star = [tile, n1, n2]
+                    common_vertex = self.find_common_vertex(possible_star)
+                    if common_vertex:
+                        extended_star = [t for t in tiles if any(cmath.isclose(v, common_vertex, abs_tol=1e-3) for v in t.vertices) and t.is_kite and self.is_valid_star_kite(t)]
+                        if len(extended_star) == 5:
+                            return extended_star
+        return []
+
+    def find_starburst(self, tile, tiles):
+        """Find if the tile is part of a starburst (10 darts with a common vertex)."""
+        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite and self.is_valid_starburst_dart(neighbor)]
+        potential_starburst = [tile] + dart_neighbors
+        if len(potential_starburst) >= 3:
+            common_vertex = self.find_common_vertex(potential_starburst)
+            if common_vertex:
+                extended_starburst = [t for t in tiles if any(cmath.isclose(v, common_vertex, abs_tol=1e-3) for v in t.vertices) and not t.is_kite and self.is_valid_starburst_dart(t)]
+                if len(extended_starburst) == 10:
+                    return extended_starburst
+        return []
+    
+    def count_kite_and_dart_neighbors(self, tile):
+        """Count the number of kite and dart neighbors."""
+        kite_count = sum(1 for neighbor in tile.neighbors if neighbor.is_kite)
+        dart_count = len(tile.neighbors) - kite_count  # Assuming all non-kite are darts
+        return kite_count, dart_count
+
+    def is_valid_star_kite(self,tile):
+        """ Check if a kite has exactly two darts as neighbors. """
+        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
+        return len(dart_neighbors) == 2
+
+    def is_valid_starburst_dart(self,tile):
+        """ Check if a dart has exactly two darts as neighbors. """
+        dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
+        return len(dart_neighbors) == 2

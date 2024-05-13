@@ -19,18 +19,30 @@ randomize_colors_event = threading.Event()
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
 
+    def do_OPTIONS(self):
+        self.send_response(204)  # No Content
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-
+        
         config = configparser.ConfigParser()
         config.read(CONFIG_FILE)
         settings = dict(config['Settings'])
         self.wfile.write(json.dumps(settings).encode('utf-8'))
 
     def do_POST(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         data = json.loads(post_data.decode())
@@ -43,15 +55,13 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
                 response = {'status': 'success', 'message': 'Configuration updated'}
                 update_event.set()
-            self.send_response(200)
         except Exception as e:
             response = {'status': 'error', 'message': str(e)}
             self.send_response(500)
-
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(response).encode('utf-8'))
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
 
     def handle_commands(self, data, response):
         command = data['command']
@@ -70,7 +80,6 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         elif command == 'randomize_colors':
             randomize_colors_event.set()
             response.update({'status': 'success', 'message': 'Colors randomized'})
-        self.send_response(200)
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Handle requests in a separate thread."""
@@ -79,13 +88,9 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 def run_server():
     with ThreadedTCPServer(("", PORT), APIRequestHandler) as server:
         print(f"Serving API at port {PORT}")
-        # Start a thread with the server -- that thread will then start one
-        # more thread for each request
         server_thread = threading.Thread(target=server.serve_forever)
-        # Exit the server thread when the main thread terminates
         server_thread.daemon = True
         server_thread.start()
-        # Wait for a shutdown signal
         shutdown_event.wait()
         server.shutdown()
         server.server_close()
