@@ -30,7 +30,7 @@ def initialize_config(path):
     return op.read_config_file(path)
 
 config_data = initialize_config(CONFIG_PATH)
-
+tiles_cache = OrderedDict()
 def handle_events(shaders, screen):
     global running  # This ensures we modify the global running variable
     for event in pygame.event.get():
@@ -58,7 +58,8 @@ def update_toggles(shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data = op.read_config_file(CONFIG_PATH)
-        print(config_data)
+        tiles_cache.clear()
+        print("config_data updated...")
         update_event.clear()
     if toggle_shader_event.is_set():
         shaders.next_shader()
@@ -118,7 +119,7 @@ def main():
     pygame.display.set_caption("Penrose Tiling")
 
     shaders = Shader()
-    tiles_cache = OrderedDict()
+    
     clock = pygame.time.Clock()
 
     # Start server thread with stop event
