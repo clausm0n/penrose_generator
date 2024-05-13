@@ -54,21 +54,18 @@ def handle_events(shaders, screen, config_data):
 def update_toggles(config_data, shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
-        config_data.update(op.read_config_file(CONFIG_PATH))
+        config_data = op.read_config_file(CONFIG_PATH)
         print(config_data)
         update_event.clear()
     if toggle_shader_event.is_set():
         shaders.next_shader()
         toggle_shader_event.clear()
-    if toggle_regions_event.is_set():
-        toggle_regions_event.clear()
-    if toggle_gui_event.is_set():
-        toggle_gui_event.clear()
     if randomize_colors_event.is_set():
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
         op.update_config_file(CONFIG_PATH,**config_data)
+        config_data = op.read_config_file(CONFIG_PATH)
         print(config_data)
         update_event.set()
         print("Randomizing colors...")
