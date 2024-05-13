@@ -51,9 +51,10 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             if 'command' in data:
                 self.handle_commands(data, response)
+                update_event.set()
             else:
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
-                response = {'status': 'success', 'message': 'Configuration updated', 'data': updated}
+                response = {'status': 'success', 'message': 'Configuration updated'}
                 update_event.set()
         except Exception as e:
             response = {'status': 'error', 'message': str(e)}
