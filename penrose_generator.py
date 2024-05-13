@@ -22,13 +22,16 @@ op = Operations()
 gui_visible = False
 running = True
 
+
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
         op.write_config_file(*DEFAULT_CONFIG.values())
     return op.read_config_file(path)
 
-def handle_events(shaders, screen, config_data):
+config_data = initialize_config(CONFIG_PATH)
+
+def handle_events(shaders, screen):
     global running  # This ensures we modify the global running variable
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -51,7 +54,7 @@ def handle_events(shaders, screen, config_data):
                 return False
     return True
 
-def update_toggles(config_data, shaders):
+def update_toggles(shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data = op.read_config_file(CONFIG_PATH)
@@ -71,7 +74,7 @@ def update_toggles(config_data, shaders):
         print("Randomizing colors...")
         randomize_colors_event.clear()
 
-def render_tiles(screen, tiles_cache, shaders, config_data):
+def render_tiles(screen, tiles_cache, shaders):
     width, height = config_data['width'], config_data['height']
     current_time = pygame.time.get_ticks()
     
@@ -112,9 +115,9 @@ def render_tiles(screen, tiles_cache, shaders, config_data):
     pygame.display.flip()  # Update the entire screen
 
 def main():
-    config_data = initialize_config(CONFIG_PATH)
+    
     pygame.init()
-    screen = pygame.display.set_mode((config_data['width'], config_data['height']), pygame.FULLSCREEN)
+    screen = pygame.display.set_mode((config_data['width'], config_data['height']))
     pygame.display.set_caption("Penrose Tiling")
 
     shaders = Shader()
@@ -127,12 +130,12 @@ def main():
 
     global running
     while running:
-        if not handle_events(shaders, screen, config_data):
+        if not handle_events(shaders, screen):
             running = False  # Set running to False to exit loop
 
         if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
-            update_toggles(config_data, shaders)
-        render_tiles(screen, tiles_cache, shaders, config_data)
+            update_toggles(shaders)
+        render_tiles(screen, tiles_cache, shaders)
 
         pygame.display.flip()
         screen.fill((0, 0, 0))
