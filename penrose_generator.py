@@ -1,9 +1,10 @@
 import os
+import time
 import numpy as np
 import pygame  # type: ignore
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Shader, Slider,Tile, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
+from penrose_tools import Operations, Shader, Slider,Tile, run_server,update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -19,12 +20,16 @@ DEFAULT_CONFIG = {
 
 op = Operations()
 gui_visible = False
+running = True
+# Global definition
+
 
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
         op.write_config_file(*DEFAULT_CONFIG.values())
     return op.read_config_file(path)
+
 
 def setup_sliders(config_data):
     sliders = [Slider(100, 50 + 40 * i, 200, 20, -1.0, 1.0, config_data['gamma'][i], f'Gamma {i}') for i in range(5)]
@@ -43,8 +48,10 @@ def setup_sliders(config_data):
     return sliders
 
 def handle_events(sliders, shaders, screen, config_data):
+    global running  # This ensures we modify the global running variable
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
+            running = False
             return False
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
@@ -52,12 +59,15 @@ def handle_events(sliders, shaders, screen, config_data):
             elif event.key == pygame.K_g:
                 global gui_visible
                 gui_visible = not gui_visible
+            elif event.key == pygame.K_ESCAPE:  # Ensure this is directly under KEYDOWN
+                running = False
+                print("Exiting...")
+                return False
         elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
             for slider in sliders:
                 slider.handle_event(event)
-            
-
     return True
+
 
 def update_toggles(config_data, sliders,shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set())
@@ -147,30 +157,32 @@ def main():
     pygame.display.set_caption("Penrose Tiling")
 
     sliders = setup_sliders(config_data)
-    shaders = Shader()  # Instance of the Shader class
-
-    clock = pygame.time.Clock()
-    running = True
+    shaders = Shader()
     tiles_cache = OrderedDict()
+    clock = pygame.time.Clock()
 
-    # Start server thread
+    # Start server thread with stop event
     server_thread = Thread(target=run_server, daemon=True)
     server_thread.start()
 
+    global running
     while running:
-        handle_events(sliders, shaders, screen, config_data)  # Pass the Shader instance here
+        if not handle_events(sliders, shaders, screen, config_data):
+            running = False  # Set running to False to exit loop
 
         if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event]):
-            update_toggles(config_data, sliders,shaders)
-        render_tiles(screen, tiles_cache, sliders, shaders, config_data)  # Pass the Shader instance here
+            update_toggles(config_data, sliders, shaders)
+        render_tiles(screen, tiles_cache, sliders, shaders, config_data)
         if gui_visible:
             for slider in sliders:
                 slider.draw(screen)
 
         pygame.display.flip()
         screen.fill((0, 0, 0))
-        clock.tick(100)
+        clock.tick(60)
     pygame.quit()
+
 
 if __name__ == '__main__':
     main()
+

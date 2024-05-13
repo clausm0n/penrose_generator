@@ -2,28 +2,28 @@ import http.server
 import socketserver
 import json
 import configparser
+import threading
 from penrose_tools.Operations import Operations
-from threading import Event
 
 PORT = 8080
 CONFIG_FILE = 'config.ini'
 
-update_event = Event()
-toggle_shader_event = Event()
-toggle_regions_event = Event()
-toggle_gui_event = Event()
+# Events for toggling various features
+update_event = threading.Event()
+toggle_shader_event = threading.Event()
+toggle_regions_event = threading.Event()
+toggle_gui_event = threading.Event()
+shutdown_event = threading.Event()  # Shutdown event
 
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
 
     def do_GET(self):
-        # Handling CORS
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
 
-        # Read configuration and send it back as JSON
         config = configparser.ConfigParser()
         config.read(CONFIG_FILE)
         settings = dict(config['Settings'])
@@ -33,16 +33,16 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         data = json.loads(post_data.decode())
-
         response = {'status': 'error', 'message': 'Invalid command'}
+
         try:
-            if 'command' in data:  # Handle specific commands
+            if 'command' in data:
                 self.handle_commands(data, response)
-            else:  # Assume remaining data is for configuration update
+            else:
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
-                response = {'status': 'success', 'message': 'Configuration updated successfully'}
+                response = {'status': 'success', 'message': 'Configuration updated'}
                 update_event.set()
-                self.send_response(200)
+            self.send_response(200)
         except Exception as e:
             response = {'status': 'error', 'message': str(e)}
             self.send_response(500)
@@ -59,17 +59,32 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
             response.update({'status': 'success', 'message': 'Shader toggled'})
         elif command == 'toggle_regions':
             toggle_regions_event.set()
-            response.update({'status': 'success', 'message': 'Regions display toggled'})
+            response.update({'status': 'success', 'message': 'Regions toggled'})
         elif command == 'toggle_gui':
             toggle_gui_event.set()
-            response.update({'status': 'success', 'message': 'GUI visibility toggled'})
+            response.update({'status': 'success', 'message': 'GUI toggled'})
+        elif command == 'shutdown':  # Shutdown command
+            shutdown_event.set()  # Set the shutdown event
+            response.update({'status': 'success', 'message': 'Server is shutting down'})
         self.send_response(200)
 
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """Handle requests in a separate thread."""
+    pass
 
 def run_server():
-    with socketserver.TCPServer(("", PORT), APIRequestHandler) as httpd:
+    with ThreadedTCPServer(("", PORT), APIRequestHandler) as server:
         print(f"Serving API at port {PORT}")
-        httpd.serve_forever()
+        # Start a thread with the server -- that thread will then start one
+        # more thread for each request
+        server_thread = threading.Thread(target=server.serve_forever)
+        # Exit the server thread when the main thread terminates
+        server_thread.daemon = True
+        server_thread.start()
+        # Wait for a shutdown signal
+        shutdown_event.wait()
+        server.shutdown()
+        server.server_close()
 
 if __name__ == '__main__':
     run_server()
