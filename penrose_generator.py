@@ -57,7 +57,7 @@ def handle_events(shaders, screen):
 def update_toggles(shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
-        config_data = initialize_config(CONFIG_PATH)
+        config_data = op.read_config_file(CONFIG_PATH)
         print(config_data)
         update_event.clear()
     if toggle_shader_event.is_set():
