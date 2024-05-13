@@ -84,7 +84,7 @@ def render_tiles(screen, tiles_cache, shaders):
     color1 = tuple(config_data["color1"])
     color2 = tuple(config_data["color2"])
     config_key = (tuple(gamma_values), size_value, color1, color2)
-
+    print(config_key)
     if config_key not in tiles_cache:
         tiles_cache.clear()
         print("cache cleared")
