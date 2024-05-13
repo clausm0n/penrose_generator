@@ -104,19 +104,25 @@ class Shader:
         centroid = op.calculate_centroid(tile.vertices)
         tile_position = centroid - center
 
-        wave_speed = 0.00008
-        wave_length = 2
-        wave_direction = np.pi / 2 / (time_ms * 10)
+        wave_speed = 0.0000002  # This speed should work for gradual changes
+        wave_length = 1.0     # Adjusted for broader wave spans
 
-        directional_influence = np.cos(np.angle(tile_position) - wave_direction) * abs(tile_position) * time_ms
-        phase = wave_speed * time_ms / 20.0 - directional_influence / wave_length * 2
+        # Smooth direction transition using tweening
+        base_direction = np.pi / 4
+        direction_change = np.pi / 2
+        tween_duration = 1000000  # Duration of the tween in milliseconds
+        time_factor = (time_ms % tween_duration) / tween_duration
+        wave_direction = base_direction + direction_change * np.sin(time_factor * np.pi)
 
-        wave_intensity = (np.sin(phase) + 1) / 2
-        color_cycle_phase = time_ms / 1000.0
+        directional_influence = np.cos(np.angle(tile_position) - wave_direction) * abs(tile_position)
+        phase = wave_speed * time_ms - directional_influence / wave_length
 
-        red = color1[0] * (((color_cycle_phase / 3) + 1) / 2 * wave_intensity)
-        green = color1[1] * (((color_cycle_phase / 3 + 2 * np.pi / 3) + 1) / 2 * wave_intensity)
-        blue = color1[2] * (((color_cycle_phase / 3 + 4 * np.pi / 3) + 1) / 2 * (1 - wave_intensity))
+        wave_intensity = (np.sin(phase) + 1) / 2  # Normalized between 0 and 1
+
+        # Linear interpolation for smooth color blending
+        red = color1[0] * (1 - wave_intensity) + color2[0] * wave_intensity
+        green = color1[1] * (1 - wave_intensity) + color2[1] * wave_intensity
+        blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
 
         return op.clamp_color((red, green, blue))
 
@@ -163,7 +169,7 @@ class Shader:
 
         return self.colors[tile]
 
-    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, update_interval=100):
+    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, update_interval=10):
         current_time = pygame.time.get_ticks()
         # Perform temperature updates at the specified interval
         if current_time - self.last_temperature_update_time > update_interval:
@@ -175,19 +181,26 @@ class Shader:
             for t in tiles:
                 t.apply_temperature_update()
             # Increase the temperature of a random tile every 200 ms
-            heat_interval = 200
+            heat_interval = 10
             if current_time % heat_interval < 1:
                 random_tile = random.choice(tiles)
-                random_tile.current_temperature = 50 + 100  # Raise temperature significantly
+                random_tile.current_temperature = 150  # Raise temperature significantly
 
         # Calculate color based on the tile's current temperature
         temperature = tile.current_temperature
-        low_temp, high_temp = 0, 50
+        low_temp, high_temp = 0, 150
         intensity = (temperature - low_temp) / (high_temp - low_temp)
-        red = color1[0] * intensity
-        blue = color2[0] * (1 - intensity)
+        intensity = min(max(intensity, 0), 1)  # Clamp intensity between 0 and 1
+
+        # Blend between two colors based on the temperature intensity
+        red = (color1[0] * intensity + color2[0] * (1 - intensity))
+        green = (color1[1] * intensity + color2[1] * (1 - intensity))
+        blue = (color1[2] * intensity + color2[2] * (1 - intensity))
+
         alpha = 255 * (1 - intensity)  # Transparency decreases as the tile cools
-        return op.clamp_color((red, 0, blue, alpha))  # RGBA tuple
+
+        # Return the clamped RGBA color tuple
+        return op.clamp_color((int(red), int(green), int(blue), int(alpha)))
 
     def is_valid_star_kite(self,tile):
         """ Check if a kite has exactly two darts as neighbors. """

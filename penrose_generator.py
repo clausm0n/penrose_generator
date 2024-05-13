@@ -55,6 +55,7 @@ def handle_events(sliders, shaders, screen, config_data):
         elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
             for slider in sliders:
                 slider.handle_event(event)
+            
 
     return True
 
@@ -112,18 +113,14 @@ def render_tiles(screen, tiles_cache, sliders, shaders, config_data):
     config_key = (tuple(gamma_values), size_value, color1, color2)
 
     if config_key not in tiles_cache:
+        tiles_cache.clear()
         tiles_data = op.tiling(gamma_values, size_value)
         tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
         op.calculate_neighbors(tiles_objects)
         tiles_cache[config_key] = tiles_objects
-        # Initialize visited_count for each tile
-        for tile in tiles_objects:
-            if tile not in shaders.visited_count:
-                shaders.visited_count[tile] = 0
-
 
     tiles_objects = tiles_cache[config_key]
-    screen.fill((0, 0, 0))
+    
     center = complex(width // 2, height // 2)
 
     # Calculate the geometric center of all tiles
@@ -134,13 +131,13 @@ def render_tiles(screen, tiles_cache, sliders, shaders, config_data):
     distance_threshold = np.std(all_vertices) * 0.5  # Adjust this value based on observed clustering
 
     central_tiles = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
+    
 
     shader_func = shaders.current_shader()
     for tile in central_tiles:
         modified_color = shader_func(tile, current_time, central_tiles, color1, color2)
         vertices = op.to_canvas(tile.vertices, scale_value, center)
         pygame.draw.polygon(screen, modified_color, vertices)
-
     pygame.display.flip()  # Update the entire screen
 
 def main():
@@ -165,13 +162,13 @@ def main():
 
         if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event]):
             update_toggles(config_data, sliders,shaders)
-
         render_tiles(screen, tiles_cache, sliders, shaders, config_data)  # Pass the Shader instance here
         if gui_visible:
             for slider in sliders:
                 slider.draw(screen)
 
         pygame.display.flip()
+        screen.fill((0, 0, 0))
         clock.tick(100)
     pygame.quit()
 
