@@ -51,6 +51,7 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             if 'command' in data:
                 self.handle_commands(data, response)
+                updated = self.operations.update_config_file(CONFIG_FILE, **data)
                 update_event.set()
             else:
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
