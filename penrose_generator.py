@@ -62,7 +62,6 @@ def update_toggles(shaders):
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data = op.read_config_file(CONFIG_PATH)
-        tiles_cache.clear()
         print("config_data updated...")
         update_event.clear()
     if toggle_shader_event.is_set():
@@ -73,9 +72,9 @@ def update_toggles(shaders):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
         op.update_config_file(CONFIG_PATH, **config_data)
-        update_event.set()
         print("Randomizing colors...")
         randomize_colors_event.clear()
+        # update_event.set()
 
 
 def render_tiles(screen, tiles_cache, shaders):

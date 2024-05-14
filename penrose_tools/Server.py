@@ -52,7 +52,7 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
             if 'command' in data:
                 self.handle_commands(data, response)
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
-                update_event.set()
+                # update_event.set()
             else:
                 updated = self.operations.update_config_file(CONFIG_FILE, **data)
                 response = {'status': 'success', 'message': 'Configuration updated'}
@@ -70,12 +70,6 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         if command == 'toggle_shader':
             toggle_shader_event.set()
             response.update({'status': 'success', 'message': 'Shader toggled'})
-        elif command == 'toggle_regions':
-            toggle_regions_event.set()
-            response.update({'status': 'success', 'message': 'Regions toggled'})
-        elif command == 'toggle_gui':
-            toggle_gui_event.set()
-            response.update({'status': 'success', 'message': 'GUI toggled'})
         elif command == 'shutdown':  # Shutdown command
             shutdown_event.set()  # Set the shutdown event
             response.update({'status': 'success', 'message': 'Server is shutting down'})
