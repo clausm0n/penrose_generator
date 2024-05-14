@@ -126,6 +126,9 @@ def setup_window():
     glfw.make_context_current(window)
     setup_projection(config_data['width'], config_data['height'])
 
+    # Hide the mouse cursor
+    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
+
     # Set up basic OpenGL configuration
     glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
