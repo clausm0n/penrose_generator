@@ -4,7 +4,7 @@ import numpy as np
 import pygame  # type: ignore
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations,Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -31,6 +31,8 @@ def initialize_config(path):
 
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
+
+
 def handle_events(shaders, screen):
     global running  # This ensures we modify the global running variable
     for event in pygame.event.get():
@@ -54,7 +56,9 @@ def handle_events(shaders, screen):
                 return False
     return True
 
+
 def update_toggles(shaders):
+    global config_data  # Make sure to modify the global config_data
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data = op.read_config_file(CONFIG_PATH)
@@ -68,10 +72,11 @@ def update_toggles(shaders):
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
-        op.update_config_file(CONFIG_PATH,**config_data)
+        op.update_config_file(CONFIG_PATH, **config_data)
         update_event.set()
         print("Randomizing colors...")
         randomize_colors_event.clear()
+
 
 def render_tiles(screen, tiles_cache, shaders):
     global config_data  # Use the global config_data
@@ -106,16 +111,16 @@ def render_tiles(screen, tiles_cache, shaders):
 
     central_tiles = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
     
-
     shader_func = shaders.current_shader()
+    screen.fill((0, 0, 0))  # Clear the screen before rendering
     for tile in central_tiles:
         modified_color = shader_func(tile, current_time, central_tiles, color1, color2)
         vertices = op.to_canvas(tile.vertices, scale_value, center)
         pygame.draw.polygon(screen, modified_color, vertices)
     pygame.display.flip()  # Update the entire screen
 
+
 def main():
-    
     pygame.init()
     screen = pygame.display.set_mode((config_data['width'], config_data['height']))
     pygame.display.set_caption("Penrose Tiling")
