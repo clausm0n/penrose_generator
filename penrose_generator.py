@@ -74,6 +74,7 @@ def update_toggles(shaders):
         randomize_colors_event.clear()
 
 def render_tiles(screen, tiles_cache, shaders):
+    global config_data  # Use the global config_data
     width, height = config_data['width'], config_data['height']
     current_time = pygame.time.get_ticks()
     
