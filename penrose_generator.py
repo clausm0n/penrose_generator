@@ -115,7 +115,7 @@ def render_tiles(screen, tiles_cache, shaders):
         vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
         pygame.draw.polygon(screen, modified_color, vertices)
 
-    print(f"Rendering {len(central_tiles)} tiles")
+    #print(f"Rendering {len(central_tiles)} tiles")
     pygame.display.flip()  # Update the entire screen
 
 
