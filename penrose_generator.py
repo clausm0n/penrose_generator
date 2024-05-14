@@ -120,7 +120,7 @@ def render_tiles(screen, tiles_cache, shaders):
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((config_data['width'], config_data['height']))
+    screen = pygame.display.set_mode((config_data['width'], config_data['height']),pygame.FULLSCREEN)
     pygame.display.set_caption("Penrose Tiling")
 
     shaders = Shader()
