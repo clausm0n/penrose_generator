@@ -1,4 +1,4 @@
-import pygame # type: ignore
+import glfw
 import random
 import numpy as np
 from penrose_tools.Tile import Tile
@@ -41,7 +41,7 @@ class Shader:
         self.trail_memory = {}
         self.visited_count = {}
         self.current_tile = None
-        self.last_update_time = pygame.time.get_ticks()
+        self.last_update_time = glfw.get_time() * 1000
         self.initialized = False
         self.life_map = {}
         self.colors = {}
@@ -49,17 +49,20 @@ class Shader:
         self.last_temperature_update_time = 0
 
     def shader_no_effect(self, tile, time_ms, tiles, color1, color2):
-        return color1 if tile.is_kite else color2
+        base_color = color1 if tile.is_kite else color2
+        return (*base_color, 255)
+
 
     def shader_shift_effect(self, tile, time_ms, tiles, color1, color2):
         base_color = color1 if tile.is_kite else color2
         centroid = sum(tile.vertices) / len(tile.vertices)
         time_factor = np.sin(time_ms / 1000.0 + centroid.real * centroid.imag) * 0.5 + 0.5
         new_color = [min(255, max(0, int(base_color[i] * time_factor))) for i in range(3)]
-        return tuple(new_color)
+        return (*new_color, 255)
+
 
     def shader_decay_trail(self, tile, time_ms, tiles, color1, color2):
-        current_time = pygame.time.get_ticks()
+        current_time = glfw.get_time() * 1000
         if not self.trail_memory or not self.current_tile or set(tiles) != set(self.visited_count.keys()):
             self.trail_memory = {}
             self.visited_count = {t: 0 for t in tiles}
@@ -93,9 +96,10 @@ class Shader:
         target_color = self.trail_memory.get(tile, color2)
         if tile in self.trail_memory:
             current_color = color1
-            interpolated_color = [int(current + (target - current) * 0.1) for current, target in zip(current_color, target_color)]
-            return tuple(interpolated_color)
-        return color2
+            interpolated_color = [int(current + (target - current) * 0.1) for current, target in zip(color1, target_color)]
+            alpha = 255  # Full opacity; adjust if you need fading
+            return (*interpolated_color, alpha)
+        return (*color2, 255)
 
     def shader_color_wave(self, tile, time_ms, tiles, color1, color2):
         center = complex(self.config_data['width'] // 2, self.config_data['height'] // 2)
@@ -123,18 +127,18 @@ class Shader:
         green = color1[1] * (1 - wave_intensity) + color2[1] * wave_intensity
         blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
 
-        return op.clamp_color((red, green, blue))
+        return (int(red), int(green), int(blue), 255)
 
     def shader_game_of_life(self, tile, time_ms, tiles, color1, color2):
         if not self.game_of_life_initialized or self.initialized_tiles_set != set(tiles):
             self.life_map = {t: random.choice([True, False]) for t in tiles}
             self.colors = {t: color1 if self.life_map[t] else color2 for t in tiles}
-            self.last_update_time = pygame.time.get_ticks()
+            self.last_update_time = glfw.get_time() * 1000
             self.population_threshold = 0.3
             self.initialized_tiles_set = set(tiles)
             self.game_of_life_initialized = True
 
-        current_time = pygame.time.get_ticks()
+        current_time = glfw.get_time() * 1000
         if current_time - self.last_update_time > 600:
             self.last_update_time = current_time
             new_life_map = {}
@@ -163,53 +167,35 @@ class Shader:
         target_color = color1 if self.life_map.get(tile, False) else color2
         current_color = self.colors[tile]
         interpolated_color = [int(current + (target - current) * 0.02) for current, target in zip(current_color, target_color)]
-        self.colors[tile] = tuple(interpolated_color)
-
-        return self.colors[tile]
+        alpha = 255 if self.life_map.get(tile, False) else 128  # Vary alpha based on life state
+        return (*interpolated_color, alpha)
 
     def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, update_interval=10):
-        current_time = pygame.time.get_ticks()
-        # Perform temperature updates at the specified interval
+        current_time = glfw.get_time() * 1000
         if current_time - self.last_temperature_update_time > update_interval:
             self.last_temperature_update_time = current_time
-            # Update the temperature of each tile
+            # Temperature update logic remains unchanged
             for t in tiles:
                 t.update_temperature(diffusion_rate=0.01)
-            # Apply the temperature update to each tile
             for t in tiles:
                 t.apply_temperature_update()
-            # Increase the temperature of a random tile every 200 ms
+            # Increase the temperature of a random tile
             heat_interval = 10
             if current_time % heat_interval < 1:
                 random_tile = random.choice(tiles)
-                random_tile.current_temperature = 150  # Raise temperature significantly
+                random_tile.current_temperature = 150
 
-        # Calculate color based on the tile's current temperature
         temperature = tile.current_temperature
         low_temp, high_temp = 0, 150
         intensity = (temperature - low_temp) / (high_temp - low_temp)
-        intensity = min(max(intensity, 0), 1)  # Clamp intensity between 0 and 1
+        intensity = min(max(intensity, 0), 1)
 
-        # Blend between two colors based on the temperature intensity
         red = (color1[0] * intensity + color2[0] * (1 - intensity))
         green = (color1[1] * intensity + color2[1] * (1 - intensity))
         blue = (color1[2] * intensity + color2[2] * (1 - intensity))
-
         alpha = 255 * (1 - intensity)  # Transparency decreases as the tile cools
 
-        # Return the clamped RGBA color tuple
-        return op.clamp_color((int(red), int(green), int(blue), int(alpha)))
-    
-    def invert_color(self, color):
-        """Invert an RGB color."""
-        return tuple(255 - component for component in color)
-
-    def blend_colors(self, color1, color2, blend_factor):
-        """Blend two RGB colors based on the blend factor [0, 1]."""
-        return tuple(
-            int(color1[i] * (1 - blend_factor) + color2[i] * blend_factor)
-            for i in range(3)
-        )
+        return (int(red), int(green), int(blue), int(alpha))
 
     def shader_region_blend(self, tile, time_ms, tiles, color1, color2):
         """Color each tile based on the number of kite or dart neighbors and special patterns."""
@@ -239,7 +225,19 @@ class Shader:
                 # Use inverted color with the same blend_factor used originally
                 color = self.invert_color(self.blend_colors(color1, color2, dart_blend_factor))
         
-        return color
+        return (*color, 255)
+    
+    def invert_color(self, color):
+        """Invert an RGB color."""
+        return tuple(255 - component for component in color)
+
+    def blend_colors(self, color1, color2, blend_factor):
+        """Blend two RGB colors based on the blend factor [0, 1]."""
+        return tuple(
+            int(color1[i] * (1 - blend_factor) + color2[i] * blend_factor)
+            for i in range(3)
+        )
+
 
 
     

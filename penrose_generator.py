@@ -1,16 +1,16 @@
 import os
-import time
 import numpy as np
-import pygame  # type: ignore
+import glfw
+from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
-    'width': 1040,
-    'height': 1860,
+    'width': 500,
+    'height': 500,
     'size': 56,
     'scale': 6,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
@@ -22,7 +22,6 @@ op = Operations()
 gui_visible = False
 running = True
 
-
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
@@ -32,33 +31,16 @@ def initialize_config(path):
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
 
-
-def handle_events(shaders, screen):
-    global running  # This ensures we modify the global running variable
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-            return False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
-                toggle_shader_event.set()
-            elif event.key == pygame.K_g:
-                global gui_visible
-                gui_visible = not gui_visible
-            elif event.key == pygame.K_r:
-                toggle_regions_event.set()
-            elif event.key == pygame.K_c:
-                randomize_colors_event.set()
-                print("Randomizing colors...")
-            elif event.key == pygame.K_ESCAPE:  # Ensure this is directly under KEYDOWN
-                running = False
-                print("Exiting...")
-                return False
-    return True
+def setup_projection(width, height):
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    glOrtho(0, width, height, 0, -1, 1)
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
 
 
 def update_toggles(shaders):
-    global config_data  # Make sure to modify the global config_data
+    global config_data, running
     print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
     if update_event.is_set():
         config_data = op.read_config_file(CONFIG_PATH)
@@ -74,13 +56,15 @@ def update_toggles(shaders):
         op.update_config_file(CONFIG_PATH, **config_data)
         print("Randomizing colors...")
         randomize_colors_event.clear()
-        # update_event.set()
+    if shutdown_event.is_set():
+        running = False
+        print("Exiting...")
+        return False
 
-
-def render_tiles(screen, tiles_cache, shaders):
-    global config_data  # Use the global config_data
+def render_tiles(shaders):
+    global config_data, tiles_cache
     width, height = config_data['width'], config_data['height']
-    current_time = pygame.time.get_ticks()
+    current_time = glfw.get_time() * 1000  # Convert to milliseconds
 
     gamma_values = config_data['gamma']
     size_value = config_data['size']
@@ -104,46 +88,75 @@ def render_tiles(screen, tiles_cache, shaders):
         distance_threshold = np.std(all_vertices) * 0.5  # Adjust this value based on observed clustering
         tiles_cache["central_tiles"] = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
 
-    tiles_objects = tiles_cache[config_key]
+    #tiles_objects = tiles_cache[config_key]
     central_tiles = tiles_cache["central_tiles"]
-
     shader_func = shaders.current_shader()
 
     for tile in central_tiles:
         modified_color = shader_func(tile, current_time, central_tiles, color1, color2)
         vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
-        pygame.draw.polygon(screen, modified_color, vertices)
+        glBegin(GL_POLYGON)
+        # print("Color", modified_color)
+        glColor4ub(*modified_color)
+        for vertex in vertices:
+            glVertex2f(vertex[0], vertex[1])
+        glEnd()
 
-    #print(f"Rendering {len(central_tiles)} tiles")
-    pygame.display.flip()  # Update the entire screen
+def setup_window():
+    if not glfw.init():
+        raise Exception("GLFW can't be initialized")
+    
+    primary_monitor = glfw.get_primary_monitor()
+    video_mode = glfw.get_video_mode(primary_monitor)
 
+    if not video_mode:
+        raise Exception("Failed to get video mode for the primary monitor")
+        # Attempting to access width and height differently
+    try:
+        width, height = video_mode.size  # If video_mode.size is an attribute that returns a tuple
+    except AttributeError:
+        width = video_mode.width
+        height = video_mode.height
+
+    window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+    if not window:
+        glfw.terminate()
+        raise Exception("GLFW window can't be created")
+    
+    glfw.make_context_current(window)
+    setup_projection(config_data['width'], config_data['height'])
+
+    # Set up basic OpenGL configuration
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glClearColor(0, 0, 0, 1)  # Set clear color to black
+
+    return window
 
 def main():
-    pygame.init()
-    screen = pygame.display.set_mode((config_data['width'], config_data['height']),pygame.FULLSCREEN)
-    pygame.display.set_caption("Penrose Tiling")
-
+    window = setup_window()
     shaders = Shader()
-    
-    clock = pygame.time.Clock()
+    last_time = glfw.get_time()
 
-    # Start server thread with stop event
     server_thread = Thread(target=run_server, daemon=True)
     server_thread.start()
 
-    global running
-    while running:
-        if not handle_events(shaders, screen):
-            running = False  # Set running to False to exit loop
+    while not glfw.window_should_close(window) and running:
+        glfw.poll_events()
+        glClear(GL_COLOR_BUFFER_BIT)
 
         if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
             update_toggles(shaders)
 
-        screen.fill((0, 0, 0))  # Clear the screen before rendering
-        render_tiles(screen, tiles_cache, shaders)
-        clock.tick(60)
-    pygame.quit()
+        render_tiles(shaders)
+        glfw.swap_buffers(window)
+
+        # Frame rate control
+        while glfw.get_time() < last_time + 1.0 / 60.0:
+            pass
+        last_time = glfw.get_time()
+
+    glfw.terminate()
 
 if __name__ == '__main__':
     main()
-
