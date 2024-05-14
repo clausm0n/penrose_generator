@@ -86,6 +86,7 @@ def render_tiles(screen, tiles_cache, shaders):
     if config_key not in tiles_cache:
         tiles_cache.clear()
         print("cache cleared")
+        print("Rendering tiles...", gamma_values, size_value, scale_value, color1, color2)
         tiles_data = op.tiling(gamma_values, size_value)
         tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
         op.calculate_neighbors(tiles_objects)
