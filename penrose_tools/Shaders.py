@@ -48,12 +48,12 @@ class Shader:
         self.game_of_life_initialized = False
         self.last_temperature_update_time = 0
 
-    def shader_no_effect(self, tile, time_ms, tiles, color1, color2):
+    def shader_no_effect(self, tile, time_ms, tiles, color1, color2,width,height):
         base_color = color1 if tile.is_kite else color2
         return (*base_color, 255)
 
 
-    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2):
+    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2,width,height):
         base_color = color1 if tile.is_kite else color2
         centroid = sum(tile.vertices) / len(tile.vertices)
         time_factor = np.sin(time_ms / 1000.0 + centroid.real * centroid.imag) * 0.5 + 0.5
@@ -61,7 +61,7 @@ class Shader:
         return (*new_color, 255)
 
 
-    def shader_decay_trail(self, tile, time_ms, tiles, color1, color2):
+    def shader_decay_trail(self, tile, time_ms, tiles, color1, color2,width,height):
         current_time = glfw.get_time() * 1000
         if not self.trail_memory or not self.current_tile or set(tiles) != set(self.visited_count.keys()):
             self.trail_memory = {}
@@ -101,8 +101,8 @@ class Shader:
             return (*interpolated_color, alpha)
         return (*color2, 255)
 
-    def shader_color_wave(self, tile, time_ms, tiles, color1, color2):
-        center = complex(self.config_data['width'] // 2, self.config_data['height'] // 2)
+    def shader_color_wave(self, tile, time_ms, tiles, color1, color2,width,height):
+        center = complex(width // 2, height // 2)
 
         centroid = op.calculate_centroid(tile.vertices)
         tile_position = centroid - center
@@ -129,7 +129,7 @@ class Shader:
 
         return (int(red), int(green), int(blue), 255)
 
-    def shader_game_of_life(self, tile, time_ms, tiles, color1, color2):
+    def shader_game_of_life(self, tile, time_ms, tiles, color1, color2,width,height):
         if not self.game_of_life_initialized or self.initialized_tiles_set != set(tiles):
             self.life_map = {t: random.choice([True, False]) for t in tiles}
             self.colors = {t: color1 if self.life_map[t] else color2 for t in tiles}
@@ -170,7 +170,7 @@ class Shader:
         alpha = 255 if self.life_map.get(tile, False) else 128  # Vary alpha based on life state
         return (*interpolated_color, alpha)
 
-    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, update_interval=10):
+    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2,width,height, update_interval=10):
         current_time = glfw.get_time() * 1000
         if current_time - self.last_temperature_update_time > update_interval:
             self.last_temperature_update_time = current_time
@@ -197,7 +197,7 @@ class Shader:
 
         return (int(red), int(green), int(blue), int(alpha))
 
-    def shader_region_blend(self, tile, time_ms, tiles, color1, color2):
+    def shader_region_blend(self, tile, time_ms, tiles, color1, color2,width,height):
         """Color each tile based on the number of kite or dart neighbors and special patterns."""
         kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
         total_neighbors = kite_count + dart_count
