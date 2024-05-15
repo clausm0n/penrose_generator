@@ -15,12 +15,10 @@ class Operations:
         self.zeta = [cmath.exp(2j * cmath.pi * i / 5) for i in range(5)]
         self.config = configparser.ConfigParser()
 
-    def write_config_file(self, height, width, scale, size, gamma, color1, color2):
+    def write_config_file(self,scale, size, gamma, color1, color2):
             # Write complete configuration to file
             self.filename = 'config.ini'
             self.config['Settings'] = {
-                'height': str(height),
-                'width': str(width),
                 'scale': str(scale),
                 'size': str(size),
                 'gamma': ','.join(map(str, gamma)),
@@ -33,8 +31,6 @@ class Operations:
     def read_config_file(self, config_path):
             self.config.read(config_path)
             settings = {
-                'height': self.config.getint('Settings', 'height'),
-                'width': self.config.getint('Settings', 'width'),
                 'scale': self.config.getint('Settings', 'scale'),
                 'size': self.config.getint('Settings', 'size'),
                 'gamma': [float(x.strip()) for x in self.config.get('Settings', 'gamma').split(',')],

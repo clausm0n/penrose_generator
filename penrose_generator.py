@@ -106,7 +106,7 @@ def render_tiles(shaders,width,height):
     shader_func = shaders.current_shader()
 
     for tile in central_tiles:
-        modified_color = shader_func(tile, current_time, central_tiles, color1, color2)
+        modified_color = shader_func(tile, current_time, central_tiles, color1, color2,width,height)
         vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
         glBegin(GL_POLYGON)
         # print("Color", modified_color)
