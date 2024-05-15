@@ -10,27 +10,19 @@ class Shader:
 
     def __init__(self):
         self.shader_index = 0
-        # Read configuration data
         self.config_data = op.read_config_file("config.ini")
-        # Initialize state variables for various shaders
         self.initialize_shader_states()
         self.shaders = [
-        self.shader_no_effect,
-        self.shader_shift_effect,
-        self.shader_temperature_to_color,
-        self.shader_decay_trail,
-        self.shader_game_of_life,
-        self.shader_color_wave,
-        self.shader_region_blend
+            self.shader_no_effect,
+            self.shader_shift_effect,
+            self.shader_temperature_to_color,
+            self.shader_decay_trail,
+            self.shader_game_of_life,
+            self.shader_color_wave,
+            self.shader_region_blend
         ]
-    
-    def next_shader(self):
-        """
-        Increments the shader index and wraps it around if it exceeds the number of shaders.
 
-        Returns:
-            int: The new shader index.
-        """
+    def next_shader(self):
         self.shader_index = (self.shader_index + 1) % len(self.shaders)
         return self.shader_index
     
@@ -47,21 +39,22 @@ class Shader:
         self.colors = {}
         self.game_of_life_initialized = False
         self.last_temperature_update_time = 0
+        self.cached_neighbors = {}
+        self.cached_star_patterns = {}
+        self.cached_starburst_patterns = {}
 
-    def shader_no_effect(self, tile, time_ms, tiles, color1, color2,width,height):
+    def shader_no_effect(self, tile, time_ms, tiles, color1, color2, width, height):
         base_color = color1 if tile.is_kite else color2
         return (*base_color, 255)
 
-
-    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2,width,height):
+    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2, width, height):
         base_color = color1 if tile.is_kite else color2
         centroid = sum(tile.vertices) / len(tile.vertices)
         time_factor = np.sin(time_ms / 1000.0 + centroid.real * centroid.imag) * 0.5 + 0.5
         new_color = [min(255, max(0, int(base_color[i] * time_factor))) for i in range(3)]
         return (*new_color, 255)
 
-
-    def shader_decay_trail(self, tile, time_ms, tiles, color1, color2,width,height):
+    def shader_decay_trail(self, tile, time_ms, tiles, color1, color2, width, height):
         current_time = glfw.get_time() * 1000
         if not self.trail_memory or not self.current_tile or set(tiles) != set(self.visited_count.keys()):
             self.trail_memory = {}
@@ -77,15 +70,13 @@ class Shader:
                 min_visits = min(self.visited_count.get(n, 0) for n in neighbors)
                 least_visited_neighbors = [n for n in neighbors if self.visited_count.get(n, float('inf')) == min_visits]
 
-                # Check if there are any eligible neighbors
                 if least_visited_neighbors:
                     next_tile = random.choice(least_visited_neighbors)
                     self.current_tile = next_tile
                     self.trail_memory[next_tile] = color2
                     self.visited_count[next_tile] += 1
                 else:
-                    # Fallback strategy if no neighbors have the min visit count
-                    self.current_tile = random.choice(neighbors)  # Default to a random neighbor
+                    self.current_tile = random.choice(neighbors)
 
             new_trail_memory = {}
             for t, color in self.trail_memory.items():
@@ -97,39 +88,36 @@ class Shader:
         if tile in self.trail_memory:
             current_color = color1
             interpolated_color = [int(current + (target - current) * 0.1) for current, target in zip(color1, target_color)]
-            alpha = 255  # Full opacity; adjust if you need fading
+            alpha = 255
             return (*interpolated_color, alpha)
         return (*color2, 255)
 
-    def shader_color_wave(self, tile, time_ms, tiles, color1, color2,width,height):
+    def shader_color_wave(self, tile, time_ms, tiles, color1, color2, width, height):
         center = complex(width // 2, height // 2)
-
         centroid = op.calculate_centroid(tile.vertices)
         tile_position = centroid - center
 
-        wave_speed = 0.0000002  # This speed should work for gradual changes
-        wave_length = 1.0     # Adjusted for broader wave spans
+        wave_speed = 0.0000002
+        wave_length = 1.0
 
-        # Smooth direction transition using tweening
         base_direction = np.pi / 4
         direction_change = np.pi / 2
-        tween_duration = 1000000  # Duration of the tween in milliseconds
+        tween_duration = 1000000
         time_factor = (time_ms % tween_duration) / tween_duration
         wave_direction = base_direction + direction_change * np.sin(time_factor * np.pi)
 
         directional_influence = np.cos(np.angle(tile_position) - wave_direction) * abs(tile_position)
         phase = wave_speed * time_ms - directional_influence / wave_length
 
-        wave_intensity = (np.sin(phase) + 1) / 2  # Normalized between 0 and 1
+        wave_intensity = (np.sin(phase) + 1) / 2
 
-        # Linear interpolation for smooth color blending
         red = color1[0] * (1 - wave_intensity) + color2[0] * wave_intensity
         green = color1[1] * (1 - wave_intensity) + color2[1] * wave_intensity
         blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
 
         return (int(red), int(green), int(blue), 255)
 
-    def shader_game_of_life(self, tile, time_ms, tiles, color1, color2,width,height):
+    def shader_game_of_life(self, tile, time_ms, tiles, color1, color2, width, height):
         if not self.game_of_life_initialized or self.initialized_tiles_set != set(tiles):
             self.life_map = {t: random.choice([True, False]) for t in tiles}
             self.colors = {t: color1 if self.life_map[t] else color2 for t in tiles}
@@ -167,19 +155,18 @@ class Shader:
         target_color = color1 if self.life_map.get(tile, False) else color2
         current_color = self.colors[tile]
         interpolated_color = [int(current + (target - current) * 0.02) for current, target in zip(current_color, target_color)]
-        alpha = 255 if self.life_map.get(tile, False) else 128  # Vary alpha based on life state
+        alpha = 255 if self.life_map.get(tile, False) else 128
         return (*interpolated_color, alpha)
 
-    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2,width,height, update_interval=10):
+    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, width, height, update_interval=10):
         current_time = glfw.get_time() * 1000
         if current_time - self.last_temperature_update_time > update_interval:
             self.last_temperature_update_time = current_time
-            # Temperature update logic remains unchanged
             for t in tiles:
                 t.update_temperature(diffusion_rate=0.01)
             for t in tiles:
                 t.apply_temperature_update()
-            # Increase the temperature of a random tile
+
             heat_interval = 10
             if current_time % heat_interval < 1:
                 random_tile = random.choice(tiles)
@@ -193,51 +180,42 @@ class Shader:
         red = (color1[0] * intensity + color2[0] * (1 - intensity))
         green = (color1[1] * intensity + color2[1] * (1 - intensity))
         blue = (color1[2] * intensity + color2[2] * (1 - intensity))
-        alpha = 255 * (1 - intensity)  # Transparency decreases as the tile cools
+        alpha = 255 * (1 - intensity)
 
         return (int(red), int(green), int(blue), int(alpha))
 
-    def shader_region_blend(self, tile, time_ms, tiles, color1, color2,width,height):
-        """Color each tile based on the number of kite or dart neighbors and special patterns."""
-        kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
-        total_neighbors = kite_count + dart_count
+    def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height):
+        if tile not in self.cached_neighbors:
+            kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
+            total_neighbors = kite_count + dart_count
+            blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
 
-        # Determine the basic blend factor
-        blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+            if tile.is_kite and op.is_valid_star_kite(tile):
+                extended_star = op.find_star(tile, tiles)
+                if len(extended_star) == 5:
+                    color = self.invert_color(self.blend_colors(color1, color2, 0.3))
+                else:
+                    color = self.blend_colors(color1, color2, blend_factor)
+            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                extended_starburst = op.find_starburst(tile, tiles)
+                if len(extended_starburst) == 10:
+                    color = self.invert_color(self.blend_colors(color1, color2, 0.7))
+                else:
+                    color = self.blend_colors(color1, color2, blend_factor)
+            else:
+                color = self.blend_colors(color1, color2, blend_factor)
 
-        #Blend factor for the special patterns
-        star_blend_factor = 0.3
-        dart_blend_factor = 0.7
+            self.cached_neighbors[tile] = color
+        else:
+            color = self.cached_neighbors[tile]
 
-        # Basic blended color
-        color = self.blend_colors(color1, color2, blend_factor)
-
-        # Check for special patterns and adjust color
-        if tile.is_kite and op.is_valid_star_kite(tile):
-            extended_star = op.find_star(tile, tiles)
-            if len(extended_star) == 5:
-                # Use inverted color with the same blend_factor used originally
-                color = self.invert_color(self.blend_colors(color1, color2, star_blend_factor))
-        
-        if not tile.is_kite and op.is_valid_starburst_dart(tile):
-            extended_starburst = op.find_starburst(tile, tiles)
-            if len(extended_starburst) == 10:
-                # Use inverted color with the same blend_factor used originally
-                color = self.invert_color(self.blend_colors(color1, color2, dart_blend_factor))
-        
         return (*color, 255)
-    
+
     def invert_color(self, color):
-        """Invert an RGB color."""
         return tuple(255 - component for component in color)
 
     def blend_colors(self, color1, color2, blend_factor):
-        """Blend two RGB colors based on the blend factor [0, 1]."""
         return tuple(
             int(color1[i] * (1 - blend_factor) + color2[i] * blend_factor)
             for i in range(3)
         )
-
-
-
-    
