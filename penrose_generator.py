@@ -5,6 +5,7 @@ from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
 from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
+from logging
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -137,6 +138,14 @@ def setup_window():
     return window
 
 def main():
+    try:
+        logging.info("Starting the penrose generator script.")
+        # Your existing code...
+        window = setup_window()
+        # More of your code...
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        raise
     window = setup_window()
     shaders = Shader()
     last_time = glfw.get_time()
