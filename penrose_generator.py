@@ -7,7 +7,7 @@ from collections import OrderedDict
 from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
 import logging
 import configparser
-
+import signal
 
 
 # Configuration and initialization
@@ -152,34 +152,45 @@ def setup_window():
 
 def main():
     global width, height
+
+    def signal_handler(sig, frame):
+        global running
+        print('Shutting down application...')
+        running = False
+        shutdown_event.set()  # Trigger the server shutdown
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     try:
         logging.info("Starting the penrose generator script.")
+        window = setup_window()
+        shaders = Shader()
+        last_time = glfw.get_time()
+
+        server_thread = Thread(target=run_server, daemon=True)
+        server_thread.start()
+
+        while not glfw.window_should_close(window) and running:
+            glfw.poll_events()
+            glClear(GL_COLOR_BUFFER_BIT)
+
+            if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
+                update_toggles(shaders)
+
+            render_tiles(shaders,width,height)
+            glfw.swap_buffers(window)
+
+            # Frame rate control
+            while glfw.get_time() < last_time + 1.0 / 60.0:
+                pass
+            last_time = glfw.get_time()
+
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         raise
-    window = setup_window()
-    shaders = Shader()
-    last_time = glfw.get_time()
-
-    server_thread = Thread(target=run_server, daemon=True)
-    server_thread.start()
-
-    while not glfw.window_should_close(window) and running:
-        glfw.poll_events()
-        glClear(GL_COLOR_BUFFER_BIT)
-
-        if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
-            update_toggles(shaders)
-
-        render_tiles(shaders,width,height)
-        glfw.swap_buffers(window)
-
-        # Frame rate control
-        while glfw.get_time() < last_time + 1.0 / 60.0:
-            pass
-        last_time = glfw.get_time()
-
-    glfw.terminate()
+    finally:
+        glfw.terminate()
+        shutdown_event.set()
 
 if __name__ == '__main__':
     main()

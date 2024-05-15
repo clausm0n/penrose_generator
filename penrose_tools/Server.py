@@ -1,4 +1,5 @@
 import http.server
+import signal
 import socketserver
 import json
 import configparser
@@ -86,14 +87,29 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     pass
 
 def run_server():
+    def signal_handler(sig, frame):
+        print('Shutting down server...')
+        shutdown_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     with ThreadedTCPServer(("", PORT), APIRequestHandler) as server:
         print(f"Serving API at port {PORT}")
         server_thread = threading.Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
-        shutdown_event.wait()
-        server.shutdown()
-        server.server_close()
+
+        # Wait for the shutdown event
+        try:
+            shutdown_event.wait()
+        except KeyboardInterrupt:
+            print('Keyboard interrupt received, exiting.')
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    print('Server shut down successfully.')
 
 if __name__ == '__main__':
     run_server()
