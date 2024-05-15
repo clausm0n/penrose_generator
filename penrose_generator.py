@@ -10,8 +10,6 @@ import logging
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
-    'width': 500,
-    'height': 500,
     'size': 56,
     'scale': 6,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
@@ -22,6 +20,8 @@ DEFAULT_CONFIG = {
 op = Operations()
 gui_visible = False
 running = True
+width = 0
+height = 0
 
 def initialize_config(path):
     if not os.path.isfile(path):
@@ -62,9 +62,8 @@ def update_toggles(shaders):
         print("Exiting...")
         return False
 
-def render_tiles(shaders):
+def render_tiles(shaders,width,height):
     global config_data, tiles_cache
-    width, height = config_data['width'], config_data['height']
     current_time = glfw.get_time() * 1000  # Convert to milliseconds
 
     gamma_values = config_data['gamma']
@@ -104,6 +103,7 @@ def render_tiles(shaders):
         glEnd()
 
 def setup_window():
+    global width, height
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
@@ -125,7 +125,7 @@ def setup_window():
         raise Exception("GLFW window can't be created")
     
     glfw.make_context_current(window)
-    setup_projection(config_data['width'], config_data['height'])
+    setup_projection(width,height)
 
     # Hide the mouse cursor
     glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
@@ -138,11 +138,9 @@ def setup_window():
     return window
 
 def main():
+    global width, height
     try:
         logging.info("Starting the penrose generator script.")
-        # Your existing code...
-        window = setup_window()
-        # More of your code...
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         raise
@@ -160,7 +158,7 @@ def main():
         if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
             update_toggles(shaders)
 
-        render_tiles(shaders)
+        render_tiles(shaders,width,height)
         glfw.swap_buffers(window)
 
         # Frame rate control
