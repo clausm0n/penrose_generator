@@ -6,6 +6,9 @@ from threading import Thread
 from collections import OrderedDict
 from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
 import logging
+import configparser
+
+
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -26,8 +29,20 @@ height = 0
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
-        op.write_config_file(*DEFAULT_CONFIG.values())
+        config = configparser.ConfigParser()
+        config['Settings'] = {
+            'width': str(DEFAULT_CONFIG['width']),
+            'height': str(DEFAULT_CONFIG['height']),
+            'size': str(DEFAULT_CONFIG['size']),
+            'scale': str(DEFAULT_CONFIG['scale']),
+            'gamma': ', '.join(map(str, DEFAULT_CONFIG['gamma'])),
+            'color1': ', '.join(map(str, DEFAULT_CONFIG['color1'])),
+            'color2': ', '.join(map(str, DEFAULT_CONFIG['color2']))
+        }
+        with open(path, 'w') as configfile:
+            config.write(configfile)
     return op.read_config_file(path)
+
 
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()

@@ -51,10 +51,13 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             if 'command' in data:
                 self.handle_commands(data, response)
-                updated = self.operations.update_config_file(CONFIG_FILE, **data)
-                # update_event.set()
             else:
-                updated = self.operations.update_config_file(CONFIG_FILE, **data)
+                config = configparser.ConfigParser()
+                config.read(CONFIG_FILE)
+                for key, value in data.items():
+                    config.set('Settings', key, ', '.join(map(str, value)) if isinstance(value, list) else str(value))
+                with open(CONFIG_FILE, 'w') as configfile:
+                    config.write(configfile)
                 response = {'status': 'success', 'message': 'Configuration updated'}
                 update_event.set()
         except Exception as e:
@@ -63,7 +66,7 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(response).encode('utf-8'))
+        self.wfile.write(json.dumps(response).encode('utf-8'))
 
     def handle_commands(self, data, response):
         command = data['command']
@@ -76,6 +79,7 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         elif command == 'randomize_colors':
             randomize_colors_event.set()
             response.update({'status': 'success', 'message': 'Colors randomized'})
+
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Handle requests in a separate thread."""
