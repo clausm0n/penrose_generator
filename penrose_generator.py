@@ -46,16 +46,16 @@ def update_toggles(shaders):
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
+        randomize_colors_event.clear()
         op.update_config_file(CONFIG_PATH, **config_data)
         print("Randomizing colors...")
-        randomize_colors_event.clear()
     if update_event.is_set():
+        update_event.clear()
         config_data = op.read_config_file(CONFIG_PATH)
         print("config_data updated...")
-        update_event.clear()
     if toggle_shader_event.is_set():
-        shaders.next_shader()
         toggle_shader_event.clear()
+        shaders.next_shader()
     if shutdown_event.is_set():
         running = False
         print("Exiting...")
