@@ -204,7 +204,7 @@ class Operations:
                 return vertex
         return None
     
-    def clamp_vertices(self, vertices, precision=3):
+    def clamp_vertices(self, vertices, precision=1):
         """Clamp vertices to a specified precision."""
         return [complex(round(v.real, precision), round(v.imag, precision)) for v in vertices]
     
