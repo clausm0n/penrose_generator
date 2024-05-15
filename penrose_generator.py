@@ -31,8 +31,6 @@ def initialize_config(path):
         print("Config file not found. Creating a new one...")
         config = configparser.ConfigParser()
         config['Settings'] = {
-            'width': str(DEFAULT_CONFIG['width']),
-            'height': str(DEFAULT_CONFIG['height']),
             'size': str(DEFAULT_CONFIG['size']),
             'scale': str(DEFAULT_CONFIG['scale']),
             'gamma': ', '.join(map(str, DEFAULT_CONFIG['gamma'])),
