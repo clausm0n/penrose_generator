@@ -120,28 +120,20 @@ def setup_window():
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
-    primary_monitor = glfw.get_primary_monitor()
-    video_mode = glfw.get_video_mode(primary_monitor)
+    # Set the window size to 720p
+    width, height = 1280, 720
 
-    if not video_mode:
-        raise Exception("Failed to get video mode for the primary monitor")
-        # Attempting to access width and height differently
-    try:
-        width, height = video_mode.size  # If video_mode.size is an attribute that returns a tuple
-    except AttributeError:
-        width = video_mode.width
-        height = video_mode.height
-
-    window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+    # Create a windowed mode window and its OpenGL context
+    window = glfw.create_window(width, height, "Penrose Tiling", None, None)
     if not window:
         glfw.terminate()
         raise Exception("GLFW window can't be created")
     
     glfw.make_context_current(window)
-    setup_projection(width,height)
+    setup_projection(width, height)
 
-    # Hide the mouse cursor
-    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
+    # Show the mouse cursor (since it's not fullscreen anymore)
+    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
 
     # Set up basic OpenGL configuration
     glEnable(GL_BLEND)
