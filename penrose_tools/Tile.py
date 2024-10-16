@@ -1,3 +1,5 @@
+#Tile.py
+
 import cmath  # For complex number operations
 import random
 
@@ -14,6 +16,15 @@ class Tile:
         self.is_kite = self.is_kite()
         #invert color for highlinghted tiles
         self.highlighted_color = self.clamp_color(tuple(255 - c for c in self.color))
+
+    def __hash__(self):
+        # Hash based on a tuple of vertices and color
+        return hash((tuple(self.vertices), self.color))
+    
+    def __eq__(self, other):
+        if not isinstance(other, Tile):
+            return False
+        return self.vertices == other.vertices and self.color == other.color
 
     def clamp_color(self, color):
         """Ensure all color values are within the legal RGB range."""
@@ -57,22 +68,7 @@ class Tile:
         if neighbor_tile not in self.neighbors:
             self.neighbors.append(neighbor_tile)
     
-    def update_temperature(self, diffusion_rate=0.001):
-        if self.neighbors:
-            avg_neighbor_temp = sum(neighbor.current_temperature for neighbor in self.neighbors) / len(self.neighbors)
-            self.target_temperature = (1 - diffusion_rate) * self.current_temperature + diffusion_rate * avg_neighbor_temp
-            self.current_temperature -= 0.5
 
-    def apply_temperature_update(self):
-        self.current_temperature = self.target_temperature
-    
-    def set_color_based_on_temperature(self):
-        """Update color based on temperature, for example."""
-        low_temp, high_temp = 50, 255
-        intensity = (self.current_temperature - low_temp) / (high_temp - low_temp)
-        red = 255 * intensity
-        blue = 0 * (1 - intensity)
-        self.color = self.clamp_color((red, 0, blue))
 
     def update_color(self, new_color):
         """Update the color of the tile, clamping values to ensure validity."""

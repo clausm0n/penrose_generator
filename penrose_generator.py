@@ -75,7 +75,7 @@ def update_toggles(shaders):
         print("Exiting...")
         return False
 
-def render_tiles(shaders,width,height):
+def render_tiles(shaders, width, height):
     global config_data, tiles_cache
     current_time = glfw.get_time() * 1000  # Convert to milliseconds
 
@@ -101,19 +101,26 @@ def render_tiles(shaders,width,height):
         distance_threshold = np.std(all_vertices) * 0.5  # Adjust this value based on observed clustering
         tiles_cache["central_tiles"] = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
 
-    #tiles_objects = tiles_cache[config_key]
+        # Reset shader state when tile map changes
+        shaders.reset_state()
+
     central_tiles = tiles_cache["central_tiles"]
     shader_func = shaders.current_shader()
 
     for tile in central_tiles:
-        modified_color = shader_func(tile, current_time, central_tiles, color1, color2,width,height)
-        vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
-        glBegin(GL_POLYGON)
-        # print("Color", modified_color)
-        glColor4ub(*modified_color)
-        for vertex in vertices:
-            glVertex2f(vertex[0], vertex[1])
-        glEnd()
+        try:
+            modified_color = shader_func(tile, current_time, central_tiles, color1, color2, width, height)
+            vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
+            glBegin(GL_POLYGON)
+            glColor4ub(*modified_color)
+            for vertex in vertices:
+                glVertex2f(vertex[0], vertex[1])
+            glEnd()
+        except Exception as e:
+            logging.error(f"Error rendering tile: {e}")
+            # If an error occurs, reset the shader state and skip this tile
+            shaders.reset_state()
+            continue
 
 def setup_window():
     global width, height

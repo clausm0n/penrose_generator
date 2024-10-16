@@ -3,7 +3,8 @@ import random
 import numpy as np
 from penrose_tools.Tile import Tile
 from penrose_tools.Operations import Operations
-
+from PIL import Image
+import os
 op = Operations()
 
 class Shader:
@@ -15,11 +16,11 @@ class Shader:
         self.shaders = [
             self.shader_no_effect,
             self.shader_shift_effect,
-            self.shader_temperature_to_color,
-            self.shader_decay_trail,
-            self.shader_game_of_life,
+            self.shader_pixelation_slideshow,
+            self.shader_raindrop_ripple,
             self.shader_color_wave,
             self.shader_region_blend
+            # self.shader_relay
         ]
 
     def next_shader(self):
@@ -42,6 +43,30 @@ class Shader:
         self.cached_neighbors = {}
         self.cached_star_patterns = {}
         self.cached_starburst_patterns = {}
+        self.ripples = []
+        self.last_raindrop_time = 0
+        self.max_ripples = 3
+        self.current_image_data = None
+        self.next_image_data = None
+        self.tile_to_pixel_map = None
+        self.image_files = []
+        self.image_data = []
+        self.current_image_index = 0
+        self.next_image_index = 1
+        self.transition_start_time = 0
+        self.transition_duration = 5000  # 5 seconds for transition
+        self.time_between_transitions = 10000  # 10 seconds between transitions
+        self.is_transitioning = False
+        self.relay_waves = []
+        self.last_relay_time = 0
+        self.relay_duration = 5000  # Duration of a single relay wave
+        self.tile_interpolation = {}  # To track interpolation state of tiles
+
+    def reset_state(self):
+        """Reset the shader state when tile map changes."""
+        self.initialize_shader_states()
+        # self.load_images_from_folder()  # Reload images
+        print("Shader state reset")
 
     def shader_no_effect(self, tile, time_ms, tiles, color1, color2, width, height):
         base_color = color1 if tile.is_kite else color2
@@ -54,43 +79,65 @@ class Shader:
         new_color = [min(255, max(0, int(base_color[i] * time_factor))) for i in range(3)]
         return (*new_color, 255)
 
-    def shader_decay_trail(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_raindrop_ripple(self, tile, time_ms, tiles, color1, color2, width, height):
         current_time = glfw.get_time() * 1000
-        if not self.trail_memory or not self.current_tile or set(tiles) != set(self.visited_count.keys()):
-            self.trail_memory = {}
-            self.visited_count = {t: 0 for t in tiles}
-            self.current_tile = random.choice(tiles)
-            self.trail_memory[self.current_tile] = color2
-            self.last_update_time = current_time
-
-        if current_time - self.last_update_time > 100:
-            self.last_update_time = current_time
-            neighbors = self.current_tile.neighbors
-            if neighbors:
-                min_visits = min(self.visited_count.get(n, 0) for n in neighbors)
-                least_visited_neighbors = [n for n in neighbors if self.visited_count.get(n, float('inf')) == min_visits]
-
-                if least_visited_neighbors:
-                    next_tile = random.choice(least_visited_neighbors)
-                    self.current_tile = next_tile
-                    self.trail_memory[next_tile] = color2
-                    self.visited_count[next_tile] += 1
+        
+        # Initialize or reinitialize if needed
+        if not hasattr(self, 'tile_positions') or not self.tile_positions:
+            self.tile_positions = {t: op.calculate_centroid(t.vertices) for t in tiles}
+            self.ripples = []
+            self.last_raindrop_time = 0
+        
+        # Create new raindrop every 3.5 seconds, if we're below the max ripples limit
+        if current_time - self.last_raindrop_time > 3500 and len(self.ripples) < self.max_ripples:
+            self.last_raindrop_time = current_time
+            new_raindrop = random.choice(tiles)
+            self.ripples.append((new_raindrop, 0, current_time))  # (center_tile, radius, start_time)
+        
+        # Update and render ripples
+        new_ripples = []
+        for center_tile, radius, start_time in self.ripples:
+            time_elapsed = (current_time - start_time) / 1000  # Time elapsed in seconds
+            new_radius = 25 * (1 - np.exp(-time_elapsed / 5))  # Slower expansion
+            if new_radius < 100 and time_elapsed < 15:  # Keep ripples for 15 seconds max
+                new_ripples.append((center_tile, new_radius, start_time))
+        
+        self.ripples = new_ripples
+        
+        # If all ripples have faded, reset the last_raindrop_time to create a new one immediately
+        if not self.ripples:
+            self.last_raindrop_time = 0
+        
+        # Determine tile color based on ripples
+        if tile not in self.tile_positions:
+            # If the tile is not in tile_positions, add it
+            self.tile_positions[tile] = op.calculate_centroid(tile.vertices)
+        
+        tile_pos = self.tile_positions[tile]
+        tile_color = color1
+        
+        for center_tile, radius, start_time in self.ripples:
+            if center_tile not in self.tile_positions:
+                # If the center tile is not in tile_positions, skip this ripple
+                continue
+            center_pos = self.tile_positions[center_tile]
+            distance = abs(tile_pos - center_pos)
+            
+            if distance <= radius:
+                ripple_age = (current_time - start_time) / 1000  # Ripple age in seconds
+                ripple_intensity = np.exp(-ripple_age / 3)  # Intensity decreases over time
+                
+                if abs(distance - radius) < 5:  # Ripple edge
+                    edge_intensity = 1 - abs(distance - radius) / 5
+                    tile_color = self.blend_colors(tile_color, color2, edge_intensity * ripple_intensity)
+                elif distance < 5:  # Raindrop center
+                    tile_color = self.blend_colors(tile_color, color2, ripple_intensity)
                 else:
-                    self.current_tile = random.choice(neighbors)
-
-            new_trail_memory = {}
-            for t, color in self.trail_memory.items():
-                new_color = tuple(max(0, c - 25) for c in color)
-                new_trail_memory[t] = new_color if sum(new_color) > 0 else color2
-            self.trail_memory = new_trail_memory
-
-        target_color = self.trail_memory.get(tile, color2)
-        if tile in self.trail_memory:
-            current_color = color1
-            interpolated_color = [int(current + (target - current) * 0.1) for current, target in zip(color1, target_color)]
-            alpha = 255
-            return (*interpolated_color, alpha)
-        return (*color2, 255)
+                    # Gradual color change within the ripple
+                    color_intensity = (1 - distance / radius) * ripple_intensity
+                    tile_color = self.blend_colors(tile_color, color2, color_intensity * 0.5)
+        
+        return (*tile_color, 255)
 
     def shader_color_wave(self, tile, time_ms, tiles, color1, color2, width, height):
         center = complex(width // 2, height // 2)
@@ -117,72 +164,130 @@ class Shader:
 
         return (int(red), int(green), int(blue), 255)
 
-    def shader_game_of_life(self, tile, time_ms, tiles, color1, color2, width, height):
-        if not self.game_of_life_initialized or self.initialized_tiles_set != set(tiles):
-            self.life_map = {t: random.choice([True, False]) for t in tiles}
-            self.colors = {t: color1 if self.life_map[t] else color2 for t in tiles}
-            self.last_update_time = glfw.get_time() * 1000
-            self.population_threshold = 0.3
-            self.initialized_tiles_set = set(tiles)
-            self.game_of_life_initialized = True
+    def shader_relay(self, tile, time_ms, tiles, color1, color2, width, height):
+        current_time = time_ms
 
-        current_time = glfw.get_time() * 1000
-        if current_time - self.last_update_time > 600:
-            self.last_update_time = current_time
-            new_life_map = {}
-            alive_count = 0
+        # Initialize or reinitialize if needed
+        if not hasattr(self, 'tile_positions') or not self.tile_positions:
+            self.tile_positions = {t: op.calculate_centroid(t.vertices) for t in tiles}
+            self.relay_waves = []
+            self.last_relay_time = 0
+            self.tile_interpolation = {}
 
-            for t in tiles:
-                alive_neighbors = sum(1 for n in t.neighbors if self.life_map.get(n, False))
-                new_life_map[t] = alive_neighbors in [2, 3] if self.life_map[t] else alive_neighbors == 3
-                if new_life_map[t]:
-                    alive_count += 1
+        # Create new relay wave every 5 seconds
+        if current_time - self.last_relay_time > 5000:
+            self.last_relay_time = current_time
+            star_tiles = [t for t in tiles if op.is_valid_star_kite(t) or op.is_valid_starburst_dart(t)]
+            if star_tiles:
+                new_center = random.choice(star_tiles)
+                self.relay_waves.append((new_center, 0, current_time, 1))  # (center_tile, radius, start_time, direction)
 
-            self.life_map = new_life_map
+        # Update and render waves
+        new_waves = []
+        for center_tile, radius, start_time, direction in self.relay_waves:
+            time_elapsed = (current_time - start_time) / 1000  # Time elapsed in seconds
+            new_radius = 50 * (1 - np.exp(-time_elapsed / 2))  # Expansion rate
+            if new_radius < 200 and time_elapsed < self.relay_duration / 1000:
+                new_waves.append((center_tile, new_radius, start_time, direction))
+            
+            # Check for collisions with other stars/starbursts
+            for other_tile in tiles:
+                if (op.is_valid_star_kite(other_tile) or op.is_valid_starburst_dart(other_tile)) and other_tile != center_tile:
+                    other_pos = self.tile_positions[other_tile]
+                    center_pos = self.tile_positions[center_tile]
+                    distance = abs(other_pos - center_pos)
+                    if abs(distance - new_radius) < 5 and new_radius > 0:  # If wave hits another star/starburst and radius is positive
+                        new_waves.append((other_tile, 0, current_time, -direction))  # Start a new wave in opposite direction
 
-            if alive_count / len(tiles) < self.population_threshold:
-                dead_tiles = [t for t in tiles if not self.life_map[t]]
-                invigoration_count = max(1, int(len(tiles) * 0.01))
-                for _ in range(invigoration_count):
-                    if dead_tiles:
-                        revival_tile = random.choice(dead_tiles)
-                        self.life_map[revival_tile] = True
-                        self.colors[revival_tile] = color1
-                        for neighbor in revival_tile.neighbors:
-                            if random.random() < 0.5:
-                                self.life_map[neighbor] = True
+        self.relay_waves = new_waves
 
-        target_color = color1 if self.life_map.get(tile, False) else color2
-        current_color = self.colors[tile]
-        interpolated_color = [int(current + (target - current) * 0.02) for current, target in zip(current_color, target_color)]
-        alpha = 255 if self.life_map.get(tile, False) else 128
-        return (*interpolated_color, alpha)
+        # Determine tile color based on waves
+        base_color = color1 if tile.is_kite else color2
+        tile_pos = self.tile_positions[tile]
+        interpolation_factor = 0
 
-    def shader_temperature_to_color(self, tile, time_ms, tiles, color1, color2, width, height, update_interval=10):
-        current_time = glfw.get_time() * 1000
-        if current_time - self.last_temperature_update_time > update_interval:
-            self.last_temperature_update_time = current_time
-            for t in tiles:
-                t.update_temperature(diffusion_rate=0.01)
-            for t in tiles:
-                t.apply_temperature_update()
+        for center_tile, radius, start_time, direction in self.relay_waves:
+            center_pos = self.tile_positions[center_tile]
+            distance = abs(tile_pos - center_pos)
+            
+            if distance <= radius and radius > 0:  # Ensure radius is positive
+                wave_progress = distance / radius
+                wave_intensity = 1 - wave_progress
+                interpolation_factor += direction * wave_intensity
 
-            heat_interval = 10
-            if current_time % heat_interval < 1:
-                random_tile = random.choice(tiles)
-                random_tile.current_temperature = 150
+        # Clamp interpolation factor between -1 and 1
+        interpolation_factor = max(-1, min(1, interpolation_factor))
 
-        temperature = tile.current_temperature
-        low_temp, high_temp = 0, 150
-        intensity = (temperature - low_temp) / (high_temp - low_temp)
-        intensity = min(max(intensity, 0), 1)
+        # Interpolate color
+        if interpolation_factor > 0:
+            inverted_color = self.invert_color(base_color)
+            final_color = self.blend_colors(base_color, inverted_color, interpolation_factor)
+        else:
+            final_color = self.blend_colors(base_color, base_color, -interpolation_factor)
 
-        red = (color1[0] * intensity + color2[0] * (1 - intensity))
-        green = (color1[1] * intensity + color2[1] * (1 - intensity))
-        blue = (color1[2] * intensity + color2[2] * (1 - intensity))
-        alpha = 255 * (1 - intensity)
+        return (*final_color, 255)
+
+    def shader_pixelation(self, tile, time_ms, tiles, color1, color2, width, height):
+        # Load and process the image if not done yet
+        if self.image_data is None or self.tile_to_pixel_map is None:
+            self.load_and_process_image(tiles, width, height)
+
+        # If image loading failed, return a default color
+        if self.image_data is None or self.tile_to_pixel_map is None:
+            return (128, 128, 128, 255)  # Gray color as fallback
+
+        # Get the corresponding pixel for this tile
+        x, y = self.tile_to_pixel_map[tile]
+        
+        # Get the color from the image
+        color = self.image_data[y, x]
+
+        # If the image is grayscale, convert to RGB
+        if len(color) == 1:
+            color = [color[0], color[0], color[0]]
+
+        # Ensure we return an RGBA color
+        if len(color) == 3:
+            return (*color, 255)
+        else:
+            return tuple(color)
 
         return (int(red), int(green), int(blue), int(alpha))
+    
+    def shader_pixelation_slideshow(self, tile, time_ms, tiles, color1, color2, width, height):
+        if not self.image_data:
+            self.load_and_process_images(width, height)
+            self.create_tile_to_pixel_map(tiles, width, height)
+            self.transition_start_time = time_ms
+
+        if self.tile_to_pixel_map is None:
+            return (128, 128, 128, 255)  # Gray color as fallback
+
+        current_time = time_ms
+        elapsed_time = current_time - self.transition_start_time
+        total_duration = self.transition_duration * len(self.image_data)
+        
+        # Calculate the current position in the cycle
+        cycle_position = (elapsed_time % total_duration) / self.transition_duration
+        current_index = int(cycle_position)
+        next_index = (current_index + 1) % len(self.image_data)
+        
+        # Calculate progress within the current transition
+        transition_progress = cycle_position - current_index
+
+        # Get the corresponding pixel for this tile
+        x, y = self.tile_to_pixel_map[tile]
+        
+        # Get colors from current and next image
+        current_color = self.image_data[current_index][y, x]
+        next_color = self.image_data[next_index][y, x]
+
+        # Use smooth step function for easing
+        progress = transition_progress * transition_progress * (3 - 2 * transition_progress)
+        color = tuple(int(c1 * (1 - progress) + c2 * progress) for c1, c2 in zip(current_color, next_color))
+
+        return (*color, 255)
+
 
     def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height):
         if tile not in self.cached_neighbors:
@@ -219,3 +324,37 @@ class Shader:
             int(color1[i] * (1 - blend_factor) + color2[i] * blend_factor)
             for i in range(3)
         )
+
+    def load_images_from_folder(self, folder_path='input'):
+        self.image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        if not self.image_files:
+            print(f"Error: No image files found in {folder_path}")
+        else:
+            print(f"Loaded {len(self.image_files)} images from {folder_path}")
+
+    def load_and_process_images(self, width, height):
+        if not self.image_files:
+            self.load_images_from_folder()
+        
+        self.image_data = []
+        for image_file in self.image_files:
+            image_path = os.path.join('input', image_file)
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')  # Ensure consistent color format
+                img = img.resize((width, height), Image.LANCZOS)
+                self.image_data.append(np.array(img))
+        
+        if not self.image_data:
+            self.image_data = [np.full((height, width, 3), 128, dtype=np.uint8)]  # Gray image as fallback
+
+    def create_tile_to_pixel_map(self, tiles, width, height):
+        all_vertices = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
+        min_x, min_y = np.min(all_vertices, axis=0)
+        max_x, max_y = np.max(all_vertices, axis=0)
+
+        self.tile_to_pixel_map = {}
+        for tile in tiles:
+            centroid = op.calculate_centroid(tile.vertices)
+            x = int((centroid.real - min_x) / (max_x - min_x) * (width - 1))
+            y = int((centroid.imag - min_y) / (max_y - min_y) * (height - 1))
+            self.tile_to_pixel_map[tile] = (x, y)
