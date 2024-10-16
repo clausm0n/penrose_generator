@@ -61,6 +61,7 @@ class Shader:
         self.last_relay_time = 0
         self.relay_duration = 5000  # Duration of a single relay wave
         self.tile_interpolation = {}  # To track interpolation state of tiles
+        self.cached_neighbors = {}
 
     def reset_state(self):
         """Reset the shader state when tile map changes."""
@@ -290,7 +291,10 @@ class Shader:
 
 
     def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height):
-        if tile not in self.cached_neighbors:
+        # Create a cache key that includes the current colors
+        cache_key = (tile, color1, color2)
+        
+        if cache_key not in self.cached_neighbors:
             kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
             total_neighbors = kite_count + dart_count
             blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
@@ -310,9 +314,9 @@ class Shader:
             else:
                 color = self.blend_colors(color1, color2, blend_factor)
 
-            self.cached_neighbors[tile] = color
+            self.cached_neighbors[cache_key] = color
         else:
-            color = self.cached_neighbors[tile]
+            color = self.cached_neighbors[cache_key]
 
         return (*color, 255)
 

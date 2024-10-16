@@ -80,37 +80,27 @@ def render_tiles(shaders, width, height):
     current_time = glfw.get_time() * 1000  # Convert to milliseconds
 
     gamma_values = config_data['gamma']
-    size_value = config_data['size']
     scale_value = config_data['scale']
     color1 = tuple(config_data["color1"])
     color2 = tuple(config_data["color2"])
-    config_key = (tuple(gamma_values), size_value, color1, color2)
+    config_key = (tuple(gamma_values), width, height, scale_value, color1, color2)
     
     if config_key not in tiles_cache:
         tiles_cache.clear()
         print("Cache cleared")
-        print("Rendering tiles...", gamma_values, size_value, scale_value, color1, color2)
-        tiles_data = op.tiling(gamma_values, size_value)
-        tiles_objects = [Tile(vertices, color) for vertices, color in tiles_data]
+        print("Rendering tiles...", gamma_values, scale_value, color1, color2)
+        tiles_objects = op.tiling(gamma_values, width, height, scale_value)
         op.calculate_neighbors(tiles_objects)
         tiles_cache[config_key] = tiles_objects
 
-        # Calculate the geometric center of all tiles and determine central tiles
-        all_vertices = np.concatenate([tile.vertices for tile in tiles_objects])
-        geometric_center = np.mean(all_vertices, axis=0)
-        distance_threshold = np.std(all_vertices) * 0.5  # Adjust this value based on observed clustering
-        tiles_cache["central_tiles"] = [tile for tile in tiles_objects if np.linalg.norm(np.mean(tile.vertices, axis=0) - geometric_center) < distance_threshold]
-
-        # Reset shader state when tile map changes
-        shaders.reset_state()
-
-    central_tiles = tiles_cache["central_tiles"]
+    visible_tiles = tiles_cache[config_key]
+    center = complex(width // 2, height // 2)
     shader_func = shaders.current_shader()
 
-    for tile in central_tiles:
+    for tile in visible_tiles:
         try:
-            modified_color = shader_func(tile, current_time, central_tiles, color1, color2, width, height)
-            vertices = op.to_canvas(tile.vertices, scale_value, complex(width // 2, height // 2))
+            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height)
+            vertices = op.to_canvas(tile.vertices, scale_value, center,3)
             glBegin(GL_POLYGON)
             glColor4ub(*modified_color)
             for vertex in vertices:
@@ -118,7 +108,6 @@ def render_tiles(shaders, width, height):
             glEnd()
         except Exception as e:
             logging.error(f"Error rendering tile: {e}")
-            # If an error occurs, reset the shader state and skip this tile
             shaders.reset_state()
             continue
 

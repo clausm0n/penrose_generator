@@ -8,6 +8,7 @@ import random
 import cmath
 import os
 import configparser
+from penrose_tools.Tile import Tile
 
 class Operations:
     def __init__(self):
@@ -153,13 +154,28 @@ class Operations:
         for k[r], k[s] in [(kr, ks), (kr+1, ks), (kr+1, ks+1), (kr, ks+1)]:
             yield sum(x*t for t, x in zip(self.zeta, k))
 
-    def tiling(self,gamma, size):
+    def tiling(self, gamma, width, height, scale):
+        size = max(width, height) // scale
+        tiles = []
+        center = complex(width // 2, height // 2)
+        
         for r in range(5):
             for s in range(r+1, 5):
                 for kr in range(-size, size+1):
                     for ks in range(-size, size+1):
-                        color = (0, 255, 255) if (r-s)**2 % 5 == 1 else (0, 255, 0)
-                        yield list(self.rhombus_at_intersection(gamma, r, s, kr, ks)), color
+                        vertices = list(self.rhombus_at_intersection(gamma, r, s, kr, ks))
+                        screen_vertices = self.to_canvas(vertices, scale, center)
+                        
+                        # Check if any vertex is within the screen bounds
+                        if any(0 <= x <= width and 0 <= y <= height for x, y in screen_vertices):
+                            color = (0, 255, 255) if (r-s)**2 % 5 == 1 else (0, 255, 0)
+                            tiles.append(Tile(vertices, color))
+        
+        return tiles
+
+    def is_tile_visible(self, tile, width, height, scale, center):
+        screen_vertices = self.to_canvas(tile.vertices, scale, center)
+        return any(0 <= x <= width and 0 <= y <= height for x, y in screen_vertices)
 
     def to_canvas(self,vertices, scale, center, shrink_factor=5):
         centroid = sum(vertices) / len(vertices)
