@@ -13,8 +13,8 @@ import signal
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
-    'size': 23,
-    'scale': 16,
+    'size': 15,
+    'scale': 15,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
     'color1': [205, 255, 255],
     'color2': [0, 0, 255]
