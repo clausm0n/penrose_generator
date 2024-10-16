@@ -61,26 +61,26 @@ class Shader:
         self.last_relay_time = 0
         self.relay_duration = 5000  # Duration of a single relay wave
         self.tile_interpolation = {}  # To track interpolation state of tiles
-        self.cached_neighbors = {}
 
     def reset_state(self):
         """Reset the shader state when tile map changes."""
         self.initialize_shader_states()
+        self.image_files = []  # Clear image files
         # self.load_images_from_folder()  # Reload images
         print("Shader state reset")
 
-    def shader_no_effect(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_no_effect(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         base_color = color1 if tile.is_kite else color2
         return (*base_color, 255)
 
-    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_shift_effect(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         base_color = color1 if tile.is_kite else color2
         centroid = sum(tile.vertices) / len(tile.vertices)
         time_factor = np.sin(time_ms / 1000.0 + centroid.real * centroid.imag) * 0.5 + 0.5
         new_color = [min(255, max(0, int(base_color[i] * time_factor))) for i in range(3)]
         return (*new_color, 255)
 
-    def shader_raindrop_ripple(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_raindrop_ripple(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         current_time = glfw.get_time() * 1000
         
         # Initialize or reinitialize if needed
@@ -140,7 +140,7 @@ class Shader:
         
         return (*tile_color, 255)
 
-    def shader_color_wave(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_color_wave(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         center = complex(width // 2, height // 2)
         centroid = op.calculate_centroid(tile.vertices)
         tile_position = centroid - center
@@ -165,7 +165,7 @@ class Shader:
 
         return (int(red), int(green), int(blue), 255)
 
-    def shader_relay(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_relay(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         current_time = time_ms
 
         # Initialize or reinitialize if needed
@@ -228,69 +228,7 @@ class Shader:
 
         return (*final_color, 255)
 
-    def shader_pixelation(self, tile, time_ms, tiles, color1, color2, width, height):
-        # Load and process the image if not done yet
-        if self.image_data is None or self.tile_to_pixel_map is None:
-            self.load_and_process_image(tiles, width, height)
-
-        # If image loading failed, return a default color
-        if self.image_data is None or self.tile_to_pixel_map is None:
-            return (128, 128, 128, 255)  # Gray color as fallback
-
-        # Get the corresponding pixel for this tile
-        x, y = self.tile_to_pixel_map[tile]
-        
-        # Get the color from the image
-        color = self.image_data[y, x]
-
-        # If the image is grayscale, convert to RGB
-        if len(color) == 1:
-            color = [color[0], color[0], color[0]]
-
-        # Ensure we return an RGBA color
-        if len(color) == 3:
-            return (*color, 255)
-        else:
-            return tuple(color)
-
-        return (int(red), int(green), int(blue), int(alpha))
-    
-    def shader_pixelation_slideshow(self, tile, time_ms, tiles, color1, color2, width, height):
-        if not self.image_data:
-            self.load_and_process_images(width, height)
-            self.create_tile_to_pixel_map(tiles, width, height)
-            self.transition_start_time = time_ms
-
-        if self.tile_to_pixel_map is None:
-            return (128, 128, 128, 255)  # Gray color as fallback
-
-        current_time = time_ms
-        elapsed_time = current_time - self.transition_start_time
-        total_duration = self.transition_duration * len(self.image_data)
-        
-        # Calculate the current position in the cycle
-        cycle_position = (elapsed_time % total_duration) / self.transition_duration
-        current_index = int(cycle_position)
-        next_index = (current_index + 1) % len(self.image_data)
-        
-        # Calculate progress within the current transition
-        transition_progress = cycle_position - current_index
-
-        # Get the corresponding pixel for this tile
-        x, y = self.tile_to_pixel_map[tile]
-        
-        # Get colors from current and next image
-        current_color = self.image_data[current_index][y, x]
-        next_color = self.image_data[next_index][y, x]
-
-        # Use smooth step function for easing
-        progress = transition_progress * transition_progress * (3 - 2 * transition_progress)
-        color = tuple(int(c1 * (1 - progress) + c2 * progress) for c1, c2 in zip(current_color, next_color))
-
-        return (*color, 255)
-
-
-    def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height):
+    def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         # Create a cache key that includes the current colors
         cache_key = (tile, color1, color2)
         
@@ -336,29 +274,113 @@ class Shader:
         else:
             print(f"Loaded {len(self.image_files)} images from {folder_path}")
 
-    def load_and_process_images(self, width, height):
+    def load_and_process_images(self, tiles):
         if not self.image_files:
             self.load_images_from_folder()
         
+        # Calculate the bounding box of the tile array
+        all_vertices = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
+        min_x, min_y = np.min(all_vertices, axis=0)
+        max_x, max_y = np.max(all_vertices, axis=0)
+        tile_width = max_x - min_x
+        tile_height = max_y - min_y
+        tile_ratio = tile_width / tile_height
+
         self.image_data = []
+        self.image_scales = []  # Store scaling info for each image
         for image_file in self.image_files:
             image_path = os.path.join('input', image_file)
             with Image.open(image_path) as img:
                 img = img.convert('RGB')  # Ensure consistent color format
-                img = img.resize((width, height), Image.LANCZOS)
-                self.image_data.append(np.array(img))
+                
+                # Calculate aspect ratios
+                img_ratio = img.width / img.height
+                
+                if img_ratio > tile_ratio:  # Image is wider
+                    scale = tile_width / img.width
+                    new_width = int(tile_width)
+                    new_height = int(img.height * scale)
+                    offset_x = 0
+                    offset_y = (tile_height - new_height) / 2
+                else:  # Image is taller
+                    scale = tile_height / img.height
+                    new_height = int(tile_height)
+                    new_width = int(img.width * scale)
+                    offset_x = (tile_width - new_width) / 2
+                    offset_y = 0
+                
+                # Resize image
+                img_resized = img.resize((new_width, new_height), Image.LANCZOS)
+                
+                # Create a black background of tile array size
+                background = Image.new('RGB', (int(tile_width), int(tile_height)), (0, 0, 0))
+                
+                # Paste the resized image onto the background
+                background.paste(img_resized, (int(offset_x), int(offset_y)))
+                
+                self.image_data.append(np.array(background))
+                self.image_scales.append((scale, offset_x, offset_y, new_width, new_height))
         
         if not self.image_data:
-            self.image_data = [np.full((height, width, 3), 128, dtype=np.uint8)]  # Gray image as fallback
+            self.image_data = [np.full((int(tile_height), int(tile_width), 3), 128, dtype=np.uint8)]  # Gray image as fallback
+            self.image_scales = [(1, 0, 0, int(tile_width), int(tile_height))]
 
-    def create_tile_to_pixel_map(self, tiles, width, height):
-        all_vertices = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
-        min_x, min_y = np.min(all_vertices, axis=0)
-        max_x, max_y = np.max(all_vertices, axis=0)
+        # Store tile array dimensions for mapping
+        self.tile_dimensions = (min_x, min_y, max_x, max_y)
+
+    def create_tile_to_pixel_map(self, tiles):
+        min_x, min_y, max_x, max_y = self.tile_dimensions
+        tile_width = max_x - min_x
+        tile_height = max_y - min_y
 
         self.tile_to_pixel_map = {}
         for tile in tiles:
             centroid = op.calculate_centroid(tile.vertices)
-            x = int((centroid.real - min_x) / (max_x - min_x) * (width - 1))
-            y = int((centroid.imag - min_y) / (max_y - min_y) * (height - 1))
-            self.tile_to_pixel_map[tile] = (x, y)
+            x = (centroid.real - min_x) / tile_width
+            y = (centroid.imag - min_y) / tile_height
+            self.tile_to_pixel_map[tile] = (x, y)  # Store normalized coordinates
+
+    def shader_pixelation_slideshow(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
+        if not hasattr(self, 'last_scale') or self.last_scale != scale_value:
+            self.last_scale = scale_value
+            self.load_and_process_images(tiles)
+            self.create_tile_to_pixel_map(tiles)
+            self.transition_start_time = time_ms
+
+        if self.tile_to_pixel_map is None:
+            return (128, 128, 128, 255)  # Gray color as fallback
+
+        current_time = time_ms
+        elapsed_time = current_time - self.transition_start_time
+        total_duration = self.transition_duration * len(self.image_data)
+        
+        cycle_position = (elapsed_time % total_duration) / self.transition_duration
+        current_index = int(cycle_position)
+        next_index = (current_index + 1) % len(self.image_data)
+        
+        transition_progress = cycle_position - current_index
+
+        x, y = self.tile_to_pixel_map[tile]
+        
+        current_color = self.get_color_from_image(current_index, x, y)
+        next_color = self.get_color_from_image(next_index, x, y)
+
+        progress = transition_progress * transition_progress * (3 - 2 * transition_progress)
+        color = tuple(int(c1 * (1 - progress) + c2 * progress) for c1, c2 in zip(current_color, next_color))
+
+        return (*color, 255)
+
+
+    def get_color_from_image(self, image_index, x, y):
+        image = self.image_data[image_index]
+        scale, offset_x, offset_y, new_width, new_height = self.image_scales[image_index]
+        
+        # Convert normalized coordinates to image pixel coordinates
+        px = int(x * image.shape[1])
+        py = int(y * image.shape[0])
+        
+        # Ensure px and py are within image bounds
+        px = max(0, min(px, image.shape[1] - 1))
+        py = max(0, min(py, image.shape[0] - 1))
+        
+        return image[py, px]

@@ -99,7 +99,7 @@ def render_tiles(shaders, width, height):
 
     for tile in visible_tiles:
         try:
-            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height)
+            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height,scale_value)
             vertices = op.to_canvas(tile.vertices, scale_value, center,3)
             glBegin(GL_POLYGON)
             glColor4ub(*modified_color)
