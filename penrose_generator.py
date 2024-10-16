@@ -8,7 +8,7 @@ from penrose_tools import Operations, Tile, Shader, run_server, update_event, to
 import logging
 import configparser
 import signal
-
+import argparse
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -111,16 +111,26 @@ def render_tiles(shaders, width, height):
             shaders.reset_state()
             continue
 
-def setup_window():
+def setup_window(fullscreen=False):
     global width, height
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
-    # Set the window size to 720p
-    width, height = 1280, 720
+    # Get the primary monitor
+    primary_monitor = glfw.get_primary_monitor()
+    
+    if fullscreen:
+        # Get the video mode of the primary monitor
+        video_mode = glfw.get_video_mode(primary_monitor)
+        width, height = video_mode.size.width, video_mode.size.height
+        
+        # Create a fullscreen window
+        window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+    else:
+        # Set the window size to 720p for windowed mode
+        width, height = 1280, 720
+        window = glfw.create_window(width, height, "Penrose Tiling", None, None)
 
-    # Create a windowed mode window and its OpenGL context
-    window = glfw.create_window(width, height, "Penrose Tiling", None, None)
     if not window:
         glfw.terminate()
         raise Exception("GLFW window can't be created")
@@ -128,8 +138,9 @@ def setup_window():
     glfw.make_context_current(window)
     setup_projection(width, height)
 
-    # Show the mouse cursor (since it's not fullscreen anymore)
-    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
+    # Show the mouse cursor in windowed mode, hide it in fullscreen
+    glfw.set_input_mode(window, glfw.CURSOR, 
+                        glfw.CURSOR_HIDDEN if fullscreen else glfw.CURSOR_NORMAL)
 
     # Set up basic OpenGL configuration
     glEnable(GL_BLEND)
@@ -141,6 +152,11 @@ def setup_window():
 def main():
     global width, height
 
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
+    parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
+    args = parser.parse_args()
+
     def signal_handler(sig, frame):
         global running
         print('Shutting down application...')
@@ -151,7 +167,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     try:
         logging.info("Starting the penrose generator script.")
-        window = setup_window()
+        window = setup_window(fullscreen=args.fullscreen)
         shaders = Shader()
         last_time = glfw.get_time()
 

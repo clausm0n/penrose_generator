@@ -155,7 +155,8 @@ class Operations:
             yield sum(x*t for t, x in zip(self.zeta, k))
 
     def tiling(self, gamma, width, height, scale):
-        size = max(width, height) // scale
+        
+        size = max(width, height) // (scale * 3)
         tiles = []
         center = complex(width // 2, height // 2)
         
