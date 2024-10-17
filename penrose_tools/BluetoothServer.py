@@ -9,6 +9,14 @@ import uuid
 
 from bluezero import peripheral, adapter, async_tools
 
+# Static UUIDs for services and characteristics
+# You can generate your own UUIDs [here](https://www.uuidgenerator.net/)
+CONFIG_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
+CONFIG_READ_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
+CONFIG_WRITE_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef2'
+COMMAND_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef3'
+COMMAND_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef4'
+
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
         """
@@ -28,15 +36,15 @@ class BluetoothServer:
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
 
-        # Generate UUIDs dynamically
-        self.CONFIG_SERVICE_UUID = str(uuid.uuid4())
-        self.CONFIG_READ_CHAR_UUID = str(uuid.uuid4())
-        self.CONFIG_WRITE_CHAR_UUID = str(uuid.uuid4())
-        self.COMMAND_SERVICE_UUID = str(uuid.uuid4())
-        self.COMMAND_CHAR_UUID = str(uuid.uuid4())
-
         # Initialize Logging
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler("bluetooth_server.log"),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
         self.logger = logging.getLogger('BluetoothServer')
 
         # Initialize Peripheral
@@ -55,10 +63,6 @@ class BluetoothServer:
             appearance=0
         )
 
-        # Initialize Operations (if needed)
-        # from penrose_tools.Operations import Operations
-        # self.operations = Operations()
-
         # Add Services and Characteristics
         self.add_services()
 
@@ -66,34 +70,51 @@ class BluetoothServer:
         """
         Define and add services and their characteristics to the peripheral.
         """
-        # Config Service
-        config_service = self.peripheral.add_service(
+        # Add Config Service
+        self.peripheral.add_service(
             srv_id=1,
-            uuid=self.CONFIG_SERVICE_UUID,
+            uuid=CONFIG_SERVICE_UUID,
             primary=True
         )
-        config_service.add_characteristic(
-            uuid=self.CONFIG_READ_CHAR_UUID,
+        self.logger.info(f"Added Config Service with UUID: {CONFIG_SERVICE_UUID}")
+
+        # Add Config Read Characteristic
+        self.peripheral.add_characteristic(
+            srv_id=1,
+            chr_id=1,
+            uuid=CONFIG_READ_CHAR_UUID,
             flags=['read'],
             read_callback=self.read_config_callback
         )
-        config_service.add_characteristic(
-            uuid=self.CONFIG_WRITE_CHAR_UUID,
+        self.logger.info(f"Added Config Read Characteristic with UUID: {CONFIG_READ_CHAR_UUID}")
+
+        # Add Config Write Characteristic
+        self.peripheral.add_characteristic(
+            srv_id=1,
+            chr_id=2,
+            uuid=CONFIG_WRITE_CHAR_UUID,
             flags=['write'],
             write_callback=self.write_config_callback
         )
+        self.logger.info(f"Added Config Write Characteristic with UUID: {CONFIG_WRITE_CHAR_UUID}")
 
-        # Command Service
-        command_service = self.peripheral.add_service(
+        # Add Command Service
+        self.peripheral.add_service(
             srv_id=2,
-            uuid=self.COMMAND_SERVICE_UUID,
+            uuid=COMMAND_SERVICE_UUID,
             primary=True
         )
-        command_service.add_characteristic(
-            uuid=self.COMMAND_CHAR_UUID,
+        self.logger.info(f"Added Command Service with UUID: {COMMAND_SERVICE_UUID}")
+
+        # Add Command Characteristic
+        self.peripheral.add_characteristic(
+            srv_id=2,
+            chr_id=1,
+            uuid=COMMAND_CHAR_UUID,
             flags=['write'],
             write_callback=self.command_callback
         )
+        self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
     def read_config_callback(self):
         """
@@ -102,11 +123,12 @@ class BluetoothServer:
         try:
             config = self.read_config()
             response = json.dumps(config).encode('utf-8')
-            self.logger.debug(f"Config Read: {response}")
+            self.logger.info(f"Config Read: {response}")
             return response
         except Exception as e:
             self.logger.error(f"Error reading config: {e}")
-            return json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8')
+            error_response = {'status': 'error', 'message': str(e)}
+            return json.dumps(error_response).encode('utf-8')
 
     def write_config_callback(self, value, options):
         """
@@ -114,22 +136,19 @@ class BluetoothServer:
 
         :param value: The data written to the characteristic.
         :param options: Additional options.
-        :return: Response as bytes.
         """
         try:
             data = json.loads(value.decode('utf-8'))
             self.write_config(data)
             self.logger.info(f"Configuration updated: {data}")
 
-            # Apply settings or trigger operations if necessary
-            # self.operations.apply_settings()
+            # Notify clients about the update (optional)
+            # You can implement notifications if needed
 
-            response = {'status': 'success', 'message': 'Configuration updated'}
-            return json.dumps(response).encode('utf-8')
+            # Trigger the update event
+            self.update_event.set()
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
-            response = {'status': 'error', 'message': str(e)}
-            return json.dumps(response).encode('utf-8')
 
     def command_callback(self, value, options):
         """
@@ -137,17 +156,17 @@ class BluetoothServer:
 
         :param value: The data written to the characteristic.
         :param options: Additional options.
-        :return: Response as bytes.
         """
         try:
             command = value.decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
             response = self.handle_command(command)
-            return json.dumps(response).encode('utf-8')
+
+            # Optionally, send a notification back to the client with the response
+            # Implementing notifications requires a separate notify characteristic
+
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
-            response = {'status': 'error', 'message': str(e)}
-            return json.dumps(response).encode('utf-8')
 
     def read_config(self):
         """
