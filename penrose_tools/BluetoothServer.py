@@ -10,12 +10,13 @@ import uuid
 from bluezero import peripheral, adapter, async_tools
 
 # Static UUIDs for services and characteristics
-# You can generate your own UUIDs [here](https://www.uuidgenerator.net/)
+# Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
 CONFIG_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 CONFIG_READ_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 CONFIG_WRITE_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef2'
 COMMAND_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef3'
 COMMAND_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef4'
+NOTIFICATION_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef5'  # Optional for notifications
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -84,7 +85,9 @@ class BluetoothServer:
             chr_id=1,
             uuid=CONFIG_READ_CHAR_UUID,
             flags=['read'],
-            read_callback=self.read_config_callback
+            read_callback=self.read_config_callback,
+            value=[],          # Initial value
+            notifying=False    # Not notifying by default
         )
         self.logger.info(f"Added Config Read Characteristic with UUID: {CONFIG_READ_CHAR_UUID}")
 
@@ -94,7 +97,9 @@ class BluetoothServer:
             chr_id=2,
             uuid=CONFIG_WRITE_CHAR_UUID,
             flags=['write'],
-            write_callback=self.write_config_callback
+            write_callback=self.write_config_callback,
+            value=[],          # Initial value
+            notifying=False    # Not notifying by default
         )
         self.logger.info(f"Added Config Write Characteristic with UUID: {CONFIG_WRITE_CHAR_UUID}")
 
@@ -112,61 +117,89 @@ class BluetoothServer:
             chr_id=1,
             uuid=COMMAND_CHAR_UUID,
             flags=['write'],
-            write_callback=self.command_callback
+            write_callback=self.command_callback,
+            value=[],          # Initial value
+            notifying=False    # Not notifying by default
         )
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
+
+        # Optional: Add Notification Characteristic for Responses
+        # Uncomment the following block if you wish to send notifications back to clients
+        """
+        self.peripheral.add_characteristic(
+            srv_id=2,
+            chr_id=2,
+            uuid=NOTIFICATION_CHAR_UUID,
+            flags=['notify'],
+            notify_callback=self.notify_callback,
+            value=[],          # Initial value
+            notifying=False    # Not notifying by default
+        )
+        self.logger.info(f"Added Notification Characteristic with UUID: {NOTIFICATION_CHAR_UUID}")
+        """
 
     def read_config_callback(self):
         """
         Callback to handle read requests for configuration data.
+        Returns a list of byte values representing the JSON configuration.
         """
         try:
             config = self.read_config()
-            response = json.dumps(config).encode('utf-8')
-            self.logger.info(f"Config Read: {response}")
-            return response
+            config_json = json.dumps(config)
+            config_bytes = config_json.encode('utf-8')
+            byte_list = list(config_bytes)
+            self.logger.info(f"Config Read: {config_json}")
+            return byte_list
         except Exception as e:
             self.logger.error(f"Error reading config: {e}")
             error_response = {'status': 'error', 'message': str(e)}
-            return json.dumps(error_response).encode('utf-8')
+            return list(json.dumps(error_response).encode('utf-8'))
 
     def write_config_callback(self, value, options):
         """
         Callback to handle write requests for updating configuration data.
 
-        :param value: The data written to the characteristic.
+        :param value: List of byte values written to the characteristic.
         :param options: Additional options.
         """
         try:
-            data = json.loads(value.decode('utf-8'))
+            # Convert list of bytes to bytes object
+            value_bytes = bytes(value)
+            data_str = value_bytes.decode('utf-8')
+            data = json.loads(data_str)
             self.write_config(data)
             self.logger.info(f"Configuration updated: {data}")
 
             # Notify clients about the update (optional)
-            # You can implement notifications if needed
+            # self.send_notification({'status': 'success', 'message': 'Configuration updated'})
 
             # Trigger the update event
             self.update_event.set()
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
+            # Optionally, notify clients about the error
+            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def command_callback(self, value, options):
         """
         Callback to handle write requests for executing commands.
 
-        :param value: The data written to the characteristic.
+        :param value: List of byte values written to the characteristic.
         :param options: Additional options.
         """
         try:
-            command = value.decode('utf-8').strip()
+            # Convert list of bytes to bytes object
+            value_bytes = bytes(value)
+            command = value_bytes.decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
             response = self.handle_command(command)
 
-            # Optionally, send a notification back to the client with the response
-            # Implementing notifications requires a separate notify characteristic
-
+            # Notify clients about the command response (optional)
+            # self.send_notification(response)
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
+            # Optionally, notify clients about the error
+            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def read_config(self):
         """
@@ -220,18 +253,38 @@ class BluetoothServer:
         if command == 'toggle_shader':
             self.toggle_shader_event.set()
             self.logger.info("Shader toggled")
-            return {'status': 'success', 'message': 'Shader toggled'}
+            response = {'status': 'success', 'message': 'Shader toggled'}
         elif command == 'shutdown':
             self.shutdown_event.set()
             self.logger.info("Shutdown initiated")
-            return {'status': 'success', 'message': 'Server is shutting down'}
+            response = {'status': 'success', 'message': 'Server is shutting down'}
         elif command == 'randomize_colors':
             self.randomize_colors_event.set()
             self.logger.info("Colors randomized")
-            return {'status': 'success', 'message': 'Colors randomized'}
+            response = {'status': 'success', 'message': 'Colors randomized'}
         else:
             self.logger.warning(f"Unknown command received: {command}")
-            return {'status': 'error', 'message': 'Unknown command'}
+            response = {'status': 'error', 'message': 'Unknown command'}
+        
+        # Optional: Notify clients about the response
+        # self.send_notification(response)
+        
+        return response
+
+    def send_notification(self, message):
+        """
+        Send a notification to subscribed clients.
+
+        :param message: Dictionary to send as JSON.
+        """
+        try:
+            message_json = json.dumps(message)
+            message_bytes = message_json.encode('utf-8')
+            byte_list = list(message_bytes)
+            self.peripheral.send_notify(NOTIFICATION_CHAR_UUID, byte_list)
+            self.logger.info(f"Sent notification: {message_json}")
+        except Exception as e:
+            self.logger.error(f"Error sending notification: {e}")
 
     def publish(self):
         """
