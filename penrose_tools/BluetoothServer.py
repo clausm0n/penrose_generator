@@ -1,8 +1,6 @@
-import asyncio
-from bleak import BleakServer
-from bleak.backends.service import BleakGATTServiceCollection
-from bleak.backends.characteristic import BleakGATTCharacteristic
+from bluezero import peripheral
 from .Operations import Operations
+import asyncio
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event):
@@ -16,12 +14,14 @@ class BluetoothServer:
         self.SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
         self.CHARACTERISTIC_UUID = "87654321-1234-5678-1234-56789abcdef0"
 
-    async def handle_read(self, characteristic: BleakGATTCharacteristic, **kwargs):
+        self.peripheral = None
+
+    def handle_read(self):
         return b"Penrose Tiling Generator"
 
-    async def handle_write(self, characteristic: BleakGATTCharacteristic, value: bytearray, **kwargs):
+    def handle_write(self, value):
         command = value.decode().strip()
-        await self.handle_command(command)
+        asyncio.run(self.handle_command(command))
 
     async def handle_command(self, command):
         if command == "toggle_shader":
@@ -43,29 +43,30 @@ class BluetoothServer:
         elif command == "shutdown":
             self.shutdown_event.set()
 
-    async def run(self):
-        services = BleakGATTServiceCollection()
-        service = services.add_service(self.SERVICE_UUID)
-        char = service.add_characteristic(
-            self.CHARACTERISTIC_UUID,
-            read=True,
-            write=True,
-            notify=True,
-            properties=["read", "write", "notify"]
-        )
-        char.set_value(b"Penrose Tiling Generator")
+    def run(self):
+        # Replace 'hci0' with your Bluetooth adapter's MAC address if necessary
+        self.peripheral = peripheral.Peripheral(adapter_addr='hci0', local_name='Penrose Tiling Generator')
 
-        server = BleakServer(services)
-        server.read_request_func = self.handle_read
-        server.write_request_func = self.handle_write
+        service = peripheral.Service(self.SERVICE_UUID)
+        characteristic = peripheral.Characteristic(self.CHARACTERISTIC_UUID,
+                                                   ['read', 'write', 'notify'],
+                                                   ['read', 'write'],
+                                                   self.handle_read,
+                                                   self.handle_write)
 
-        await server.start()
+        service.add_characteristic(characteristic)
+        self.peripheral.add_service(service)
+
         print(f"Bluetooth server started. Service UUID: {self.SERVICE_UUID}")
-        await self.shutdown_event.wait()
-        await server.stop()
-        print("Bluetooth server stopped")
+        self.peripheral.publish()
+
+        try:
+            self.shutdown_event.wait()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.peripheral.stop()
+            print("Bluetooth server stopped")
 
     def run_in_thread(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(self.run())
+        self.run()
