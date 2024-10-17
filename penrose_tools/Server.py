@@ -39,7 +39,14 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         config = configparser.ConfigParser()
         config.read(CONFIG_FILE)
         settings = dict(config['Settings'])
-        self.wfile.write(json.dumps(settings).encode('utf-8'))
+        formatted_settings = {
+            "size": int(settings.get('size', 0)),
+            "scale": int(settings.get('scale', 0)),
+            "gamma": [float(x.strip()) for x in settings.get('gamma', '').split(',')],
+            "color1": [int(x.strip()) for x in settings.get('color1', '').replace('(', '').replace(')', '').split(',')],
+            "color2": [int(x.strip()) for x in settings.get('color2', '').replace('(', '').replace(')', '').split(',')]
+        }
+        self.wfile.write(json.dumps(formatted_settings).encode('utf-8'))
 
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
@@ -54,7 +61,13 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
                 config = configparser.ConfigParser()
                 config.read(CONFIG_FILE)
                 for key, value in data.items():
-                    config.set('Settings', key, ', '.join(map(str, value)) if isinstance(value, list) else str(value))
+                    if isinstance(value, list):
+                        if key in ['color1', 'color2']:
+                            config.set('Settings', key, f"({', '.join(map(str, value))})")
+                        else:
+                            config.set('Settings', key, ', '.join(map(str, value)))
+                    else:
+                        config.set('Settings', key, str(value))
                 with open(CONFIG_FILE, 'w') as configfile:
                     config.write(configfile)
                 response = {'status': 'success', 'message': 'Configuration updated'}
@@ -80,7 +93,6 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
         elif command == 'randomize_colors':
             randomize_colors_event.set()
             response.update({'status': 'success', 'message': 'Colors randomized'})
-
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

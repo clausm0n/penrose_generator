@@ -4,11 +4,12 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event,BluetoothServer
 import logging
 import configparser
 import signal
 import argparse
+import asyncio
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -150,29 +151,35 @@ def setup_window(fullscreen=False):
     return window
 
 def main():
-    global width, height
+    global width, height, config_data
 
-    # Set up argument parser
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
+    parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
     args = parser.parse_args()
 
     def signal_handler(sig, frame):
         global running
         print('Shutting down application...')
         running = False
-        shutdown_event.set()  # Trigger the server shutdown
+        shutdown_event.set()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
     try:
         logging.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
         shaders = Shader()
         last_time = glfw.get_time()
 
-        server_thread = Thread(target=run_server, daemon=True)
-        server_thread.start()
+        if args.bluetooth:
+            bluetooth_server = BluetoothServer(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event, shutdown_event)
+            server_thread = Thread(target=bluetooth_server.run_in_thread, daemon=True)
+            server_thread.start()
+        else:
+            server_thread = Thread(target=run_server, daemon=True)
+            server_thread.start()
 
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()

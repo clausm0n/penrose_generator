@@ -16,37 +16,46 @@ class Operations:
         self.zeta = [cmath.exp(2j * cmath.pi * i / 5) for i in range(5)]
         self.config = configparser.ConfigParser()
 
-    def write_config_file(self,scale, size, gamma, color1, color2):
-            # Write complete configuration to file
-            self.filename = 'config.ini'
-            self.config['Settings'] = {
-                'scale': str(scale),
-                'size': str(size),
-                'gamma': ','.join(map(str, gamma)),
-                'color1': ','.join(map(str, color1)),
-                'color2': ','.join(map(str, color2))
-            }
-            with open(self.filename, 'w') as configfile:
-                self.config.write(configfile)
+    def write_config_file(self, scale, size, gamma, color1, color2):
+        # Write complete configuration to file
+        self.filename = 'config.ini'
+        self.config['Settings'] = {
+            'scale': str(scale),
+            'size': str(size),
+            'gamma': ','.join(map(str, gamma)),
+            'color1': f"({','.join(map(str, color1))})",
+            'color2': f"({','.join(map(str, color2))})"
+        }
+        with open(self.filename, 'w') as configfile:
+            self.config.write(configfile)
 
     def read_config_file(self, config_path):
-            self.config.read(config_path)
-            settings = {
-                'scale': self.config.getint('Settings', 'scale'),
-                'size': self.config.getint('Settings', 'size'),
-                'gamma': [float(x.strip()) for x in self.config.get('Settings', 'gamma').split(',')],
-                'color1': [int(x.strip()) for x in self.config.get('Settings', 'color1').split(',')],
-                'color2': [int(x.strip()) for x in self.config.get('Settings', 'color2').split(',')]
-            }
-            return settings
+        self.config.read(config_path)
+        settings = {
+            'scale': self.config.getint('Settings', 'scale'),
+            'size': self.config.getint('Settings', 'size'),
+            'gamma': [float(x.strip()) for x in self.config.get('Settings', 'gamma').split(',')],
+            'color1': self.parse_color(self.config.get('Settings', 'color1')),
+            'color2': self.parse_color(self.config.get('Settings', 'color2'))
+        }
+        return settings
+
+    def parse_color(self, color_string):
+        # Remove parentheses and split by comma
+        color_values = color_string.strip('()').split(',')
+        return [int(x.strip()) for x in color_values]
 
     def update_config_file(self, config_path, **kwargs):
         # Ensure the configparser instance is set to the correct file
         self.config.read(config_path)
         for key, value in kwargs.items():
             if isinstance(value, list):
-                # Sanitize list input by filtering out empty strings and joining correctly
-                cleaned_value = ', '.join(str(v).strip() for v in value if str(v).strip())
+                if key in ['color1', 'color2']:
+                    # Format color lists as tuples
+                    cleaned_value = f"({', '.join(str(v) for v in value)})"
+                else:
+                    # For other lists (like gamma), join with commas
+                    cleaned_value = ', '.join(str(v) for v in value)
                 self.config.set('Settings', key, cleaned_value)
             else:
                 self.config.set('Settings', key, str(value))
