@@ -146,7 +146,7 @@ class BluetoothServer:
 
         # Optional: Add Notification Characteristic for Responses
         # Uncomment the following block if you wish to send notifications back to clients
-
+        """
         self.peripheral.add_characteristic(
             srv_id=2,
             chr_id=2,
@@ -157,7 +157,7 @@ class BluetoothServer:
             notifying=False    # Not notifying by default
         )
         self.logger.info(f"Added Notification Characteristic with UUID: {NOTIFICATION_CHAR_UUID}")
-
+        """
 
     def read_config_callback(self):
         """
