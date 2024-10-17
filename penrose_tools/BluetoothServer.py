@@ -6,6 +6,7 @@ import configparser
 import threading
 import sys
 import uuid
+import subprocess
 
 from bluezero import peripheral, adapter, async_tools
 
@@ -66,6 +67,26 @@ class BluetoothServer:
 
         # Add Services and Characteristics
         self.add_services()
+    
+            # Start the Bluetooth Agent in a separate thread
+        self.start_bluetooth_agent()
+
+    def start_bluetooth_agent(self):
+        """
+        Start the Bluetooth Agent as a separate thread.
+        """
+        agent_thread = threading.Thread(target=self.run_agent, daemon=True)
+        agent_thread.start()
+        self.logger.info("Bluetooth Agent thread started")
+
+    def run_agent(self):
+        """
+        Run the Bluetooth Agent script.
+        """
+        try:
+            subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Bluetooth Agent failed: {e}")
 
     def add_services(self):
         """
@@ -314,3 +335,28 @@ class BluetoothServer:
         """
         server_thread = threading.Thread(target=self.publish, daemon=True)
         server_thread.start()
+
+if __name__ == "__main__":
+    # Example usage
+    config_path = "config.ini"
+    update_event = threading.Event()
+    toggle_shader_event = threading.Event()
+    randomize_colors_event = threading.Event()
+    shutdown_event = threading.Event()
+
+    server = BluetoothServer(
+        config_path,
+        update_event,
+        toggle_shader_event,
+        randomize_colors_event,
+        shutdown_event
+    )
+    server.run_in_thread()
+
+    # Keep the main thread alive
+    try:
+        while not shutdown_event.is_set():
+            async_tools.sleep(1)
+    except KeyboardInterrupt:
+        shutdown_event.set()
+        server.unpublish()

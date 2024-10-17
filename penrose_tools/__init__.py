@@ -3,3 +3,4 @@ from .Server import run_server, update_event, toggle_shader_event, toggle_region
 from .Shaders import Shader
 from .Tile import Tile
 from .BluetoothServer import BluetoothServer
+from .BluetoothAgent import Agent
