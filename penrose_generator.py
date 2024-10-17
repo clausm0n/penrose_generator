@@ -4,7 +4,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event,BluetoothServer
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
 import logging
 import configparser
 import signal
@@ -174,21 +174,32 @@ def main():
         last_time = glfw.get_time()
 
         if args.bluetooth:
-            bluetooth_server = BluetoothServer(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event, shutdown_event)
-            server_thread = Thread(target=bluetooth_server.run_in_thread, daemon=True)
-            server_thread.start()
+            # Instantiate BluetoothServer with required parameters
+            from penrose_tools.BluetoothServer import BluetoothServer
+            bluetooth_server = BluetoothServer(
+                config_path=CONFIG_PATH,
+                update_event=update_event,
+                toggle_shader_event=toggle_shader_event,
+                randomize_colors_event=randomize_colors_event,
+                shutdown_event=shutdown_event
+            )
+            bluetooth_server.run_in_thread()
+            logging.info("Bluetooth server started.")
         else:
+            # HTTP server
             server_thread = Thread(target=run_server, daemon=True)
             server_thread.start()
+            logging.info("HTTP server started.")
 
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
             glClear(GL_COLOR_BUFFER_BIT)
 
-            if any(toggle_event.is_set() for toggle_event in [update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event]):
+            # Check if any relevant event is set
+            if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(shaders)
 
-            render_tiles(shaders,width,height)
+            render_tiles(shaders, width, height)
             glfw.swap_buffers(window)
 
             # Frame rate control
@@ -202,6 +213,7 @@ def main():
     finally:
         glfw.terminate()
         shutdown_event.set()
+        logging.info("Application has been terminated.")
 
 if __name__ == '__main__':
     main()
