@@ -1,4 +1,4 @@
-from bluezero import peripheral
+from bluezero.peripheral import Peripheral, Service, Characteristic
 from .Operations import Operations
 import asyncio
 
