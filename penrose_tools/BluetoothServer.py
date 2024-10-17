@@ -7,7 +7,7 @@ import threading
 import sys
 import uuid
 import subprocess
-import random
+
 from bluezero import peripheral, adapter, async_tools
 
 # Static UUIDs for services and characteristics
@@ -265,38 +265,32 @@ class BluetoothServer:
         self.update_event.set()
 
     def handle_command(self, command):
+        """
+        Handle incoming commands and set appropriate events.
+
+        :param command: Command string.
+        :return: Response dictionary.
+        """
         if command == 'toggle_shader':
             self.toggle_shader_event.set()
             self.logger.info("Shader toggled")
             response = {'status': 'success', 'message': 'Shader toggled'}
-        elif command == 'randomize_colors':
-            self.randomize_colors()
-            self.logger.info("Colors randomized")
-            response = {'status': 'success', 'message': 'Colors randomized'}
         elif command == 'shutdown':
             self.shutdown_event.set()
             self.logger.info("Shutdown initiated")
             response = {'status': 'success', 'message': 'Server is shutting down'}
+        elif command == 'randomize_colors':
+            self.randomize_colors_event.set()
+            self.logger.info("Colors randomized")
+            response = {'status': 'success', 'message': 'Colors randomized'}
         else:
             self.logger.warning(f"Unknown command received: {command}")
             response = {'status': 'error', 'message': 'Unknown command'}
         
+        # Optional: Notify clients about the response
+        # self.send_notification(response)
+        
         return response
-
-    def randomize_colors(self):
-        config = configparser.ConfigParser()
-        config.read(self.config_path)
-        
-        color1 = [random.randint(0, 255) for _ in range(3)]
-        color2 = [random.randint(0, 255) for _ in range(3)]
-        
-        config['Settings']['color1'] = f"({', '.join(map(str, color1))})"
-        config['Settings']['color2'] = f"({', '.join(map(str, color2))})"
-        
-        with open(self.config_path, 'w') as configfile:
-            config.write(configfile)
-        
-        self.randomize_colors_event.set()
 
     def send_notification(self, message):
         """
