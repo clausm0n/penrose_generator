@@ -45,7 +45,8 @@ class BluetoothServer:
 
     def run(self):
         # Replace 'hci0' with your Bluetooth adapter's MAC address if necessary
-        self.peripheral = peripheral.Peripheral(adapter_addr='hci0', local_name='Penrose Tiling Generator')
+        self.peripheral = peripheral.Peripheral(adapter_address='hci0', local_name='Penrose Tiling Generator')
+
 
         service = peripheral.Service(self.SERVICE_UUID)
         characteristic = peripheral.Characteristic(self.CHARACTERISTIC_UUID,
