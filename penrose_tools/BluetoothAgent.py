@@ -41,17 +41,19 @@ class Agent(dbus.service.Object):
         return 0
 
     @dbus.service.method(AGENT_INTERFACE,
-                         in_signature="ou", out_signature="")
-    def DisplayPasskey(self, device, passkey):
-        self.logger.info(f"DisplayPasskey for device {device}: {passkey}")
+                         in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, passkey, entered):
+        self.logger.info(f"DisplayPasskey for device {device}: {passkey}, Entered: {entered}")
+        # Optionally, add logic to display the passkey if needed
 
     @dbus.service.method(AGENT_INTERFACE,
-                         in_signature="o", out_signature="")
+                         in_signature="os", out_signature="")
     def DisplayPinCode(self, device, pincode):
         self.logger.info(f"DisplayPinCode for device {device}: {pincode}")
+        # Optionally, add logic to display the pin code if needed
 
     @dbus.service.method(AGENT_INTERFACE,
-                         in_signature="o", out_signature="")
+                         in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
         self.logger.info(f"RequestConfirmation for device {device}: {passkey}")
         # Automatically confirm the passkey
@@ -79,7 +81,7 @@ class Agent(dbus.service.Object):
                 if interfaces["org.bluez.Device1"]["Address"] == device:
                     device_obj = self.bus.get_object("org.bluez", path)
                     device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
-                    device_interface.Confirm(True)
+                    device_interface.Confirm(accept)
                     self.logger.info(f"Confirmed pairing for device {device}")
                     break
 
@@ -93,7 +95,7 @@ class Agent(dbus.service.Object):
                 if interfaces["org.bluez.Device1"]["Address"] == device:
                     device_obj = self.bus.get_object("org.bluez", path)
                     device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
-                    device_interface.Authorize(True)
+                    device_interface.Authorize(accept)
                     self.logger.info(f"Authorized device {device}")
                     break
 
