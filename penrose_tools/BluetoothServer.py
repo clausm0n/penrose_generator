@@ -104,6 +104,14 @@ class BluetoothServer:
         """
         Define and add services and their characteristics to the peripheral.
         """
+        #Clean up any advertisements that may be running
+        try:
+            if hasattr(self, 'advertisement'):
+                self.ad_manager.unregister_advertisement(self.advertisement)
+        except Exception as e:
+            self.logger.warning(f"Failed to unregister previous advertisement: {e}")
+
+
         # Add Config Service
         self.peripheral.add_service(
             srv_id=1,
