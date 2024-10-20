@@ -9,6 +9,8 @@ import uuid
 import subprocess
 
 from bluezero import peripheral, adapter, async_tools, advertisement
+from penrose_tools.ConfigServerAdvertisement import ConfigServerAdvertisement
+
 
 # Static UUIDs for services and characteristics
 # Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
@@ -109,17 +111,13 @@ class BluetoothServer:
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Bluetooth Agent failed: {e}")
 
-    def add_services(self):
-        """
-        Define and add services and their characteristics to the peripheral.
-        """
-        #Clean up any advertisements that may be running
+        def add_services(self):
+        # Clean up any advertisements that may be running
         try:
             if hasattr(self, 'advertisement'):
                 self.ad_manager.unregister_advertisement(self.advertisement)
         except Exception as e:
             self.logger.warning(f"Failed to unregister previous advertisement: {e}")
-
 
         # Add Config Service
         self.peripheral.add_service(
@@ -171,10 +169,15 @@ class BluetoothServer:
             value=[],          # Initial value
             notifying=False    # Not notifying by default
         )
-        # Create the Advertisement
-        ad_id = uuid.uuid4().int & 0xFFFF  # Generate a unique 16-bit identifier
-        self.advertisement = advertisement.Advertisement(ad_id, 'ConfigServer')
-        self.advertisement.service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+        self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
+
+        # Create the Advertisement using the custom class
+        ad_index = 0  # Unique index for the advertisement
+        self.advertisement = ConfigServerAdvertisement(
+            index=ad_index,
+            service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
+            local_name='ConfigServer'
+        )
 
         # Register the advertisement
         try:
@@ -183,23 +186,6 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Failed to register advertisement: {e}")
             self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
-
-        self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
-
-        # Optional: Add Notification Characteristic for Responses
-        # Uncomment the following block if you wish to send notifications back to clients
-        """
-        self.peripheral.add_characteristic(
-            srv_id=2,
-            chr_id=2,
-            uuid=NOTIFICATION_CHAR_UUID,
-            flags=['notify'],
-            notify_callback=self.notify_callback,
-            value=[],          # Initial value
-            notifying=False    # Not notifying by default
-        )
-        self.logger.info(f"Added Notification Characteristic with UUID: {NOTIFICATION_CHAR_UUID}")
-        """
 
     def read_config_callback(self):
         """
