@@ -7,8 +7,6 @@ import threading
 import sys
 import uuid
 import subprocess
-import os
-import time
 
 from bluezero import peripheral, adapter, async_tools
 
@@ -39,8 +37,6 @@ class BluetoothServer:
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
-        self.reconnect_attempt = 0
-        self.max_reconnect_attempts = 5
 
         # Initialize Logging
         logging.basicConfig(
@@ -87,18 +83,10 @@ class BluetoothServer:
         """
         Run the Bluetooth Agent script.
         """
-        script_path = os.path.join(os.path.dirname(__file__), "BluetoothAgent.py")
         try:
-            result = subprocess.run([sys.executable, script_path], 
-                                    check=True, 
-                                    capture_output=True, 
-                                    text=True)
-            self.logger.info(f"Bluetooth Agent output: {result.stdout}")
+            subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Bluetooth Agent failed: {e}")
-            self.logger.error(f"Agent stderr: {e.stderr}")
-        except Exception as e:
-            self.logger.error(f"Error running Bluetooth Agent: {e}")
 
     def add_services(self):
         """
@@ -319,57 +307,27 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Error sending notification: {e}")
 
-
-    def reset_adapter(self):
-        """
-        Reset the Bluetooth adapter.
-        """
-        try:
-            subprocess.run(['sudo', 'hciconfig', 'hci0', 'reset'], check=True)
-            self.logger.info("Bluetooth adapter reset successfully")
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to reset Bluetooth adapter: {e}")
-
     def publish(self):
         """
-        Publish the peripheral and start the event loop with reconnection logic.
+        Publish the peripheral and start the event loop.
         """
-        while not self.shutdown_event.is_set() and self.reconnect_attempt < self.max_reconnect_attempts:
-            try:
-                self.reset_adapter()
-                time.sleep(2)  # Wait for the adapter to fully reset
-                
-                self.logger.info("Attempting to publish Bluetooth GATT server...")
-                self.peripheral.publish()
-                self.logger.info("Bluetooth GATT server is running...")
-                self.reconnect_attempt = 0  # Reset reconnect attempt on successful connection
+        self.peripheral.publish()
+        self.logger.info("Bluetooth GATT server is running...")
 
-                while not self.shutdown_event.is_set():
-                    async_tools.sleep(1)
-
-            except Exception as e:
-                self.logger.error(f"Error in Bluetooth server: {e}")
-                self.logger.error(f"Error type: {type(e).__name__}")
-                self.logger.error(f"Error details: {str(e)}")
-                self.reconnect_attempt += 1
-                if self.reconnect_attempt < self.max_reconnect_attempts:
-                    self.logger.info(f"Attempting to reconnect... (Attempt {self.reconnect_attempt})")
-                    time.sleep(5)  # Wait for 5 seconds before trying to reconnect
-                else:
-                    self.logger.error("Max reconnection attempts reached. Shutting down.")
-                    break
-
-        self.unpublish()
+        try:
+            while not self.shutdown_event.is_set():
+                async_tools.sleep(1)
+        except KeyboardInterrupt:
+            self.logger.info("KeyboardInterrupt received. Shutting down.")
+        finally:
+            self.unpublish()
 
     def unpublish(self):
         """
         Unpublish the peripheral and clean up.
         """
-        try:
-            self.peripheral.unpublish()
-            self.logger.info("Bluetooth GATT server has been shut down.")
-        except Exception as e:
-            self.logger.error(f"Error while unpublishing: {e}")
+        self.peripheral.unpublish()
+        self.logger.info("Bluetooth GATT server has been shut down.")
 
     def run_in_thread(self):
         """

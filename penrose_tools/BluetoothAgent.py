@@ -5,7 +5,6 @@ import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
 import logging
-import os
 import sys
 from gi.repository import GLib
 
@@ -103,54 +102,38 @@ class Agent(dbus.service.Object):
     def quit_mainloop(self):
         GLib.MainLoop().quit()
 
-def setup_agent():
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    bus = dbus.SystemBus()
-    agent = Agent(bus, AGENT_PATH)
-    obj = bus.get_object("org.bluez", "/org/bluez")
-    manager = dbus.Interface(obj, "org.bluez.AgentManager1")
-    manager.RegisterAgent(AGENT_PATH, CAPABILITY)
-    manager.RequestDefaultAgent(AGENT_PATH)
-    return agent
-
-def setup_logging():
-    log_dir = os.path.expanduser('~/penrose_logs')
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, 'bluetooth_agent.log')
-
+def main():
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file),
+            logging.FileHandler("bluetooth_agent.log"),
             logging.StreamHandler(sys.stdout)
         ]
     )
-    return logging.getLogger('BluetoothAgent')
+    logger = logging.getLogger('BluetoothAgent')
 
-def main():
-    logger = setup_logging()
-    logger.info("Starting Bluetooth Agent")
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+
+    agent = Agent(bus, AGENT_PATH)
+
+    manager = dbus.Interface(
+        bus.get_object("org.bluez", "/org/bluez"),
+        "org.bluez.AgentManager1")
+
+    manager.RegisterAgent(AGENT_PATH, CAPABILITY)
+    logger.info("Bluetooth Agent registered")
+
+    manager.RequestDefaultAgent(AGENT_PATH)
+    logger.info("Bluetooth Agent set as default")
 
     try:
-        agent = setup_agent()
-        logger.info("Bluetooth Agent registered and set as default")
-
         mainloop = GLib.MainLoop()
-        
-        def exit_handler(signum, frame):
-            logger.info("Exiting Bluetooth Agent...")
-            mainloop.quit()
-
-        import signal
-        for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
-            GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, exit_handler, sig)
-
         mainloop.run()
-    except Exception as e:
-        logger.error(f"Error in Bluetooth Agent: {e}")
-    finally:
+    except KeyboardInterrupt:
         logger.info("Bluetooth Agent terminated")
+        agent.Release()
 
 if __name__ == "__main__":
     main()
