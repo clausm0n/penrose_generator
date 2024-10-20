@@ -39,7 +39,7 @@ class BluetoothServer:
         self.shutdown_event = shutdown_event
         self.dongles = adapter.list_adapters()
         print('dongles available: ', self.dongles)
-        self.adapter_address = adapter.Adapter(self.dondles[0])
+        self.adapter_address = adapter.Adapter(self.dongles[0])
         print('address: ', self.dongle.address)
         self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
 
