@@ -7,6 +7,7 @@ import threading
 import sys
 import uuid
 import subprocess
+import os
 
 from bluezero import peripheral, adapter, async_tools
 
@@ -85,10 +86,18 @@ class BluetoothServer:
         """
         Run the Bluetooth Agent script.
         """
+        script_path = os.path.join(os.path.dirname(__file__), "BluetoothAgent.py")
         try:
-            subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
+            result = subprocess.run([sys.executable, script_path], 
+                                    check=True, 
+                                    capture_output=True, 
+                                    text=True)
+            self.logger.info(f"Bluetooth Agent output: {result.stdout}")
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Bluetooth Agent failed: {e}")
+            self.logger.error(f"Agent stderr: {e.stderr}")
+        except Exception as e:
+            self.logger.error(f"Error running Bluetooth Agent: {e}")
 
     def add_services(self):
         """
@@ -308,6 +317,7 @@ class BluetoothServer:
             self.logger.info(f"Sent notification: {message_json}")
         except Exception as e:
             self.logger.error(f"Error sending notification: {e}")
+
 
     def publish(self):
         """
