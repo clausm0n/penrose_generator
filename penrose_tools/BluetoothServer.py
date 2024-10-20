@@ -75,9 +75,7 @@ class BluetoothServer:
         self.peripheral = peripheral.Peripheral(
             self.adapter_address,
             local_name='ConfigServer',
-            appearance=0,
-            service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
-            include_tx_power=True  # Optional: Include TX power in advertisement
+            appearance=0
         )
 
         # Add Services and Characteristics
