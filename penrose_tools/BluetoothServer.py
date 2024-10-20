@@ -11,13 +11,12 @@ import subprocess
 from bluezero import peripheral, adapter, async_tools
 
 # Static UUIDs for services and characteristics
-# Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
-CONFIG_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
-CONFIG_READ_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
-CONFIG_WRITE_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef2'
-COMMAND_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef3'
-COMMAND_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef4'
-NOTIFICATION_CHAR_UUID = '12345678-1234-5678-1234-56789abcdef5'  # Optional for notifications
+CONFIG_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cb'
+CONFIG_READ_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cc'
+CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
+COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
+COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
+NOTIFICATION_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cg'  # Optional for notifications
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
