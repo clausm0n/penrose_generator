@@ -8,7 +8,7 @@ import sys
 import uuid
 import subprocess
 
-from bluezero import peripheral, adapter, async_tools
+from bluezero import peripheral, adapter, async_tools, advertisement
 
 # Static UUIDs for services and characteristics
 # Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
@@ -37,6 +37,7 @@ class BluetoothServer:
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
+        self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
 
         # Initialize Logging
         logging.basicConfig(
@@ -143,11 +144,14 @@ class BluetoothServer:
             value=[],          # Initial value
             notifying=False    # Not notifying by default
         )
-        # Add Advertisement
-        self.advertisement = peripheral.advertisement(
-            1, 'ConfigServer', service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID])
+        # Create the Advertisement
+        self.advertisement = advertisement.Advertisement(1, 'ConfigServer')
+        self.advertisement.service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+
+        # Register the advertisement
         try:
-            self.peripheral.add_advertisement(self.advertisement)
+            self.ad_manager.register_advertisement(self.advertisement, {})
+            self.logger.info("Advertisement registered successfully")
         except Exception as e:
             self.logger.error(f"Failed to register advertisement: {e}")
 
@@ -335,6 +339,12 @@ class BluetoothServer:
         """
         Unpublish the peripheral and clean up.
         """
+        try:
+            self.ad_manager.unregister_advertisement(self.advertisement)
+            self.logger.info("Advertisement unregistered")
+        except Exception as e:
+            self.logger.error(f"Error unregistering advertisement: {e}")
+
         self.peripheral.unpublish()
         self.logger.info("Bluetooth GATT server has been shut down.")
 
