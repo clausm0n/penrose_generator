@@ -8,9 +8,7 @@ import sys
 import uuid
 import subprocess
 
-from bluezero import peripheral, adapter, async_tools, advertisement
-from penrose_tools.ConfigServerAdvertisement import ConfigServerAdvertisement
-
+from bluezero import peripheral, adapter, async_tools
 
 # Static UUIDs for services and characteristics
 # Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
@@ -49,11 +47,9 @@ class BluetoothServer:
         self.adapter_address = self.adapter_obj.address
         print('address: ', self.adapter_address)
 
-        self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
-
         # Initialize Logging
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,  # Set to DEBUG for detailed logs
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler("bluetooth_server.log"),
@@ -62,33 +58,24 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
 
-        # Initialize Peripheral
-        if not adapter_address:
-            adapters = list(adapter.Adapter.available())
-            if not adapters:
-                self.logger.error("No Bluetooth adapters found")
-                sys.exit(1)
-            self.adapter_address = adapters[0].address
-        else:
-            self.adapter_address = adapter_address
-
+        # Initialize Peripheral with advertisement data
         self.peripheral = peripheral.Peripheral(
             self.adapter_address,
             local_name='ConfigServer',
-            appearance=0
+            appearance=0,
+            service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
+            include_tx_power=True  # Optional
         )
 
         # Add Services and Characteristics
         self.add_services()
     
-            # Start the Bluetooth Agent in a separate thread
+        # Start the Bluetooth Agent in a separate thread
         self.start_bluetooth_agent()
         self.peripheral.on_connect = self.connection_callback
-    
+
     def __del__(self):
         try:
-            if hasattr(self, 'advertisement'):
-                self.ad_manager.unregister_advertisement(self.advertisement)
             if hasattr(self, 'peripheral'):
                 self.peripheral.unpublish()
         except Exception as e:
@@ -112,13 +99,6 @@ class BluetoothServer:
             self.logger.error(f"Bluetooth Agent failed: {e}")
 
     def add_services(self):
-        # Clean up any advertisements that may be running
-        try:
-            if hasattr(self, 'advertisement'):
-                self.ad_manager.unregister_advertisement(self.advertisement)
-        except Exception as e:
-            self.logger.warning(f"Failed to unregister previous advertisement: {e}")
-
         # Add Config Service
         self.peripheral.add_service(
             srv_id=1,
@@ -171,22 +151,6 @@ class BluetoothServer:
         )
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
-        # # Create the Advertisement using the custom class
-        # ad_index = 0  # Unique index for the advertisement
-        # self.advertisement = ConfigServerAdvertisement(
-        #     index=ad_index,
-        #     service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
-        #     local_name='ConfigServer'
-        # )
-
-        # # Register the advertisement
-        # try:
-        #     self.ad_manager.register_advertisement(self.advertisement, {})
-        #     self.logger.info("Advertisement registered successfully")
-        # except Exception as e:
-        #     self.logger.error(f"Failed to register advertisement: {e}")
-        #     self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
-
     def read_config_callback(self):
         """
         Callback to handle read requests for configuration data.
@@ -219,15 +183,10 @@ class BluetoothServer:
             self.write_config(data)
             self.logger.info(f"Configuration updated: {data}")
 
-            # Notify clients about the update (optional)
-            # self.send_notification({'status': 'success', 'message': 'Configuration updated'})
-
             # Trigger the update event
             self.update_event.set()
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
-            # Optionally, notify clients about the error
-            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def command_callback(self, value, options):
         """
@@ -243,12 +202,10 @@ class BluetoothServer:
             self.logger.info(f"Received command: {command}")
             response = self.handle_command(command)
 
-            # Notify clients about the command response (optional)
+            # Optionally, send notification to clients
             # self.send_notification(response)
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
-            # Optionally, notify clients about the error
-            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def read_config(self):
         """
@@ -315,7 +272,7 @@ class BluetoothServer:
             self.logger.warning(f"Unknown command received: {command}")
             response = {'status': 'error', 'message': 'Unknown command'}
         
-        # Optional: Notify clients about the response
+        # Optionally, send notification to clients
         # self.send_notification(response)
         
         return response
@@ -340,7 +297,7 @@ class BluetoothServer:
         Publish the peripheral and start the event loop.
         """
         self.peripheral.publish()
-        self.logger.info("Bluetooth GATT server is running...")
+        self.logger.info("Bluetooth GATT server is running and advertising...")
 
         try:
             while not self.shutdown_event.is_set():
@@ -355,13 +312,10 @@ class BluetoothServer:
         Unpublish the peripheral and clean up.
         """
         try:
-            self.ad_manager.unregister_advertisement(self.advertisement)
-            self.logger.info("Advertisement unregistered")
+            self.peripheral.unpublish()
+            self.logger.info("Bluetooth GATT server has been shut down.")
         except Exception as e:
-            self.logger.error(f"Error unregistering advertisement: {e}")
-
-        self.peripheral.unpublish()
-        self.logger.info("Bluetooth GATT server has been shut down.")
+            self.logger.error(f"Error during unpublish: {e}")
 
     def run_in_thread(self):
         """
@@ -369,7 +323,7 @@ class BluetoothServer:
         """
         server_thread = threading.Thread(target=self.publish, daemon=True)
         server_thread.start()
-    
+
     def connection_callback(self, device_addr, connected):
         if connected:
             self.logger.info(f"Device {device_addr} connected")
