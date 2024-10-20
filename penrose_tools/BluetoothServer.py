@@ -75,7 +75,9 @@ class BluetoothServer:
         self.peripheral = peripheral.Peripheral(
             self.adapter_address,
             local_name='ConfigServer',
-            appearance=0
+            appearance=0,
+            service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
+            include_tx_power=True  # Optional: Include TX power in advertisement
         )
 
         # Add Services and Characteristics
@@ -171,21 +173,21 @@ class BluetoothServer:
         )
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
-        # Create the Advertisement using the custom class
-        ad_index = 0  # Unique index for the advertisement
-        self.advertisement = ConfigServerAdvertisement(
-            index=ad_index,
-            service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
-            local_name='ConfigServer'
-        )
+        # # Create the Advertisement using the custom class
+        # ad_index = 0  # Unique index for the advertisement
+        # self.advertisement = ConfigServerAdvertisement(
+        #     index=ad_index,
+        #     service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
+        #     local_name='ConfigServer'
+        # )
 
-        # Register the advertisement
-        try:
-            self.ad_manager.register_advertisement(self.advertisement, {})
-            self.logger.info("Advertisement registered successfully")
-        except Exception as e:
-            self.logger.error(f"Failed to register advertisement: {e}")
-            self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
+        # # Register the advertisement
+        # try:
+        #     self.ad_manager.register_advertisement(self.advertisement, {})
+        #     self.logger.info("Advertisement registered successfully")
+        # except Exception as e:
+        #     self.logger.error(f"Failed to register advertisement: {e}")
+        #     self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
 
     def read_config_callback(self):
         """
