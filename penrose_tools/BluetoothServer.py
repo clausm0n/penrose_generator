@@ -70,6 +70,7 @@ class BluetoothServer:
     
             # Start the Bluetooth Agent in a separate thread
         self.start_bluetooth_agent()
+        self.peripheral.on_connect = self.connection_callback
 
     def start_bluetooth_agent(self):
         """
@@ -142,6 +143,14 @@ class BluetoothServer:
             value=[],          # Initial value
             notifying=False    # Not notifying by default
         )
+        # Add Advertisement
+        self.advertisement = peripheral.Advertisement(
+            1, 'ConfigServer', service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID])
+        try:
+            self.peripheral.add_advertisement(self.advertisement)
+        except Exception as e:
+            self.logger.error(f"Failed to register advertisement: {e}")
+
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
         # Optional: Add Notification Characteristic for Responses
@@ -335,6 +344,12 @@ class BluetoothServer:
         """
         server_thread = threading.Thread(target=self.publish, daemon=True)
         server_thread.start()
+    
+    def connection_callback(self, device_addr, connected):
+        if connected:
+            self.logger.info(f"Device {device_addr} connected")
+        else:
+            self.logger.info(f"Device {device_addr} disconnected")
 
 if __name__ == "__main__":
     # Example usage
