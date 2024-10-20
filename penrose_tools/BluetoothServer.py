@@ -82,6 +82,15 @@ class BluetoothServer:
             # Start the Bluetooth Agent in a separate thread
         self.start_bluetooth_agent()
         self.peripheral.on_connect = self.connection_callback
+    
+    def __del__(self):
+        try:
+            if hasattr(self, 'advertisement'):
+                self.ad_manager.unregister_advertisement(self.advertisement)
+            if hasattr(self, 'peripheral'):
+                self.peripheral.unpublish()
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
 
     def start_bluetooth_agent(self):
         """
@@ -163,8 +172,7 @@ class BluetoothServer:
             notifying=False    # Not notifying by default
         )
         # Create the Advertisement
-        ad_id = uuid.uuid4().int & 0xFFFF  # Generate a unique 16-bit identifier
-        self.advertisement = advertisement.Advertisement(ad_id, 'ConfigServer')
+        self.advertisement = advertisement.Advertisement(1, 'ConfigServer')
         self.advertisement.service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
 
         # Register the advertisement
@@ -173,6 +181,7 @@ class BluetoothServer:
             self.logger.info("Advertisement registered successfully")
         except Exception as e:
             self.logger.error(f"Failed to register advertisement: {e}")
+            self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
 
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
