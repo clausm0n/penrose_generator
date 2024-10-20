@@ -10,6 +10,7 @@ import configparser
 import signal
 import argparse
 import asyncio
+import subprocess
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -150,6 +151,33 @@ def setup_window(fullscreen=False):
 
     return window
 
+def check_bluetooth_status():
+    logging.info("Checking Bluetooth status...")
+    try:
+        # Check if Bluetooth service is active
+        result = subprocess.run(['systemctl', 'is-active', 'bluetooth'], capture_output=True, text=True)
+        if result.stdout.strip() != 'active':
+            logging.error("Bluetooth service is not active. Attempting to start...")
+            subprocess.run(['sudo', 'systemctl', 'start', 'bluetooth'], check=True)
+            logging.info("Bluetooth service started.")
+        else:
+            logging.info("Bluetooth service is active.")
+
+        # Check if Bluetooth is powered on
+        result = subprocess.run(['hciconfig'], capture_output=True, text=True)
+        if 'UP RUNNING' not in result.stdout:
+            logging.error("Bluetooth is not powered on. Attempting to power on...")
+            subprocess.run(['sudo', 'hciconfig', 'hci0', 'up'], check=True)
+            logging.info("Bluetooth powered on.")
+        else:
+            logging.info("Bluetooth is powered on.")
+
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error checking Bluetooth status: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error checking Bluetooth status: {e}")
+
+
 def main():
     global width, height, config_data
 
@@ -169,6 +197,10 @@ def main():
 
     try:
         logging.info("Starting the penrose generator script.")
+        
+        if args.bluetooth:
+            check_bluetooth_status()
+
         window = setup_window(fullscreen=args.fullscreen)
         shaders = Shader()
         last_time = glfw.get_time()

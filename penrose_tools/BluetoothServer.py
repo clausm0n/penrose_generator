@@ -8,6 +8,7 @@ import sys
 import uuid
 import subprocess
 import os
+import time
 
 from bluezero import peripheral, adapter, async_tools
 
@@ -319,12 +320,26 @@ class BluetoothServer:
             self.logger.error(f"Error sending notification: {e}")
 
 
+    def reset_adapter(self):
+        """
+        Reset the Bluetooth adapter.
+        """
+        try:
+            subprocess.run(['sudo', 'hciconfig', 'hci0', 'reset'], check=True)
+            self.logger.info("Bluetooth adapter reset successfully")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to reset Bluetooth adapter: {e}")
+
     def publish(self):
         """
         Publish the peripheral and start the event loop with reconnection logic.
         """
         while not self.shutdown_event.is_set() and self.reconnect_attempt < self.max_reconnect_attempts:
             try:
+                self.reset_adapter()
+                time.sleep(2)  # Wait for the adapter to fully reset
+                
+                self.logger.info("Attempting to publish Bluetooth GATT server...")
                 self.peripheral.publish()
                 self.logger.info("Bluetooth GATT server is running...")
                 self.reconnect_attempt = 0  # Reset reconnect attempt on successful connection
@@ -334,6 +349,8 @@ class BluetoothServer:
 
             except Exception as e:
                 self.logger.error(f"Error in Bluetooth server: {e}")
+                self.logger.error(f"Error type: {type(e).__name__}")
+                self.logger.error(f"Error details: {str(e)}")
                 self.reconnect_attempt += 1
                 if self.reconnect_attempt < self.max_reconnect_attempts:
                     self.logger.info(f"Attempting to reconnect... (Attempt {self.reconnect_attempt})")
