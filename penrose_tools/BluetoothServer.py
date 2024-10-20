@@ -163,7 +163,8 @@ class BluetoothServer:
             notifying=False    # Not notifying by default
         )
         # Create the Advertisement
-        self.advertisement = advertisement.Advertisement(1, 'ConfigServer')
+        ad_id = uuid.uuid4().int & 0xFFFF  # Generate a unique 16-bit identifier
+        self.advertisement = advertisement.Advertisement(ad_id, 'ConfigServer')
         self.advertisement.service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
 
         # Register the advertisement
