@@ -39,8 +39,14 @@ class BluetoothServer:
         self.shutdown_event = shutdown_event
         self.dongles = adapter.list_adapters()
         print('dongles available: ', self.dongles)
-        self.adapter_address = adapter.Adapter(self.dongles[0])
+        if not self.dongles:
+            self.logger.error("No Bluetooth adapters found")
+            sys.exit(1)
+        
+        self.adapter_obj = adapter.Adapter(self.dongles[0])
+        self.adapter_address = self.adapter_obj.address
         print('address: ', self.adapter_address)
+
         self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
 
         # Initialize Logging
