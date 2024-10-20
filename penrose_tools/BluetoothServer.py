@@ -111,7 +111,7 @@ class BluetoothServer:
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Bluetooth Agent failed: {e}")
 
-        def add_services(self):
+    def add_services(self):
         # Clean up any advertisements that may be running
         try:
             if hasattr(self, 'advertisement'):
