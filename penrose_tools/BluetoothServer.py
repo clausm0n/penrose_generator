@@ -37,6 +37,10 @@ class BluetoothServer:
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
+        self.dongles = adapter.list_adapters()
+        print('dongles available: ', self.dongles)
+        self.adapter_address = adapter.Adapter(self.dondles[0])
+        print('address: ', self.dongle.address)
         self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
 
         # Initialize Logging
