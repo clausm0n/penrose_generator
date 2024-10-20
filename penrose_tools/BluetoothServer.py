@@ -144,7 +144,7 @@ class BluetoothServer:
             notifying=False    # Not notifying by default
         )
         # Add Advertisement
-        self.advertisement = peripheral.advertisement(
+        self.advertisement = peripheral.Advertisement(
             1, 'ConfigServer', service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID])
         try:
             self.peripheral.add_advertisement(self.advertisement)
