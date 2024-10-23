@@ -114,3 +114,54 @@ class Agent(dbus.service.Object):
                         break
         except Exception as e:
             self.logger.error(f"Error in Authorize method: {e}")
+
+# Remove or comment out the standalone main function
+def main():
+    """Standalone agent for testing"""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("bluetooth_agent.log"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    logger = logging.getLogger('BluetoothAgent')
+
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+
+    # First, make sure no other agents are registered
+    try:
+        manager = dbus.Interface(
+            bus.get_object("org.bluez", "/org/bluez"),
+            "org.bluez.AgentManager1"
+        )
+        manager.UnregisterAgent(AGENT_PATH)
+    except:
+        pass  # Ignore if no agent was registered
+
+    # Create and register our agent
+    agent = Agent(bus, AGENT_PATH)
+    manager = dbus.Interface(
+        bus.get_object("org.bluez", "/org/bluez"),
+        "org.bluez.AgentManager1"
+    )
+
+    manager.RegisterAgent(AGENT_PATH, CAPABILITY)
+    logger.info("Bluetooth Agent registered")
+
+    manager.RequestDefaultAgent(AGENT_PATH)
+    logger.info("Bluetooth Agent set as default")
+
+    # mainloop = GLib.MainLoop()
+
+    # try:
+    #     mainloop.run()
+    # except KeyboardInterrupt:
+    #     logger.info("Agent stopped by user")
+    #     mainloop.quit()
+    #     manager.UnregisterAgent(AGENT_PATH)
+
+if __name__ == "__main__":
+    main()
