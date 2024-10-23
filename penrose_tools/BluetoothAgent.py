@@ -5,6 +5,7 @@ import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
 import logging
+import sys
 from gi.repository import GLib
 
 AGENT_INTERFACE = "org.bluez.Agent1"
