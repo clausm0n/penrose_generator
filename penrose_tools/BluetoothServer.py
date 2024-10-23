@@ -247,25 +247,39 @@ class BluetoothServer:
             self.unpublish()
 
 
-    def unpublish(self):
-        """Clean up advertising and GATT server"""
-        try:
-            self.logger.debug("Unregistering Advertisement...")
-            if self.ad_manager:
+def unpublish(self):
+    """Clean up advertising and GATT server"""
+    try:
+        self.logger.debug("Unregistering Advertisement...")
+        if self.ad_manager:
+            try:
                 self.ad_manager.unregister_advertisement(self.advertisement)
-            self.logger.debug("Unregistering GATT Application...")
-            if self.srv_mng:
-                self.srv_mng.unregister_application(self.app)
-            self.logger.info("GATT server unpublished")
-            
-            # Release the agent
-            if hasattr(self, 'agent') and self.agent is not None:
-                self.logger.debug("Releasing Bluetooth Agent...")
-                self.agent.Release()
-                self.logger.info("Bluetooth Agent released.")
+            except Exception as e:
+                self.logger.warning(f"Failed to unregister advertisement: {e}")
                 
-        except Exception as e:
-            self.logger.error(f"Error in unpublish: {e}")
+        self.logger.debug("Unregistering GATT Application...")
+        if self.srv_mng:
+            try:
+                self.srv_mng.unregister_application(self.app)
+            except Exception as e:
+                self.logger.warning(f"Failed to unregister GATT application: {e}")
+                
+        self.logger.info("GATT server unpublished")
+        
+        # Release the agent last, and only if initialization was complete
+        if hasattr(self, 'agent') and self.agent is not None:
+            if self.agent.initialization_complete and self.agent.can_shutdown():
+                self.logger.debug("Releasing Bluetooth Agent...")
+                try:
+                    self.agent.Release()
+                    self.logger.info("Bluetooth Agent released.")
+                except Exception as e:
+                    self.logger.error(f"Error releasing agent: {e}")
+            else:
+                self.logger.info("Skipping agent release as initialization is incomplete or in grace period")
+                
+    except Exception as e:
+        self.logger.error(f"Error in unpublish: {e}")
 
     def read_config_callback(self, options):
         """Callback for configuration read requests"""

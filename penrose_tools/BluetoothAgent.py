@@ -1,15 +1,16 @@
 # penrose_tools/BluetoothAgent.py
-
 import dbus
 import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
 import logging
+import time
 from gi.repository import GLib
 
 AGENT_INTERFACE = "org.bluez.Agent1"
 AGENT_PATH = "/penrose/tools/bluetooth/agent"
 CAPABILITY = "NoInputNoOutput"  # For Just Works pairing
+GRACE_PERIOD = 2.0  # Grace period in seconds after initialization
 
 class Rejected(dbus.exceptions.DBusException):
     _dbus_error_name = "org.bluez.Error.Rejected"
@@ -21,27 +22,42 @@ class Agent(dbus.service.Object):
         self.path = path
         self.logger = logging.getLogger('BluetoothAgent')
         self.shutdown_callback = shutdown_callback
-        self.initialization_complete = False  # Add flag
+        self.initialization_complete = False
+        self.initialization_time = None
         self.logger.info("Bluetooth Agent created")
 
     def set_initialization_complete(self):
-        """Mark the initialization as complete"""
+        """Mark the initialization as complete and set the initialization time"""
         self.initialization_complete = True
+        self.initialization_time = time.time()
         self.logger.debug("Agent initialization marked as complete")
+
+    def can_shutdown(self):
+        """Check if enough time has passed since initialization to allow shutdown"""
+        if not self.initialization_complete or self.initialization_time is None:
+            return False
+        time_since_init = time.time() - self.initialization_time
+        return time_since_init >= GRACE_PERIOD
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="", out_signature="")
     def Release(self):
         try:
             self.logger.info("Agent Release called")
-            if self.initialization_complete and self.shutdown_callback:
+            if self.initialization_complete and self.can_shutdown() and self.shutdown_callback:
                 self.logger.info("Agent Released - executing shutdown callback")
                 self.shutdown_callback()
-            elif not self.initialization_complete:
-                self.logger.info("Agent Release called during initialization - ignoring")
+            else:
+                if not self.initialization_complete:
+                    self.logger.info("Agent Release called before initialization - ignoring")
+                elif not self.can_shutdown():
+                    self.logger.info("Agent Release called during grace period - ignoring")
+                else:
+                    self.logger.info("Agent Release called - no shutdown callback")
         except Exception as e:
             self.logger.error(f"Exception in Release method: {e}")
 
+    # Rest of the Agent methods remain the same...
     @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
     def RequestPinCode(self, device):
         self.logger.info(f"RequestPinCode: {device}")
@@ -56,19 +72,16 @@ class Agent(dbus.service.Object):
                          in_signature="ouq", out_signature="")
     def DisplayPasskey(self, device, passkey, entered):
         self.logger.info(f"DisplayPasskey for device {device}: {passkey}, Entered: {entered}")
-        # Optionally, add logic to display the passkey if needed
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="os", out_signature="")
     def DisplayPinCode(self, device, pincode):
         self.logger.info(f"DisplayPinCode for device {device}: {pincode}")
-        # Optionally, add logic to display the pin code if needed
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
         self.logger.info(f"RequestConfirmation for device {device}: {passkey}")
-        # Automatically confirm the passkey
         self.Confirm(device, True)
 
     @dbus.service.method(AGENT_INTERFACE,
@@ -85,7 +98,6 @@ class Agent(dbus.service.Object):
 
     def Confirm(self, device, accept):
         try:
-            # device is the object path; retrieve the Address property
             device_obj = self.bus.get_object("org.bluez", device)
             device_props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
             address = device_props.Get("org.bluez.Device1", "Address")
@@ -107,7 +119,6 @@ class Agent(dbus.service.Object):
 
     def Authorize(self, device, accept):
         try:
-            # device is the object path; retrieve the Address property
             device_obj = self.bus.get_object("org.bluez", device)
             device_props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
             address = device_props.Get("org.bluez.Device1", "Address")
@@ -126,7 +137,6 @@ class Agent(dbus.service.Object):
                         break
         except Exception as e:
             self.logger.error(f"Error in Authorize method: {e}")
-
 
 # Remove or comment out the standalone main function
 # def main():
