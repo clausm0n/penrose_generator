@@ -119,8 +119,7 @@ class BluetoothServer:
             peripheral_device = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
-                appearance=0,
-                services=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+                appearance=0
             )
             peripheral_device.mainloop = self.mainloop
             
