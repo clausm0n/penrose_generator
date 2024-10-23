@@ -22,6 +22,7 @@ class Agent(dbus.service.Object):
         self.path = path
         self.logger = logging.getLogger('BluetoothAgent')
         self.shutdown_callback = shutdown_callback  # Callback to notify server to shutdown
+        logging.info("Bluetooth Agent created")
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="", out_signature="")
