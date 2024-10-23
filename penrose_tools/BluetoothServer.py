@@ -8,10 +8,7 @@ import sys
 import uuid
 import subprocess
 
-from bluezero import peripheral, adapter, async_tools, advertisement
-from penrose_tools.ConfigServerAdvertisement import ConfigServerAdvertisement
-
-
+from bluezero import peripheral, adapter, async_tools
 # Static UUIDs for services and characteristics
 # Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
 # Static UUIDs for services and characteristics
@@ -50,8 +47,6 @@ class BluetoothServer:
         self.adapter_address = self.adapter_obj.address
         print('address: ', self.adapter_address)
 
-        self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
-
         # Initialize Logging
         logging.basicConfig(
             level=logging.INFO,
@@ -82,44 +77,16 @@ class BluetoothServer:
         # Add Services and Characteristics
         self.add_services()
     
-        #     # Start the Bluetooth Agent in a separate thread
-        # self.start_bluetooth_agent()
         self.peripheral.on_connect = self.connection_callback
     
     def __del__(self):
         try:
-            if hasattr(self, 'advertisement'):
-                self.ad_manager.unregister_advertisement(self.advertisement)
             if hasattr(self, 'peripheral'):
                 self.peripheral.unpublish()
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
-    # def start_bluetooth_agent(self):
-    #     """
-    #     Start the Bluetooth Agent as a separate thread.
-    #     """
-    #     agent_thread = threading.Thread(target=self.run_agent, daemon=True)
-    #     agent_thread.start()
-    #     self.logger.info("Bluetooth Agent thread started")
-
-    # def run_agent(self):
-    #     """
-    #     Run the Bluetooth Agent script.
-    #     """
-    #     try:
-    #         subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
-    #     except subprocess.CalledProcessError as e:
-    #         self.logger.error(f"Bluetooth Agent failed: {e}")
-
     def add_services(self):
-        # Clean up any advertisements that may be running
-        try:
-            if hasattr(self, 'advertisement'):
-                self.ad_manager.unregister_advertisement(self.advertisement)
-        except Exception as e:
-            self.logger.warning(f"Failed to unregister previous advertisement: {e}")
-
         # Add Config Service
         self.peripheral.add_service(
             srv_id=1,
@@ -340,12 +307,6 @@ class BluetoothServer:
         """
         Unpublish the peripheral and clean up.
         """
-        try:
-            self.ad_manager.unregister_advertisement(self.advertisement)
-            self.logger.info("Advertisement unregistered")
-        except Exception as e:
-            self.logger.error(f"Error unregistering advertisement: {e}")
-
         self.peripheral.unpublish()
         self.logger.info("Bluetooth GATT server has been shut down.")
 
