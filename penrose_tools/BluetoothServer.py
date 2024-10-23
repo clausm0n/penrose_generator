@@ -21,8 +21,8 @@ COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 
 class ConfigAdvertisement(advertisement.Advertisement):
-    def __init__(self, adapter_addr):
-        super().__init__(adapter_addr, 'peripheral')
+    def __init__(self, advert_id):
+        super().__init__(advert_id, 'peripheral')  # Pass integer advert_id
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.data = {
@@ -100,8 +100,8 @@ class BluetoothServer:
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
-            # Create and register advertisement
-            self.advertisement = ConfigAdvertisement(self.adapter_address)
+            # Create and register advertisement with unique advert_id (e.g., 0)
+            self.advertisement = ConfigAdvertisement(advert_id=0)
             
             # Initialize peripheral with specific configuration
             self.peripheral = peripheral.Peripheral(
@@ -125,14 +125,39 @@ class BluetoothServer:
 
     def add_services(self):
         """Add GATT services and characteristics to the peripheral"""
-        # Implement your services and characteristics here
-        # Example:
-        # config_service = peripheral.Service(CONFIG_SERVICE_UUID, True)
-        # read_characteristic = peripheral.Characteristic(
-        #     CONFIG_READ_CHAR_UUID, ['read'], config_service)
-        # read_characteristic.add_read_callback(self.read_config_callback)
-        # self.peripheral.add_service(config_service)
-        pass  # Replace with actual implementation
+        # Configuration Service
+        config_service = peripheral.Service(CONFIG_SERVICE_UUID, True)
+
+        # Read Characteristic
+        read_char = peripheral.Characteristic(
+            CONFIG_READ_CHAR_UUID,
+            ['read'],
+            config_service
+        )
+        read_char.add_read_callback(self.read_config_callback)
+
+        # Write Characteristic
+        write_char = peripheral.Characteristic(
+            CONFIG_WRITE_CHAR_UUID,
+            ['write'],
+            config_service
+        )
+        write_char.add_write_callback(self.write_config_callback)
+
+        # Command Service
+        command_service = peripheral.Service(COMMAND_SERVICE_UUID, True)
+
+        # Command Characteristic
+        command_char = peripheral.Characteristic(
+            COMMAND_CHAR_UUID,
+            ['write'],
+            command_service
+        )
+        command_char.add_write_callback(self.command_callback)
+
+        # Add services to peripheral
+        self.peripheral.add_service(config_service)
+        self.peripheral.add_service(command_service)
 
     def publish(self):
         """Publish the peripheral and start advertising"""
