@@ -82,8 +82,8 @@ class BluetoothServer:
         # Add Services and Characteristics
         self.add_services()
     
-            # Start the Bluetooth Agent in a separate thread
-        self.start_bluetooth_agent()
+        #     # Start the Bluetooth Agent in a separate thread
+        # self.start_bluetooth_agent()
         self.peripheral.on_connect = self.connection_callback
     
     def __del__(self):
@@ -95,22 +95,22 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
-    def start_bluetooth_agent(self):
-        """
-        Start the Bluetooth Agent as a separate thread.
-        """
-        agent_thread = threading.Thread(target=self.run_agent, daemon=True)
-        agent_thread.start()
-        self.logger.info("Bluetooth Agent thread started")
+    # def start_bluetooth_agent(self):
+    #     """
+    #     Start the Bluetooth Agent as a separate thread.
+    #     """
+    #     agent_thread = threading.Thread(target=self.run_agent, daemon=True)
+    #     agent_thread.start()
+    #     self.logger.info("Bluetooth Agent thread started")
 
-    def run_agent(self):
-        """
-        Run the Bluetooth Agent script.
-        """
-        try:
-            subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Bluetooth Agent failed: {e}")
+    # def run_agent(self):
+    #     """
+    #     Run the Bluetooth Agent script.
+    #     """
+    #     try:
+    #         subprocess.run([sys.executable, "penrose_tools/BluetoothAgent.py"], check=True)
+    #     except subprocess.CalledProcessError as e:
+    #         self.logger.error(f"Bluetooth Agent failed: {e}")
 
     def add_services(self):
         # Clean up any advertisements that may be running
@@ -172,21 +172,6 @@ class BluetoothServer:
         )
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
-        # # Create the Advertisement using the custom class
-        # ad_index = 0  # Unique index for the advertisement
-        # self.advertisement = ConfigServerAdvertisement(
-        #     index=ad_index,
-        #     service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID],
-        #     local_name='ConfigServer'
-        # )
-
-        # # Register the advertisement
-        # try:
-        #     self.ad_manager.register_advertisement(self.advertisement, {})
-        #     self.logger.info("Advertisement registered successfully")
-        # except Exception as e:
-        #     self.logger.error(f"Failed to register advertisement: {e}")
-        #     self.logger.error(f"Advertisement details: {self.advertisement.__dict__}")
 
     def read_config_callback(self):
         """
