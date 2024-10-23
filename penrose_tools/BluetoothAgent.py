@@ -28,17 +28,15 @@ class Agent(dbus.service.Object):
         self.logger.info("Agent Released")
         self.quit_mainloop()
 
-    @dbus.service.method(AGENT_INTERFACE,
-                         in_signature="o", out_signature="s")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
     def RequestPinCode(self, device):
-        self.logger.info(f"RequestPinCode for device {device}")
-        return "0000"
+        self.logger.info(f"RequestPinCode: {device}")
+        return "000000"
 
-    @dbus.service.method(AGENT_INTERFACE,
-                         in_signature="o", out_signature="u")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="u")
     def RequestPasskey(self, device):
-        self.logger.info(f"RequestPasskey for device {device}")
-        return 0
+        self.logger.info(f"RequestPasskey: {device}")
+        return dbus.UInt32(000000)
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="ouq", out_signature="")
@@ -103,8 +101,9 @@ class Agent(dbus.service.Object):
         GLib.MainLoop().quit()
 
 def main():
+    """Standalone agent for testing"""
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler("bluetooth_agent.log"),
@@ -116,11 +115,22 @@ def main():
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
 
-    agent = Agent(bus, AGENT_PATH)
+    # First, make sure no other agents are registered
+    try:
+        manager = dbus.Interface(
+            bus.get_object("org.bluez", "/org/bluez"),
+            "org.bluez.AgentManager1"
+        )
+        manager.UnregisterAgent(AGENT_PATH)
+    except:
+        pass  # Ignore if no agent was registered
 
+    # Create and register our agent
+    agent = Agent(bus, AGENT_PATH)
     manager = dbus.Interface(
         bus.get_object("org.bluez", "/org/bluez"),
-        "org.bluez.AgentManager1")
+        "org.bluez.AgentManager1"
+    )
 
     manager.RegisterAgent(AGENT_PATH, CAPABILITY)
     logger.info("Bluetooth Agent registered")
@@ -128,12 +138,14 @@ def main():
     manager.RequestDefaultAgent(AGENT_PATH)
     logger.info("Bluetooth Agent set as default")
 
+    mainloop = GLib.MainLoop()
+    
     try:
-        mainloop = GLib.MainLoop()
         mainloop.run()
     except KeyboardInterrupt:
-        logger.info("Bluetooth Agent terminated")
-        agent.Release()
+        logger.info("Agent stopped by user")
+        mainloop.quit()
+        manager.UnregisterAgent(AGENT_PATH)
 
 if __name__ == "__main__":
     main()
