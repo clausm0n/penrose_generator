@@ -12,6 +12,7 @@ import time
 import os
 import dbus
 from gi.repository import GLib
+from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
 
 from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants, peripheral
 
@@ -22,31 +23,6 @@ CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
 COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 
-# class ConfigAdvertisement(advertisement.Advertisement):
-#     def __init__(self, advert_id):
-#         super().__init__(advert_id, 'peripheral')
-#         # Clear any existing properties first
-#         self.props[constants.LE_ADVERTISEMENT_IFACE] = {
-#             'Type': 'peripheral',
-#             'ServiceUUIDs': None,
-#             'ManufacturerData': None,
-#             'SolicitUUIDs': None,
-#             'ServiceData': None,
-#             'Includes': set(),
-#             'Appearance': None,
-#             'LocalName': None
-#         }
-        
-#         # Now set our properties
-#         self.include_tx_power = True
-#         self.local_name = 'PenroseServer'
-#         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
-        
-    # @dbus.service.method(constants.LE_ADVERTISEMENT_IFACE,
-    #                     in_signature='', out_signature='')
-    # def Release(self):
-    #     """Release the advertisement when requested by BlueZ"""
-    #     pass
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -87,7 +63,7 @@ class BluetoothServer:
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
         try:
-            from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
+            
             
             self.logger.debug("Attempting to create Agent instance...")
             # Create and register the agent with a shutdown callback
