@@ -17,6 +17,11 @@ PENROSE_SERVICE = '12345000-1234-1234-1234-123456789abc'
 CONFIG_CHAR = '12345001-1234-1234-1234-123456789abc'
 COMMAND_CHAR = '12345002-1234-1234-1234-123456789abc'
 
+# Additional Bluetooth constants
+AGENT_INTERFACE = 'org.bluez.Agent1'
+AGENT_MANAGER_INTERFACE = 'org.bluez.AgentManager1'
+AGENT_PATH = "/org/bluez/AutoAgent"
+
 class AutoAcceptAgent(dbus.service.Object):
     """
     Bluetooth agent that automatically accepts pairing requests
@@ -26,47 +31,54 @@ class AutoAcceptAgent(dbus.service.Object):
         super().__init__(bus, path)
         self.logger = logging.getLogger('PenroseBLE.Agent')
         
-    @dbus.service.method(constants.AGENT_INTERFACE,
+    @dbus.service.method(AGENT_INTERFACE,
                         in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
         """Always authorize the service"""
         self.logger.info(f"Authorizing service {uuid} for device {device}")
         return
 
-    @dbus.service.method(constants.AGENT_INTERFACE,
+    @dbus.service.method(AGENT_INTERFACE,
                         in_signature="o", out_signature="")
     def RequestAuthorization(self, device):
         """Always authorize the device"""
         self.logger.info(f"Authorizing device {device}")
         return
 
-    @dbus.service.method(constants.AGENT_INTERFACE,
+    @dbus.service.method(AGENT_INTERFACE,
                         in_signature="ou", out_signature="")
     def DisplayPasskey(self, device, passkey):
         """Display the passkey (in this case, just log it)"""
         self.logger.info(f"Passkey: {passkey}")
         return
 
-    @dbus.service.method(constants.AGENT_INTERFACE,
+    @dbus.service.method(AGENT_INTERFACE,
                         in_signature="ouq", out_signature="")
     def RequestConfirmation(self, device, passkey, _):
         """Automatically confirm pairing"""
         self.logger.info(f"Auto-accepting pairing request with passkey: {passkey}")
         return
 
-    @dbus.service.method(constants.AGENT_INTERFACE,
-                        in_signature="os", out_signature="")
+    @dbus.service.method(AGENT_INTERFACE,
+                        in_signature="os", out_signature="s")
     def RequestPinCode(self, device, _):
         """Return a default PIN if requested"""
         self.logger.info("Providing default PIN code")
         return "0000"
 
-    @dbus.service.method(constants.AGENT_INTERFACE,
+    @dbus.service.method(AGENT_INTERFACE,
                         in_signature="o", out_signature="u")
     def RequestPasskey(self, device):
         """Return a default passkey if requested"""
         self.logger.info("Providing default passkey")
         return dbus.UInt32(0000)
+
+    @dbus.service.method(AGENT_INTERFACE,
+                        in_signature="", out_signature="")
+    def Release(self):
+        """Release the agent"""
+        self.logger.info("Agent released")
+        return
 
 class PenroseBluetoothServer:
     def __init__(self, config_file: str, update_event: threading.Event, 
@@ -90,21 +102,25 @@ class PenroseBluetoothServer:
     def setup_agent(self):
         """Set up the auto-accept Bluetooth agent"""
         # Get the default adapter
-        adapter_obj = self.bus.get_object(constants.BLUEZ_SERVICE_NAME,
-                                        "/org/bluez/" + list(adapter.Adapter.available())[0].address.replace(':', '_'))
-        adapter_props = dbus.Interface(adapter_obj, constants.DBUS_PROPERTIES)
+        adapter_path = f"/org/bluez/{list(adapter.Adapter.available())[0].address.replace(':', '_')}"
+        adapter_obj = self.bus.get_object(constants.BLUEZ_SERVICE_NAME, adapter_path)
+        adapter_props = dbus.Interface(adapter_obj, constants.DBUS_PROP_IFACE)
         adapter_props.Set(constants.ADAPTER_INTERFACE, "Pairable", True)
         
         # Create and register agent
-        agent = AutoAcceptAgent(self.bus, "/org/bluez/AutoAgent")
+        agent = AutoAcceptAgent(self.bus, AGENT_PATH)
         agent_manager = dbus.Interface(
             self.bus.get_object(constants.BLUEZ_SERVICE_NAME, "/org/bluez"),
-            constants.AGENT_MANAGER_INTERFACE)
+            AGENT_MANAGER_INTERFACE)
         
-        agent_manager.RegisterAgent("/org/bluez/AutoAgent", "NoInputNoOutput")
-        agent_manager.RequestDefaultAgent("/org/bluez/AutoAgent")
+        try:
+            agent_manager.RegisterAgent(AGENT_PATH, "NoInputNoOutput")
+            agent_manager.RequestDefaultAgent(AGENT_PATH)
+            self.logger.info("Bluetooth agent registered for auto-pairing")
+        except Exception as e:
+            self.logger.error(f"Failed to register agent: {e}")
+            raise
         
-        self.logger.info("Bluetooth agent registered for auto-pairing")
         return agent
 
     def read_config(self) -> List[int]:
