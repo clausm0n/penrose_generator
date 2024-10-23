@@ -4,7 +4,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event,BluetoothServer
 import logging
 import configparser
 import signal
@@ -174,8 +174,7 @@ def main():
         last_time = glfw.get_time()
 
         if args.bluetooth:
-            # Instantiate BluetoothServer with required parameters
-            from penrose_tools.BluetoothServer import BluetoothServer
+            # Instantiate and publish BluetoothServer in the main thread
             bluetooth_server = BluetoothServer(
                 config_path=CONFIG_PATH,
                 update_event=update_event,
@@ -183,8 +182,7 @@ def main():
                 randomize_colors_event=randomize_colors_event,
                 shutdown_event=shutdown_event
             )
-            # Start the Bluetooth server in a separate thread
-            bluetooth_server.run_in_thread()
+            bluetooth_server.publish()
             logging.info("Bluetooth server started.")
         else:
             # HTTP server
@@ -192,8 +190,16 @@ def main():
             server_thread.start()
             logging.info("HTTP server started.")
 
+        running = True  # Ensure 'running' is initialized
+
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
+
+            # Process GLib events if Bluetooth is enabled
+            if args.bluetooth and bluetooth_server.main_context:
+                while bluetooth_server.main_context.pending():
+                    bluetooth_server.main_context.iteration(False)
+
             glClear(GL_COLOR_BUFFER_BIT)
 
             # Check if any relevant event is set
@@ -208,14 +214,20 @@ def main():
                 pass
             last_time = glfw.get_time()
 
+            # Check for shutdown_event
+            if shutdown_event.is_set():
+                logging.info("Shutdown event detected. Exiting main loop.")
+                running = False
+
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         raise
     finally:
         glfw.terminate()
+        if args.bluetooth:
+            bluetooth_server.unpublish()
         shutdown_event.set()
         logging.info("Application has been terminated.")
-
 
 if __name__ == '__main__':
     main()
