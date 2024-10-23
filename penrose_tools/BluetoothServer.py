@@ -245,10 +245,22 @@ class BluetoothServer:
             raise
 
     def register_advertisement_with_retry(self):
-        """Register advertisement with improved retry logic"""
-        MAX_RETRIES = 5  # Increased from 3 to 5
-        RETRY_DELAY = 2  # Increased from 1 to 2 seconds
-        
+        """Register advertisement with callback-based retry logic"""
+        MAX_RETRIES = 5
+        RETRY_DELAY = 2
+        registration_result = {'success': False}
+        registration_event = threading.Event()
+
+        def register_ad_cb():
+            """Success callback for advertisement registration"""
+            registration_result['success'] = True
+            registration_event.set()
+
+        def register_ad_error_cb(error):
+            """Error callback for advertisement registration"""
+            registration_result['error'] = str(error)
+            registration_event.set()
+
         for attempt in range(MAX_RETRIES):
             try:
                 # Ensure adapter is powered
@@ -264,22 +276,41 @@ class BluetoothServer:
                 
                 time.sleep(1)  # Wait before registering new advertisement
                 
-                self.ad_manager.register_advertisement(self.advertisement, {})
-                self.logger.info("Advertisement registered successfully.")
-                return True
+                # Reset event and result for this attempt
+                registration_event.clear()
+                registration_result.clear()
+                registration_result['success'] = False
                 
-            except dbus.exceptions.DBusException as e:
-                error_name = e.get_dbus_name() if hasattr(e, 'get_dbus_name') else str(e)
-                if attempt < MAX_RETRIES - 1:
-                    self.logger.warning(f"Advertisement registration attempt {attempt + 1} failed: {error_name}. Retrying...")
-                    time.sleep(RETRY_DELAY)
+                # Register with callbacks
+                self.ad_manager.advert_mngr_methods.RegisterAdvertisement(
+                    self.advertisement.path,
+                    dbus.Dictionary({}, signature='sv'),
+                    reply_handler=register_ad_cb,
+                    error_handler=register_ad_error_cb
+                )
+                
+                # Wait for callback response
+                registration_event.wait(timeout=5)  # 5 second timeout
+                
+                if registration_result.get('success', False):
+                    self.logger.info("Advertisement registered successfully.")
+                    return True
                 else:
-                    self.logger.error(f"Failed to register advertisement after {MAX_RETRIES} attempts: {error_name}")
-                    return False
+                    error = registration_result.get('error', 'Unknown error')
+                    if attempt < MAX_RETRIES - 1:
+                        self.logger.warning(f"Advertisement registration attempt {attempt + 1} failed: {error}. Retrying...")
+                        time.sleep(RETRY_DELAY)
+                    else:
+                        self.logger.error(f"Failed to register advertisement after {MAX_RETRIES} attempts: {error}")
+                        return False
+                    
             except Exception as e:
                 self.logger.error(f"Unexpected error during advertisement registration: {e}")
-                return False
-                
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    return False
+                    
         return False
 
     def publish(self):
