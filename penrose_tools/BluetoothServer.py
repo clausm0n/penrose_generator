@@ -111,12 +111,16 @@ class BluetoothServer:
         try:
             self.logger.debug("Setting up GATT Application...")
             
-            # Create peripheral with proper adapter address and name
+            # Create peripheral with proper adapter address and name, but inject our mainloop
+            self.mainloop = async_tools.EventLoop()  # Create mainloop first
+            
             peripheral_device = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
                 appearance=0  # Generic appearance
             )
+            # Override the peripheral's mainloop with ours
+            peripheral_device.mainloop = self.mainloop
             
             # Add Configuration Service (primary=True to make it advertised)
             self.logger.debug("Adding Configuration Service...")
@@ -190,7 +194,6 @@ class BluetoothServer:
             self.logger.debug("Initializing D-Bus main loop...")
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
-            self.mainloop = GLib.MainLoop()
 
             self.logger.debug("Starting Bluetooth Agent...")
             self.start_agent()
@@ -212,11 +215,19 @@ class BluetoothServer:
             self.peripheral.on_connect = self.on_device_connect
             self.peripheral.on_disconnect = self.on_device_disconnect
             
-            # Start the peripheral
-            self.peripheral.publish()  # This will start advertising automatically
+            # Do the initial publish without running the mainloop
+            if not self.peripheral.dongle.powered:
+                self.peripheral.dongle.powered = True
+            self.peripheral.srv_mng.register_application(self.peripheral.app, {})
+            self.peripheral.ad_manager.register_advertisement(self.peripheral.advert, {})
 
-            # Start the GLib main loop in the main thread
-            self.mainloop.run()
+            # Now run our mainloop
+            try:
+                self.mainloop.run()
+            except KeyboardInterrupt:
+                self.logger.info("Keyboard interrupt received")
+            finally:
+                self.unpublish()
 
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
@@ -227,14 +238,19 @@ class BluetoothServer:
         try:
             if hasattr(self, 'peripheral'):
                 self.logger.debug("Stopping peripheral...")
-                if self.peripheral.mainloop.is_running():
-                    self.peripheral.mainloop.quit()
+                try:
+                    self.peripheral.ad_manager.unregister_advertisement(self.peripheral.advert)
+                except Exception as e:
+                    self.logger.warning(f"Error unregistering advertisement: {e}")
+                    
+                if self.mainloop.is_running():
+                    self.mainloop.quit()
                 
             self.logger.info("GATT server unpublished")
                         
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")
-        
+            
     def register_gatt_application(self):
         """Register GATT application with duplicate protection"""
         try:
