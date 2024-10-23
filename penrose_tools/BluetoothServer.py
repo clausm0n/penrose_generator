@@ -124,6 +124,7 @@ class BluetoothServer:
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
+            self.logger.debug("Setting up GATT Application...")
             self.app = localGATT.Application()
             self.srv_mng = GATT.GattManager(self.adapter_address)
             self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
@@ -143,6 +144,7 @@ class BluetoothServer:
     def add_services(self):
         """Add GATT services and characteristics"""
         try:
+            self.logger.debug("Adding GATT services and characteristics...")
             # Configuration Service
             config_service = localGATT.Service(1, CONFIG_SERVICE_UUID, True)
             self.app.add_managed_object(config_service)
@@ -174,6 +176,8 @@ class BluetoothServer:
                 None, self.command_callback, None
             )
             self.app.add_managed_object(command_char)
+
+            self.logger.debug("GATT services and characteristics added.")
 
         except Exception as e:
             self.logger.error(f"Failed to add services: {e}")
@@ -221,8 +225,10 @@ class BluetoothServer:
     def unpublish(self):
         """Clean up advertising and GATT server"""
         try:
+            self.logger.debug("Unregistering Advertisement...")
             if self.ad_manager:
                 self.ad_manager.unregister_advertisement(self.advertisement)
+            self.logger.debug("Unregistering GATT Application...")
             if self.srv_mng:
                 self.srv_mng.unregister_application(self.app)
             self.logger.info("GATT server unpublished")

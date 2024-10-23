@@ -5,7 +5,6 @@ import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
 import logging
-import sys
 from gi.repository import GLib
 
 AGENT_INTERFACE = "org.bluez.Agent1"
@@ -115,6 +114,7 @@ class Agent(dbus.service.Object):
                         break
         except Exception as e:
             self.logger.error(f"Error in Authorize method: {e}")
+
 
 # Remove or comment out the standalone main function
 # def main():
