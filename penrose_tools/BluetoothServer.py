@@ -8,7 +8,6 @@ import subprocess
 import asyncio
 import time
 import os
-# Do not initialize D-Bus mainloop here
 import dbus
 from gi.repository import GLib
 
@@ -41,19 +40,21 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
         
-        # Do not initialize D-Bus or GLib mainloop here
-        # self.mainloop = GLib.MainLoop()
-        # self.bus = dbus.SystemBus()
-        
+        # Initialize variables
         self.config_path = config_path
         self.update_event = update_event
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
-
-        # Do not start the agent here
-        # Do not set up the adapter here
-        # Do not set up the peripheral here
+        self.adapter_address = adapter_address
+        self.agent = None
+        self.bus = None
+        self.mainloop = None
+        self.main_context = None
+        self.app = None
+        self.srv_mng = None
+        self.ad_manager = None
+        self.advertisement = None
 
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
@@ -167,43 +168,45 @@ class BluetoothServer:
             raise
 
     def publish(self):
-        """Publish the peripheral and start advertising"""
+        """Publish the peripheral and set up the Bluetooth services"""
         try:
             # Initialize D-Bus main loop in this thread
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
+            self.main_context = self.mainloop.get_context()  # Store the main context
 
-            # Now start the agent after D-Bus is initialized
+            # Start the agent
             self.start_agent()
 
-            # Now set up the adapter
+            # Set up the adapter
             self.setup_adapter()
 
-            # Now set up the peripheral
+            # Set up the peripheral
             self.setup_peripheral()
 
             if not self.adapter_obj.powered:
                 self.adapter_obj.powered = True
-                
+
             self.srv_mng.register_application(self.app, {})
             self.ad_manager.register_advertisement(self.advertisement, {})
 
             self.logger.info("GATT server published and advertising")
 
-            # Run the GLib main loop
-            self.mainloop.run()
-                
+            # Do not call self.mainloop.run()
+            # We will manually iterate over the main context in the main loop
+
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
-        finally:
             self.unpublish()
 
     def unpublish(self):
         """Clean up advertising and GATT server"""
         try:
-            self.ad_manager.unregister_advertisement(self.advertisement)
-            self.srv_mng.unregister_application(self.app)
+            if self.ad_manager:
+                self.ad_manager.unregister_advertisement(self.advertisement)
+            if self.srv_mng:
+                self.srv_mng.unregister_application(self.app)
             self.logger.info("GATT server unpublished")
             
             # Stop the GLib mainloop
@@ -230,22 +233,41 @@ class BluetoothServer:
 
     def write_config_callback(self, value, options):
         """Callback for configuration write requests"""
+        # Schedule the processing in the main loop using idle_add
+        GLib.idle_add(self._write_config_callback, value, options)
+
+    def _write_config_callback(self, value, options):
+        """Actual processing of write_config_callback"""
         try:
             data_str = bytes(value).decode('utf-8')
             data = json.loads(data_str)
             self.write_config(data)
             self.update_event.set()
+            return False  # Remove the idle handler
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
+            return False
 
     def command_callback(self, value, options):
         """Callback for command requests"""
+        # Schedule the processing in the main loop using idle_add
+        GLib.idle_add(self._command_callback, value, options)
+
+    def _command_callback(self, value, options):
+        """Actual processing of command_callback"""
         try:
             command = bytes(value).decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
-            self.handle_command(command)
+            response = self.handle_command(command)
+            
+            # Depending on the library's expectations, you might need to send a response
+            # This example assumes the library handles sending responses based on the return value
+            # If not, additional steps may be necessary
+
+            return False  # Remove the idle handler
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
+            return False
 
     def read_config(self):
         """
@@ -305,7 +327,8 @@ class BluetoothServer:
             self.logger.info("Shutdown initiated")
             response = {'status': 'success', 'message': 'Server is shutting down'}
             # Quit the main loop to stop the server
-            self.mainloop.quit()
+            if self.mainloop:
+                self.mainloop.quit()
         elif command == 'randomize_colors':
             self.randomize_colors_event.set()
             self.logger.info("Colors randomized")
@@ -314,6 +337,10 @@ class BluetoothServer:
             self.logger.warning(f"Unknown command received: {command}")
             response = {'status': 'error', 'message': 'Unknown command'}
         
+        # Depending on the library, you might need to send the response back
+        # This example assumes the library handles sending responses based on the return value
+        # If not, additional steps may be necessary
+
         return response
 
     def run_in_thread(self):
@@ -348,6 +375,7 @@ class BluetoothServer:
                 self.logger.info(f"Device disconnected: {device}")
         except Exception as e:
             self.logger.error(f"Error in disconnection callback: {e}")
+
 
 if __name__ == "__main__":
     # Example usage

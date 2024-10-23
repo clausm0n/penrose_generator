@@ -138,14 +138,18 @@ def main():
     manager.RequestDefaultAgent(AGENT_PATH)
     logger.info("Bluetooth Agent set as default")
 
-    mainloop = GLib.MainLoop()
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+
+    # mainloop = GLib.MainLoop()
+
     
-    try:
-        mainloop.run()
-    except KeyboardInterrupt:
-        logger.info("Agent stopped by user")
-        mainloop.quit()
-        manager.UnregisterAgent(AGENT_PATH)
+    # try:
+    #     mainloop.run()
+    # except KeyboardInterrupt:
+    #     logger.info("Agent stopped by user")
+    #     mainloop.quit()
+    #     manager.UnregisterAgent(AGENT_PATH)
 
 if __name__ == "__main__":
     main()
