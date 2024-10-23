@@ -109,6 +109,7 @@ class PenroseBluetoothServer:
             uuid=CONFIG_CHAR,
             value=[],
             flags=['read', 'write'],
+            notifying=False,
             read_callback=self.read_config,
             write_callback=self.write_config
         )
