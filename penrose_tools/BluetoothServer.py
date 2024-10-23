@@ -24,20 +24,16 @@ class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, advert_id):
         super().__init__(advert_id, 'peripheral')
         self.include_tx_power = True
-        
-        # Add service UUIDs
-        self.add_service_uuid(CONFIG_SERVICE_UUID)
-        self.add_service_uuid(COMMAND_SERVICE_UUID)
-        
-        # Add AD flags
-        self.add_flag(0x06)  # General Discoverable and BR/EDR Not Supported
-        
-        # Add local name
-        self.add_local_name('PenroseServer')
-        
-        # Add manufacturer data
-        # Replace 0x004C with your Company Identifier Code if available
-        self.add_manufacturer_data(0x004C, [0x02, 0x15])  # Example manufacturer data
+
+        # Set service UUIDs
+        self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+
+        # Set local name
+        self.local_name = 'PenroseServer'
+
+        # Set manufacturer data
+        self.manufacturer_data = {0x004C: [0x02, 0x15]}  # Example manufacturer data
+
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
