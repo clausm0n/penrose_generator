@@ -186,12 +186,14 @@ class BluetoothServer:
         """Start the GLib main loop in a separate thread."""
         try:
             self.logger.debug("Starting GLib main loop...")
-            self.mainloop_thread = threading.Thread(target=self.mainloop.run, daemon=True)
+            self.mainloop_thread = threading.Thread(target=self.mainloop.run)
             self.mainloop_thread.start()
             self.logger.debug("GLib main loop started in a separate thread.")
+            self.mainloop_thread.join()  # Wait for the main loop thread to finish
         except Exception as e:
             self.logger.error(f"Failed to start GLib main loop: {e}")
             raise
+
 
     def publish(self):
         """Publish the peripheral and set up the Bluetooth services"""
