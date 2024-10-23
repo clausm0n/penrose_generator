@@ -85,7 +85,10 @@ class BluetoothServer:
             
             # Add services before publishing
             self.add_services()
-            self.peripheral.on_connect = self.connection_callback
+            
+            # Set both connect and disconnect callbacks
+            self.peripheral.on_connect = self.on_device_connect
+            self.peripheral.on_disconnect = self.on_device_disconnect
             
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
@@ -323,11 +326,31 @@ class BluetoothServer:
         server_thread = threading.Thread(target=self.publish, daemon=True)
         server_thread.start()
     
-    def connection_callback(self, device_addr, connected):
-        if connected:
-            self.logger.info(f"Device {device_addr} connected")
-        else:
-            self.logger.info(f"Device {device_addr} disconnected")
+    def on_device_connect(self, device):
+        """
+        Callback for device connections.
+        :param device: The connected device object
+        """
+        try:
+            if hasattr(device, 'address'):
+                self.logger.info(f"Device connected: {device.address}")
+            else:
+                self.logger.info(f"Device connected: {device}")
+        except Exception as e:
+            self.logger.error(f"Error in connection callback: {e}")
+
+    def on_device_disconnect(self, device):
+        """
+        Callback for device disconnections.
+        :param device: The disconnected device object
+        """
+        try:
+            if hasattr(device, 'address'):
+                self.logger.info(f"Device disconnected: {device.address}")
+            else:
+                self.logger.info(f"Device disconnected: {device}")
+        except Exception as e:
+            self.logger.error(f"Error in disconnection callback: {e}")
 
 if __name__ == "__main__":
     # Example usage
