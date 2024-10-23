@@ -23,7 +23,7 @@ COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 
 class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, adapter_addr):
-        super().__init__(adapter_addr, 'peripheral', local_name='ConfigServer')
+        super().__init__(adapter_addr, 'peripheral', local_name='PenroseServer')
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.data = {
