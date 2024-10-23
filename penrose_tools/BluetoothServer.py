@@ -596,7 +596,7 @@ class BluetoothServer:
 
 if __name__ == "__main__":
     # Example usage
-    config_path = "config.ini"
+    config_path = "../config.ini"
     update_event = threading.Event()
     toggle_shader_event = threading.Event()
     randomize_colors_event = threading.Event()
