@@ -10,6 +10,7 @@ import configparser
 import signal
 import argparse
 import asyncio
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -161,6 +162,32 @@ def setup_window(fullscreen=False):
 
     return window
 
+def render_loop(window, shaders, last_time):
+    global running
+    running = True  # Ensure 'running' is initialized
+
+    while not glfw.window_should_close(window) and running:
+        glfw.poll_events()
+        glClear(GL_COLOR_BUFFER_BIT)
+
+        # Check if any relevant event is set
+        if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
+            update_toggles(shaders)
+
+        render_tiles(shaders, width, height)
+        glfw.swap_buffers(window)
+
+        # Frame rate control
+        while glfw.get_time() < last_time + 1.0 / 60.0:
+            pass
+        last_time = glfw.get_time()
+
+        # Check for shutdown_event
+        if shutdown_event.is_set():
+            logging.info("Shutdown event detected. Exiting rendering loop.")
+            running = False
+
+
 def main():
     global width, height, config_data
 
@@ -185,7 +212,7 @@ def main():
         last_time = glfw.get_time()
 
         if args.bluetooth:
-            # Instantiate and publish BluetoothServer in the main thread
+            # Instantiate BluetoothServer
             bluetooth_server = BluetoothServer(
                 config_path=CONFIG_PATH,
                 update_event=update_event,
@@ -193,6 +220,11 @@ def main():
                 randomize_colors_event=randomize_colors_event,
                 shutdown_event=shutdown_event
             )
+            # Start the rendering in a separate thread
+            rendering_thread = threading.Thread(target=render_loop, args=(window, shaders, last_time), daemon=True)
+            rendering_thread.start()
+
+            # Start the Bluetooth server (which runs the GLib main loop)
             bluetooth_server.publish()
             logging.info("Bluetooth server started.")
         else:
@@ -201,34 +233,7 @@ def main():
             server_thread.start()
             logging.info("HTTP server started.")
 
-        running = True  # Ensure 'running' is initialized
-
-        while not glfw.window_should_close(window) and running:
-            glfw.poll_events()
-
-            # Remove manual GLib iteration
-            # if args.bluetooth and bluetooth_server.main_context:
-            #     while bluetooth_server.main_context.pending():
-            #         bluetooth_server.main_context.iteration(False)
-
-            glClear(GL_COLOR_BUFFER_BIT)
-
-            # Check if any relevant event is set
-            if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
-                update_toggles(shaders)
-
-            render_tiles(shaders, width, height)
-            glfw.swap_buffers(window)
-
-            # Frame rate control
-            while glfw.get_time() < last_time + 1.0 / 60.0:
-                pass
-            last_time = glfw.get_time()
-
-            # Check for shutdown_event
-            if shutdown_event.is_set():
-                logging.info("Shutdown event detected. Exiting main loop.")
-                running = False
+            render_loop(window, shaders, last_time)
 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
