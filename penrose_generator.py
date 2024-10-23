@@ -4,12 +4,22 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event,BluetoothServer
+from penrose_tools import Operations, Tile, Shader, run_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event, BluetoothServer
 import logging
 import configparser
 import signal
 import argparse
 import asyncio
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("penrose_generator.log"),
+        logging.StreamHandler()
+    ]
+)
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -42,7 +52,6 @@ def initialize_config(path):
             config.write(configfile)
     return op.read_config_file(path)
 
-
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
 
@@ -53,27 +62,27 @@ def setup_projection(width, height):
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
 
-
 def update_toggles(shaders):
     global config_data, running
-    print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
+    logging.debug(f"Updating toggles... Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Toggle Regions: {toggle_regions_event.is_set()}, Toggle GUI: {toggle_gui_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
     if randomize_colors_event.is_set():
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
         randomize_colors_event.clear()
         op.update_config_file(CONFIG_PATH, **config_data)
-        print("Randomizing colors...")
+        logging.info("Randomizing colors...")
     if update_event.is_set():
         update_event.clear()
         config_data = op.read_config_file(CONFIG_PATH)
-        print("config_data updated...")
+        logging.info("config_data updated...")
     if toggle_shader_event.is_set():
         toggle_shader_event.clear()
         shaders.next_shader()
+        logging.info("Shader toggled.")
     if shutdown_event.is_set():
         running = False
-        print("Exiting...")
+        logging.info("Exiting...")
         return False
 
 def render_tiles(shaders, width, height):
@@ -85,11 +94,11 @@ def render_tiles(shaders, width, height):
     color1 = tuple(config_data["color1"])
     color2 = tuple(config_data["color2"])
     config_key = (tuple(gamma_values), width, height, scale_value, color1, color2)
-    
+
     if config_key not in tiles_cache:
         tiles_cache.clear()
-        print("Cache cleared")
-        print("Rendering tiles...", gamma_values, scale_value, color1, color2)
+        logging.info("Cache cleared")
+        logging.info(f"Rendering tiles... {gamma_values}, {scale_value}, {color1}, {color2}")
         tiles_objects = op.tiling(gamma_values, width, height, scale_value)
         op.calculate_neighbors(tiles_objects)
         tiles_cache[config_key] = tiles_objects
@@ -100,8 +109,8 @@ def render_tiles(shaders, width, height):
 
     for tile in visible_tiles:
         try:
-            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height,scale_value)
-            vertices = op.to_canvas(tile.vertices, scale_value, center,3)
+            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height, scale_value)
+            vertices = op.to_canvas(tile.vertices, scale_value, center, 3)
             glBegin(GL_POLYGON)
             glColor4ub(*modified_color)
             for vertex in vertices:
@@ -115,6 +124,7 @@ def render_tiles(shaders, width, height):
 def setup_window(fullscreen=False):
     global width, height
     if not glfw.init():
+        logging.error("GLFW can't be initialized")
         raise Exception("GLFW can't be initialized")
     
     # Get the primary monitor
@@ -134,6 +144,7 @@ def setup_window(fullscreen=False):
 
     if not window:
         glfw.terminate()
+        logging.error("GLFW window can't be created")
         raise Exception("GLFW window can't be created")
     
     glfw.make_context_current(window)
@@ -160,7 +171,7 @@ def main():
 
     def signal_handler(sig, frame):
         global running
-        print('Shutting down application...')
+        logging.info('Shutting down application...')
         running = False
         shutdown_event.set()
 
