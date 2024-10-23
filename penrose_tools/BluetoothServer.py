@@ -25,11 +25,28 @@ class ConfigAdvertisement(advertisement.Advertisement):
         super().__init__(advert_id, 'peripheral')
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
-        self.data = {
-            0x01: [0x06],  # AD_TYPE_FLAGS
-            0x09: 'PenroseServer',  # AD_TYPE_LOCAL_NAME_COMPLETE
-            0xFF: [0x70, 0x77]  # Manufacturer data
-        }
+        
+        # Set AD flags
+        self.flags = [0x06]  # General Discoverable and BR/EDR Not Supported
+        self.add_flag(self.flags)
+        
+        # Set local name
+        self.local_name = 'PenroseServer'
+        self.add_name(self.local_name)
+        
+        # Set manufacturer data
+        self.manufacturer_data = {0xFF: [0x70, 0x77]}  # Example manufacturer data
+        self.add_manufacturer_data(self.manufacturer_data)
+    
+    def add_flag(self, flags):
+        self.data[0x01] = flags
+    
+    def add_name(self, name):
+        self.data[0x09] = name
+    
+    def add_manufacturer_data(self, mfg_data):
+        for key, value in mfg_data.items():
+            self.data[key] = value
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -103,12 +120,11 @@ class BluetoothServer:
             # Create and register advertisement with unique advert_id (e.g., 0)
             self.advertisement = ConfigAdvertisement(advert_id=0)
             
-            # Initialize peripheral with specific configuration
+            # Initialize peripheral without manufacturer_data
             self.peripheral = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
-                appearance=0x0,  # Generic computer
-                manufacturer_data=bytes([0x70, 0x77])  # Example manufacturer data
+                appearance=0x0  # Generic computer
             )
             
             self.add_services()
@@ -220,15 +236,10 @@ class BluetoothServer:
             self.write_config(data)
             self.logger.info(f"Configuration updated: {data}")
 
-            # Notify clients about the update (optional)
-            # self.send_notification({'status': 'success', 'message': 'Configuration updated'})
-
             # Trigger the update event
             self.update_event.set()
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
-            # Optionally, notify clients about the error
-            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def command_callback(self, value, options):
         """
@@ -243,13 +254,8 @@ class BluetoothServer:
             command = value_bytes.decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
             response = self.handle_command(command)
-
-            # Notify clients about the command response (optional)
-            # self.send_notification(response)
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
-            # Optionally, notify clients about the error
-            # self.send_notification({'status': 'error', 'message': str(e)})
 
     def read_config(self):
         """
@@ -316,25 +322,7 @@ class BluetoothServer:
             self.logger.warning(f"Unknown command received: {command}")
             response = {'status': 'error', 'message': 'Unknown command'}
         
-        # Optional: Notify clients about the response
-        # self.send_notification(response)
-        
         return response
-
-    # def send_notification(self, message):
-    #     """
-    #     Send a notification to subscribed clients.
-
-    #     :param message: Dictionary to send as JSON.
-    #     """
-    #     try:
-    #         message_json = json.dumps(message)
-    #         message_bytes = message_json.encode('utf-8')
-    #         byte_list = list(message_bytes)
-    #         self.peripheral.send_notify(NOTIFICATION_CHAR_UUID, byte_list)
-    #         self.logger.info(f"Sent notification: {message_json}")
-    #     except Exception as e:
-    #         self.logger.error(f"Error sending notification: {e}")
 
     def run_in_thread(self):
         """
