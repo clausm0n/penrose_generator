@@ -111,27 +111,29 @@ class BluetoothServer:
         try:
             self.logger.debug("Setting up GATT Application...")
             
-            # Create peripheral with proper adapter address
+            # Create peripheral with proper adapter address and name
             peripheral_device = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
                 appearance=0  # Generic appearance
             )
             
-            # Add Configuration Service
+            # Add Configuration Service (primary=True to make it advertised)
+            self.logger.debug("Adding Configuration Service...")
             peripheral_device.add_service(
                 srv_id=1, 
                 uuid=CONFIG_SERVICE_UUID, 
-                primary=True
+                primary=True  # This service will be advertised
             )
             
             # Add Configuration Read Characteristic
+            self.logger.debug("Adding Configuration Read Characteristic...")
             peripheral_device.add_characteristic(
                 srv_id=1,
                 chr_id=1,
                 uuid=CONFIG_READ_CHAR_UUID,
                 value=[],
-                notifying=False,  # Added notifying parameter
+                notifying=False,
                 flags=['read'],
                 read_callback=self.read_config_callback,
                 write_callback=None,
@@ -139,44 +141,99 @@ class BluetoothServer:
             )
             
             # Add Configuration Write Characteristic
+            self.logger.debug("Adding Configuration Write Characteristic...")
             peripheral_device.add_characteristic(
                 srv_id=1,
                 chr_id=2,
                 uuid=CONFIG_WRITE_CHAR_UUID,
                 value=[],
-                notifying=False,  # Added notifying parameter
+                notifying=False,
                 flags=['write'],
                 read_callback=None,
                 write_callback=self.write_config_callback,
                 notify_callback=None
             )
             
-            # Add Command Service
+            # Add Command Service (also primary)
+            self.logger.debug("Adding Command Service...")
             peripheral_device.add_service(
                 srv_id=2,
                 uuid=COMMAND_SERVICE_UUID,
-                primary=True
+                primary=True  # This service will be advertised
             )
             
             # Add Command Characteristic
+            self.logger.debug("Adding Command Characteristic...")
             peripheral_device.add_characteristic(
                 srv_id=2,
                 chr_id=1,
                 uuid=COMMAND_CHAR_UUID,
                 value=[],
-                notifying=False,  # Added notifying parameter
+                notifying=False,
                 flags=['write'],
                 read_callback=None,
                 write_callback=self.command_callback,
                 notify_callback=None
             )
             
+            # Store reference to peripheral
             self.peripheral = peripheral_device
             self.logger.info("Peripheral setup completed")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
             raise
+
+    def publish(self):
+        """Publish the peripheral and set up the Bluetooth services"""
+        try:
+            self.logger.debug("Initializing D-Bus main loop...")
+            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+            self.bus = dbus.SystemBus()
+            self.mainloop = GLib.MainLoop()
+
+            self.logger.debug("Starting Bluetooth Agent...")
+            self.start_agent()
+
+            self.logger.debug("Setting up Bluetooth adapter...")
+            self.setup_adapter()
+
+            self.logger.debug("Setting up peripheral...")
+            self.setup_peripheral()
+
+            # Mark agent initialization as complete
+            if hasattr(self, 'agent') and self.agent is not None:
+                self.agent.set_initialization_complete()
+                self.logger.info("Agent initialization marked as complete")
+
+            self.logger.info("Publishing GATT server...")
+            
+            # Set up connection callbacks
+            self.peripheral.on_connect = self.on_device_connect
+            self.peripheral.on_disconnect = self.on_device_disconnect
+            
+            # Start the peripheral
+            self.peripheral.publish()  # This will start advertising automatically
+
+            # Start the GLib main loop in the main thread
+            self.mainloop.run()
+
+        except Exception as e:
+            self.logger.error(f"Error in publish: {e}")
+            self.unpublish()
+
+    def unpublish(self):
+        """Clean up advertising and GATT server"""
+        try:
+            if hasattr(self, 'peripheral'):
+                self.logger.debug("Stopping peripheral...")
+                if self.peripheral.mainloop.is_running():
+                    self.peripheral.mainloop.quit()
+                
+            self.logger.info("GATT server unpublished")
+                        
+        except Exception as e:
+            self.logger.error(f"Error in unpublish: {e}")
         
     def register_gatt_application(self):
         """Register GATT application with duplicate protection"""
@@ -346,50 +403,6 @@ class BluetoothServer:
                     return False
                     
         return False
-
-    def publish(self):
-        """Publish the peripheral and set up the Bluetooth services"""
-        try:
-            self.logger.debug("Initializing D-Bus main loop...")
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            self.bus = dbus.SystemBus()
-            self.mainloop = GLib.MainLoop()
-
-            self.logger.debug("Starting Bluetooth Agent...")
-            self.start_agent()
-
-            self.logger.debug("Setting up Bluetooth adapter...")
-            self.setup_adapter()
-
-            self.logger.debug("Setting up peripheral...")
-            self.setup_peripheral()
-
-            # Mark agent initialization as complete
-            if hasattr(self, 'agent') and self.agent is not None:
-                self.agent.set_initialization_complete()
-                self.logger.info("Agent initialization marked as complete")
-
-            self.logger.info("Publishing GATT server...")
-            self.peripheral.publish()  # This will start advertising automatically
-
-            # Start the GLib main loop in the main thread
-            self.mainloop.run()
-
-        except Exception as e:
-            self.logger.error(f"Error in publish: {e}")
-            self.unpublish()
-
-    def unpublish(self):
-        """Clean up advertising and GATT server"""
-        try:
-            if hasattr(self, 'peripheral'):
-                self.logger.debug("Stopping peripheral...")
-                self.peripheral.stop()
-                
-            self.logger.info("GATT server unpublished")
-                        
-        except Exception as e:
-            self.logger.error(f"Error in unpublish: {e}")
 
     def read_config_callback(self, options):
         """Callback for configuration read requests"""
