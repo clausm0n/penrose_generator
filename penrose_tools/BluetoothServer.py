@@ -1,3 +1,5 @@
+# penrose_tools/BluetoothServer.py
+
 import logging
 import json
 import configparser
@@ -56,18 +58,27 @@ class BluetoothServer:
         self.ad_manager = None
         self.advertisement = None
 
+    def shutdown_server(self):
+        """Callback to shut down the server."""
+        self.logger.info("Shutdown callback invoked by Agent.")
+        self.shutdown_event.set()
+
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
         try:
             from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
             
-            # Create and register the agent
-            self.agent = Agent(self.bus, AGENT_PATH)
+            self.logger.debug("Attempting to create Agent instance...")
+            # Create and register the agent with a shutdown callback
+            self.agent = Agent(self.bus, AGENT_PATH, shutdown_callback=self.shutdown_server)
+            self.logger.debug("Agent instance created.")
+
             manager = dbus.Interface(
                 self.bus.get_object("org.bluez", "/org/bluez"),
                 "org.bluez.AgentManager1"
             )
             
+            self.logger.debug("Registering Agent with Manager...")
             manager.RegisterAgent(AGENT_PATH, CAPABILITY)
             self.logger.info("Bluetooth Agent registered")
             
@@ -81,6 +92,7 @@ class BluetoothServer:
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
         try:
+            self.logger.debug("Restarting Bluetooth service...")
             subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
             self.logger.info("Bluetooth service restarted")
             
@@ -170,25 +182,31 @@ class BluetoothServer:
     def publish(self):
         """Publish the peripheral and set up the Bluetooth services"""
         try:
+            self.logger.debug("Initializing D-Bus main loop...")
             # Initialize D-Bus main loop in this thread
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
             self.main_context = self.mainloop.get_context()  # Store the main context
 
+            self.logger.debug("Starting Bluetooth Agent...")
             # Start the agent
             self.start_agent()
 
+            self.logger.debug("Setting up Bluetooth adapter...")
             # Set up the adapter
             self.setup_adapter()
 
+            self.logger.debug("Setting up peripheral...")
             # Set up the peripheral
             self.setup_peripheral()
 
             if not self.adapter_obj.powered:
                 self.adapter_obj.powered = True
 
+            self.logger.debug("Registering GATT application...")
             self.srv_mng.register_application(self.app, {})
+            self.logger.debug("Registering Advertisement...")
             self.ad_manager.register_advertisement(self.advertisement, {})
 
             self.logger.info("GATT server published and advertising")
@@ -209,13 +227,11 @@ class BluetoothServer:
                 self.srv_mng.unregister_application(self.app)
             self.logger.info("GATT server unpublished")
             
-            # Stop the GLib mainloop
-            if hasattr(self, 'mainloop') and self.mainloop is not None:
-                self.mainloop.quit()
-            
             # Release the agent
             if hasattr(self, 'agent') and self.agent is not None:
+                self.logger.debug("Releasing Bluetooth Agent...")
                 self.agent.Release()
+                self.logger.info("Bluetooth Agent released.")
                 
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")
@@ -225,6 +241,7 @@ class BluetoothServer:
         try:
             config = self.read_config()
             config_json = json.dumps(config)
+            self.logger.debug("Read config callback called.")
             return list(config_json.encode('utf-8'))
         except Exception as e:
             self.logger.error(f"Error reading config: {e}")
@@ -233,6 +250,7 @@ class BluetoothServer:
 
     def write_config_callback(self, value, options):
         """Callback for configuration write requests"""
+        self.logger.debug("Write config callback called.")
         # Schedule the processing in the main loop using idle_add
         GLib.idle_add(self._write_config_callback, value, options)
 
@@ -243,6 +261,7 @@ class BluetoothServer:
             data = json.loads(data_str)
             self.write_config(data)
             self.update_event.set()
+            self.logger.debug("Write config processed.")
             return False  # Remove the idle handler
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
@@ -250,6 +269,7 @@ class BluetoothServer:
 
     def command_callback(self, value, options):
         """Callback for command requests"""
+        self.logger.debug("Command callback called.")
         # Schedule the processing in the main loop using idle_add
         GLib.idle_add(self._command_callback, value, options)
 
@@ -259,11 +279,7 @@ class BluetoothServer:
             command = bytes(value).decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
             response = self.handle_command(command)
-            
-            # Depending on the library's expectations, you might need to send a response
-            # This example assumes the library handles sending responses based on the return value
-            # If not, additional steps may be necessary
-
+            self.logger.debug(f"Command processed: {response}")
             return False  # Remove the idle handler
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
@@ -326,9 +342,8 @@ class BluetoothServer:
             self.shutdown_event.set()
             self.logger.info("Shutdown initiated")
             response = {'status': 'success', 'message': 'Server is shutting down'}
-            # Quit the main loop to stop the server
-            if self.mainloop:
-                self.mainloop.quit()
+            # Notify the server to shut down via the shutdown callback
+            # The Agent's Release method will already call the shutdown_callback
         elif command == 'randomize_colors':
             self.randomize_colors_event.set()
             self.logger.info("Colors randomized")
@@ -343,12 +358,7 @@ class BluetoothServer:
 
         return response
 
-    def run_in_thread(self):
-        """
-        Run the Bluetooth server in a separate daemon thread.
-        """
-        server_thread = threading.Thread(target=self.publish, daemon=True)
-        server_thread.start()
+    # Removed run_in_thread since the server manages the main loop
 
     def on_device_connect(self, device):
         """
