@@ -12,7 +12,6 @@ import time
 import os
 import dbus
 from gi.repository import GLib
-from BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
 
 from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants, peripheral
 
@@ -63,7 +62,7 @@ class BluetoothServer:
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
         try:
-            
+            from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
             
             self.logger.debug("Attempting to create Agent instance...")
             # Create and register the agent with a shutdown callback
