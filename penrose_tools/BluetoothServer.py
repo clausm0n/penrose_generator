@@ -28,7 +28,6 @@ class ConfigAdvertisement(advertisement.Advertisement):
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.local_name = 'PenroseServer'
-        self.manufacturer_data = {0x004C: [0x02, 0x15]}
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -217,7 +216,13 @@ class BluetoothServer:
             self.logger.debug("Registering GATT application...")
             self.srv_mng.register_application(self.app, {})
             self.logger.debug("Registering Advertisement...")
-            self.ad_manager.register_advertisement(self.advertisement, {})
+
+            try:
+                self.ad_manager.register_advertisement(self.advertisement, {})
+                self.logger.info("Advertisement registered successfully.")
+            except dbus.exceptions.DBusException as e:
+                self.logger.error(f"Failed to register advertisement: {e}")
+                raise
 
             self.logger.info("GATT server published and advertising")
 
