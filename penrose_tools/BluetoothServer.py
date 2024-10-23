@@ -23,31 +23,8 @@ class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
         """
         Initialize the Bluetooth Server with services and characteristics.
-
-        :param config_path: Path to the configuration file.
-        :param update_event: Event to signal configuration updates.
-        :param toggle_shader_event: Event to toggle shaders.
-        :param randomize_colors_event: Event to randomize colors.
-        :param shutdown_event: Event to signal server shutdown.
-        :param adapter_address: (Optional) Bluetooth adapter address.
         """
-        # Assign parameters to instance variables
-        self.config_path = config_path
-        self.update_event = update_event
-        self.toggle_shader_event = toggle_shader_event
-        self.randomize_colors_event = randomize_colors_event
-        self.shutdown_event = shutdown_event
-        self.dongles = adapter.list_adapters()
-        print('dongles available: ', self.dongles)
-        if not self.dongles:
-            self.logger.error("No Bluetooth adapters found")
-            sys.exit(1)
-        
-        self.adapter_obj = adapter.Adapter(self.dongles[0])
-        self.adapter_address = self.adapter_obj.address
-        print('address: ', self.adapter_address)
-
-        # Initialize Logging
+        # Initialize logging first
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -58,26 +35,61 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
 
+        # Store parameters
+        self.config_path = config_path
+        self.update_event = update_event
+        self.toggle_shader_event = toggle_shader_event
+        self.randomize_colors_event = randomize_colors_event
+        self.shutdown_event = shutdown_event
+
+        # Get available adapters
+        self.dongles = adapter.list_adapters()
+        self.logger.info(f'Available dongles: {self.dongles}')
+        
+        if not self.dongles:
+            self.logger.error("No Bluetooth adapters found")
+            sys.exit(1)
+
+        # Initialize adapter
+        try:
+            self.adapter_obj = adapter.Adapter(self.dongles[0])
+            self.adapter_address = self.adapter_obj.address
+            self.logger.info(f'Using adapter: {self.adapter_address}')
+
+            # Set adapter properties
+            if not self.adapter_obj.powered:
+                self.adapter_obj.powered = True
+            self.adapter_obj.discoverable = True
+            self.adapter_obj.pairable = True
+            self.adapter_obj.alias = 'ConfigServer'  # Set a friendly name
+
+            # Log adapter status
+            self.logger.info(f"Adapter status:")
+            self.logger.info(f"  Powered: {self.adapter_obj.powered}")
+            self.logger.info(f"  Discoverable: {self.adapter_obj.discoverable}")
+            self.logger.info(f"  Pairable: {self.adapter_obj.pairable}")
+            self.logger.info(f"  Name: {self.adapter_obj.name}")
+            self.logger.info(f"  Alias: {self.adapter_obj.alias}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize adapter: {e}")
+            sys.exit(1)
+
         # Initialize Peripheral
-        if not adapter_address:
-            adapters = list(adapter.Adapter.available())
-            if not adapters:
-                self.logger.error("No Bluetooth adapters found")
-                sys.exit(1)
-            self.adapter_address = adapters[0].address
-        else:
-            self.adapter_address = adapter_address
-
-        self.peripheral = peripheral.Peripheral(
-            self.adapter_address,
-            local_name='ConfigServer',
-            appearance=0
-        )
-
-        # Add Services and Characteristics
-        self.add_services()
-    
-        self.peripheral.on_connect = self.connection_callback
+        try:
+            self.peripheral = peripheral.Peripheral(
+                self.adapter_address,
+                local_name='ConfigServer',
+                appearance=0,
+                service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+            )
+            # Add services before publishing
+            self.add_services()
+            self.peripheral.on_connect = self.connection_callback
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize peripheral: {e}")
+            sys.exit(1)
     
     def __del__(self):
         try:
@@ -292,14 +304,19 @@ class BluetoothServer:
         """
         Publish the peripheral and start the event loop.
         """
-        self.peripheral.publish()
-        self.logger.info("Bluetooth GATT server is running...")
-
         try:
+            self.peripheral.publish()
+            self.logger.info("Bluetooth GATT server is running...")
+            
+            # Explicitly advertise services
+            service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+            self.logger.info(f"Advertising services: {service_uuids}")
+            
             while not self.shutdown_event.is_set():
                 async_tools.sleep(1)
-        except KeyboardInterrupt:
-            self.logger.info("KeyboardInterrupt received. Shutting down.")
+                
+        except Exception as e:
+            self.logger.error(f"Error in publish: {e}")
         finally:
             self.unpublish()
 
