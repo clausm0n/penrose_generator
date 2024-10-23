@@ -231,7 +231,7 @@ class BluetoothServer:
 
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
-            self.unpublish()
+            # self.unpublish()
 
     def unpublish(self):
         """Clean up advertising and GATT server"""
