@@ -10,6 +10,9 @@ import subprocess
 import asyncio
 import time
 import os
+# Initialize D-Bus mainloop
+import dbus.mainloop.glib
+from gi.repository import GLib
 
 from bluezero import adapter, advertisement, async_tools, localGATT, GATT
 
@@ -40,14 +43,47 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
         
+
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self.bus = dbus.SystemBus()
+        self.mainloop = GLib.MainLoop()
+        
         self.config_path = config_path
         self.update_event = update_event
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
 
+        # Start the agent before setting up the adapter
+        self.start_agent()
         self.setup_adapter()
         self.setup_peripheral()
+    
+    def start_agent(self):
+        """Initialize and start the Bluetooth Agent"""
+        try:
+            from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
+            
+            # Create and register the agent
+            self.agent = Agent(self.bus, AGENT_PATH)
+            manager = dbus.Interface(
+                self.bus.get_object("org.bluez", "/org/bluez"),
+                "org.bluez.AgentManager1"
+            )
+            
+            manager.RegisterAgent(AGENT_PATH, CAPABILITY)
+            self.logger.info("Bluetooth Agent registered")
+            
+            manager.RequestDefaultAgent(AGENT_PATH)
+            self.logger.info("Bluetooth Agent set as default")
+            
+            # Start the GLib mainloop in a separate thread
+            self.agent_thread = threading.Thread(target=self.mainloop.run, daemon=True)
+            self.agent_thread.start()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to start Bluetooth Agent: {e}")
+            raise
 
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
@@ -163,6 +199,15 @@ class BluetoothServer:
             self.ad_manager.unregister_advertisement(self.advertisement)
             self.srv_mng.unregister_application(self.app)
             self.logger.info("GATT server unpublished")
+            
+            # Stop the GLib mainloop
+            if hasattr(self, 'mainloop') and self.mainloop is not None:
+                self.mainloop.quit()
+            
+            # Release the agent
+            if hasattr(self, 'agent') and self.agent is not None:
+                self.agent.Release()
+                
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")
 
