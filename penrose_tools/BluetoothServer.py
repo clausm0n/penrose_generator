@@ -1,5 +1,3 @@
-# penrose_tools/BluetoothServer.py
-
 import logging
 import json
 import configparser
@@ -11,6 +9,7 @@ import asyncio
 import time
 import os
 # Initialize D-Bus mainloop
+import dbus
 import dbus.mainloop.glib
 from gi.repository import GLib
 
@@ -43,10 +42,10 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
         
-
+        # Initialize D-Bus mainloop only once
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-        self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
+        self.bus = dbus.SystemBus()
         
         self.config_path = config_path
         self.update_event = update_event
@@ -76,10 +75,6 @@ class BluetoothServer:
             
             manager.RequestDefaultAgent(AGENT_PATH)
             self.logger.info("Bluetooth Agent set as default")
-            
-            # Start the GLib mainloop in a separate thread
-            self.agent_thread = threading.Thread(target=self.mainloop.run, daemon=True)
-            self.agent_thread.start()
             
         except Exception as e:
             self.logger.error(f"Failed to start Bluetooth Agent: {e}")
@@ -182,11 +177,11 @@ class BluetoothServer:
                 
             self.srv_mng.register_application(self.app, {})
             self.ad_manager.register_advertisement(self.advertisement, {})
-            
+
             self.logger.info("GATT server published and advertising")
-            
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
+
+            # Run the GLib main loop
+            self.mainloop.run()
                 
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
@@ -298,6 +293,8 @@ class BluetoothServer:
             self.shutdown_event.set()
             self.logger.info("Shutdown initiated")
             response = {'status': 'success', 'message': 'Server is shutting down'}
+            # Quit the main loop to stop the server
+            self.mainloop.quit()
         elif command == 'randomize_colors':
             self.randomize_colors_event.set()
             self.logger.info("Colors randomized")
@@ -308,13 +305,6 @@ class BluetoothServer:
         
         return response
 
-    def run_in_thread(self):
-        """
-        Run the Bluetooth server in a separate daemon thread.
-        """
-        server_thread = threading.Thread(target=self.publish, daemon=True)
-        server_thread.start()
-    
     def on_device_connect(self, device):
         """
         Callback for device connections.
@@ -356,12 +346,9 @@ if __name__ == "__main__":
         randomize_colors_event,
         shutdown_event
     )
-    server.run_in_thread()
 
-    # Keep the main thread alive
     try:
-        while not shutdown_event.is_set():
-            time.sleep(1)
+        server.publish()
     except KeyboardInterrupt:
         shutdown_event.set()
         server.unpublish()
