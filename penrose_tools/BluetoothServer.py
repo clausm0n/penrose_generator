@@ -305,8 +305,8 @@ class BluetoothServer:
                 if self.agent.initialization_complete and self.agent.can_shutdown():
                     self.logger.debug("Releasing Bluetooth Agent...")
                     try:
-                        self.agent.Release()
-                        self.logger.info("Bluetooth Agent released.")
+                        # self.agent.Release()
+                        self.logger.info("Bluetooth Agent release attempted.")
                     except Exception as e:
                         self.logger.error(f"Error releasing agent: {e}")
                 else:
