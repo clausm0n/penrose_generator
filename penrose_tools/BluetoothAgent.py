@@ -5,7 +5,6 @@ import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
 import logging
-import sys
 from gi.repository import GLib
 
 AGENT_INTERFACE = "org.bluez.Agent1"
@@ -22,7 +21,7 @@ class Agent(dbus.service.Object):
         self.path = path
         self.logger = logging.getLogger('BluetoothAgent')
         self.shutdown_callback = shutdown_callback  # Callback to notify server to shutdown
-        logging.info("Bluetooth Agent created")
+        self.logger.info("Bluetooth Agent created")
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="", out_signature="")
@@ -73,29 +72,45 @@ class Agent(dbus.service.Object):
         self.Authorize(device, True)
 
     def Confirm(self, device, accept):
-        manager = dbus.Interface(
-            self.bus.get_object("org.bluez", "/org/bluez"),
-            "org.freedesktop.DBus.ObjectManager")
-        objects = manager.GetManagedObjects()
-        for path, interfaces in objects.items():
-            if "org.bluez.Device1" in interfaces:
-                if interfaces["org.bluez.Device1"]["Address"] == device:
-                    device_obj = self.bus.get_object("org.bluez", path)
-                    device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
-                    device_interface.Confirm(accept)
-                    self.logger.info(f"Confirmed pairing for device {device}")
-                    break
+        try:
+            # device is the object path; retrieve the Address property
+            device_obj = self.bus.get_object("org.bluez", device)
+            device_props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
+            address = device_props.Get("org.bluez.Device1", "Address")
+            
+            manager = dbus.Interface(
+                self.bus.get_object("org.bluez", "/org/bluez"),
+                "org.freedesktop.DBus.ObjectManager"
+            )
+            objects = manager.GetManagedObjects()
+            for path, interfaces in objects.items():
+                if "org.bluez.Device1" in interfaces:
+                    if interfaces["org.bluez.Device1"]["Address"] == address:
+                        device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
+                        device_interface.Confirm(accept)
+                        self.logger.info(f"Confirmed pairing for device {address}")
+                        break
+        except Exception as e:
+            self.logger.error(f"Error in Confirm method: {e}")
 
     def Authorize(self, device, accept):
-        manager = dbus.Interface(
-            self.bus.get_object("org.bluez", "/org/bluez"),
-            "org.freedesktop.DBus.ObjectManager")
-        objects = manager.GetManagedObjects()
-        for path, interfaces in objects.items():
-            if "org.bluez.Device1" in interfaces:
-                if interfaces["org.bluez.Device1"]["Address"] == device:
-                    device_obj = self.bus.get_object("org.bluez", path)
-                    device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
-                    device_interface.Authorize(accept)
-                    self.logger.info(f"Authorized device {device}")
-                    break
+        try:
+            # device is the object path; retrieve the Address property
+            device_obj = self.bus.get_object("org.bluez", device)
+            device_props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
+            address = device_props.Get("org.bluez.Device1", "Address")
+            
+            manager = dbus.Interface(
+                self.bus.get_object("org.bluez", "/org/bluez"),
+                "org.freedesktop.DBus.ObjectManager"
+            )
+            objects = manager.GetManagedObjects()
+            for path, interfaces in objects.items():
+                if "org.bluez.Device1" in interfaces:
+                    if interfaces["org.bluez.Device1"]["Address"] == address:
+                        device_interface = dbus.Interface(device_obj, "org.bluez.Device1")
+                        device_interface.Authorize(accept)
+                        self.logger.info(f"Authorized device {address}")
+                        break
+        except Exception as e:
+            self.logger.error(f"Error in Authorize method: {e}")
