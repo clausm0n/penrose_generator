@@ -215,3 +215,7 @@ def main():
         glfw.terminate()
         shutdown_event.set()
         logging.info("Application has been terminated.")
+
+
+if __name__ == '__main__':
+    main()
