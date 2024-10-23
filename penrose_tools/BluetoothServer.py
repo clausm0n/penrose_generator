@@ -220,18 +220,9 @@ class BluetoothServer:
 
             self.logger.info("GATT server and advertisement published")
 
-            # Run the mainloop
-            try:
-                self.mainloop.run()
-            except KeyboardInterrupt:
-                self.logger.info("Keyboard interrupt received")
-            finally:
-                self.unpublish()
-
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
             self.unpublish()
-
 
     def unpublish(self):
         """Clean up advertising and GATT server"""
@@ -315,13 +306,7 @@ class BluetoothServer:
 
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
-        try:
-            # self.logger.debug("Restarting Bluetooth service...")
-            # subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
-            # self.logger.info("Bluetooth service restarted")
-            
-            # time.sleep(5)  # Wait for service to be fully up
-            
+        try:            
             self.dongles = adapter.list_adapters()
             self.logger.info(f'Available dongles: {self.dongles}')
             
