@@ -8,8 +8,9 @@ import subprocess
 import asyncio
 import time
 import os
-# Do not initialize D-Bus mainloop here
+# Initialize D-Bus mainloop
 import dbus
+import dbus.mainloop.glib
 from gi.repository import GLib
 
 from bluezero import adapter, advertisement, async_tools, localGATT, GATT
@@ -41,9 +42,10 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
         
-        # Do not initialize D-Bus or GLib mainloop here
-        # self.mainloop = GLib.MainLoop()
-        # self.bus = dbus.SystemBus()
+        # Initialize D-Bus mainloop only once
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self.mainloop = GLib.MainLoop()
+        self.bus = dbus.SystemBus()
         
         self.config_path = config_path
         self.update_event = update_event
@@ -51,10 +53,11 @@ class BluetoothServer:
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
 
-        # Do not start the agent here
-        # Do not set up the adapter here
-        # Do not set up the peripheral here
-
+        # Start the agent before setting up the adapter
+        self.start_agent()
+        self.setup_adapter()
+        self.setup_peripheral()
+    
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
         try:
@@ -72,7 +75,7 @@ class BluetoothServer:
             
             manager.RequestDefaultAgent(AGENT_PATH)
             self.logger.info("Bluetooth Agent set as default")
-                
+            
         except Exception as e:
             self.logger.error(f"Failed to start Bluetooth Agent: {e}")
             raise
@@ -169,20 +172,6 @@ class BluetoothServer:
     def publish(self):
         """Publish the peripheral and start advertising"""
         try:
-            # Initialize D-Bus main loop in this thread
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            self.bus = dbus.SystemBus()
-            self.mainloop = GLib.MainLoop()
-
-            # Now start the agent after D-Bus is initialized
-            self.start_agent()
-
-            # Now set up the adapter
-            self.setup_adapter()
-
-            # Now set up the peripheral
-            self.setup_peripheral()
-
             if not self.adapter_obj.powered:
                 self.adapter_obj.powered = True
                 
@@ -316,13 +305,6 @@ class BluetoothServer:
         
         return response
 
-    def run_in_thread(self):
-        """
-        Run the Bluetooth server in a separate daemon thread.
-        """
-        server_thread = threading.Thread(target=self.publish, daemon=True)
-        server_thread.start()
-
     def on_device_connect(self, device):
         """
         Callback for device connections.
@@ -365,4 +347,8 @@ if __name__ == "__main__":
         shutdown_event
     )
 
-    server.publish()
+    try:
+        server.publish()
+    except KeyboardInterrupt:
+        shutdown_event.set()
+        server.unpublish()
