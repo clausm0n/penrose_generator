@@ -13,7 +13,7 @@ import os
 import dbus
 from gi.repository import GLib
 
-from bluezero import adapter, advertisement, async_tools, localGATT, GATT
+from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants
 
 # Static UUIDs for services and characteristics
 CONFIG_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cb'
@@ -25,9 +25,28 @@ COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, advert_id):
         super().__init__(advert_id, 'peripheral')
+        # Clear any existing properties first
+        self.props[constants.LE_ADVERTISEMENT_IFACE] = {
+            'Type': 'peripheral',
+            'ServiceUUIDs': None,
+            'ManufacturerData': None,
+            'SolicitUUIDs': None,
+            'ServiceData': None,
+            'Includes': set(),
+            'Appearance': None,
+            'LocalName': None
+        }
+        
+        # Now set our properties
         self.include_tx_power = True
-        self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.local_name = 'PenroseServer'
+        self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+        
+    @dbus.service.method(constants.LE_ADVERTISEMENT_IFACE,
+                        in_signature='', out_signature='')
+    def Release(self):
+        """Release the advertisement when requested by BlueZ"""
+        pass
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -182,15 +201,15 @@ class BluetoothServer:
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter with retry logic"""
         MAX_RETRIES = 3
-        RETRY_DELAY = 2  # Increased from 1 to 2 seconds
-        SERVICE_STARTUP_DELAY = 5  # Increased from 2 to 5 seconds
+        RETRY_DELAY = 2
+        SERVICE_STARTUP_DELAY = 5
         
         try:
             self.logger.debug("Restarting Bluetooth service...")
             subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
             self.logger.info("Bluetooth service restarted")
             
-            # Increased wait time for service to be fully up
+            # Wait for service to be fully up
             time.sleep(SERVICE_STARTUP_DELAY)
             
             for attempt in range(MAX_RETRIES):
@@ -204,28 +223,40 @@ class BluetoothServer:
                     self.adapter_obj = adapter.Adapter(self.dongles[0])
                     self.adapter_address = self.adapter_obj.address
                     
-                    # Power cycle the adapter with longer delays
+                    # Power cycle the adapter
                     self.adapter_obj.powered = False
-                    time.sleep(2)  # Increased from 1 to 2 seconds
+                    time.sleep(2)
+                    
+                    # Configure adapter settings before powering on
+                    adapter_props = dbus.Interface(
+                        self.bus.get_object("org.bluez", self.adapter_obj.path),
+                        "org.freedesktop.DBus.Properties"
+                    )
+                    
+                    # Set required properties while powered off
+                    props_to_set = {
+                        'Discoverable': dbus.Boolean(True),
+                        'DiscoverableTimeout': dbus.UInt32(0),
+                        'Pairable': dbus.Boolean(True),
+                        'PairableTimeout': dbus.UInt32(0),
+                        'Alias': dbus.String('ConfigServer'),
+                        'Roles': dbus.Array(['peripheral'], signature='s')  # Only set peripheral role
+                    }
+                    
+                    for prop, value in props_to_set.items():
+                        try:
+                            adapter_props.Set("org.bluez.Adapter1", prop, value)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to set {prop}: {e}")
+                    
+                    # Power on the adapter after configuration
                     self.adapter_obj.powered = True
-                    time.sleep(2)  # Increased from 1 to 2 seconds
+                    time.sleep(2)
                     
-                    # Ensure previous advertisements are cleared
-                    try:
-                        self.adapter_obj.stop_advertising()
-                    except:
-                        pass  # Ignore if no advertisements exist
-                    
-                    # Configure adapter settings
-                    self.adapter_obj.discoverable = True
-                    self.adapter_obj.discoverable_timeout = 0
-                    self.adapter_obj.pairable = True
-                    self.adapter_obj.pairable_timeout = 0
-                    self.adapter_obj.alias = 'ConfigServer'
-
-                    # Verify adapter is powered and configured
-                    if not self.adapter_obj.powered:
-                        raise Exception("Adapter failed to power on")
+                    # Verify adapter is powered and in peripheral mode
+                    current_roles = adapter_props.Get("org.bluez.Adapter1", "Roles")
+                    if not self.adapter_obj.powered or 'peripheral' not in current_roles:
+                        raise Exception("Adapter not properly configured")
                     
                     # Additional delay after configuration
                     time.sleep(1)
