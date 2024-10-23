@@ -12,7 +12,7 @@ import time
 import os
 import dbus
 from gi.repository import GLib
-from penrose_tools.BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
+from BluetoothAgent import Agent, AGENT_PATH, CAPABILITY
 
 from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants, peripheral
 
