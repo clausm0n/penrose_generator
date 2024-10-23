@@ -61,6 +61,9 @@ class BluetoothServer:
         """Callback to shut down the server."""
         self.logger.info("Shutdown callback invoked by Agent.")
         self.shutdown_event.set()
+        if self.mainloop.is_running():
+            self.mainloop.quit()
+
 
     def start_agent(self):
         """Initialize and start the Bluetooth Agent"""
