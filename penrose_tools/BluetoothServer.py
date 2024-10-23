@@ -87,42 +87,6 @@ class BluetoothServer:
         except dbus.exceptions.DBusException as e:
             self.logger.error(f"Agent registration failed: {e}")
                 
-        # except Exception as e:
-        #     self.logger.error(f"Failed to start Bluetooth Agent: {e}")
-        #     raise
-
-    def setup_adapter(self):
-        """Initialize and configure the Bluetooth adapter"""
-        try:
-            self.logger.debug("Restarting Bluetooth service...")
-            subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
-            self.logger.info("Bluetooth service restarted")
-            
-            self.dongles = adapter.list_adapters()
-            self.logger.info(f'Available dongles: {self.dongles}')
-            
-            if not self.dongles:
-                raise Exception("No Bluetooth adapters found")
-
-            self.adapter_obj = adapter.Adapter(self.dongles[0])
-            self.adapter_address = self.adapter_obj.address
-            
-            self.adapter_obj.powered = False
-            time.sleep(1)
-            self.adapter_obj.powered = True
-            
-            self.adapter_obj.discoverable = True
-            self.adapter_obj.discoverable_timeout = 0
-            self.adapter_obj.pairable = True
-            self.adapter_obj.pairable_timeout = 0
-            self.adapter_obj.alias = 'ConfigServer'
-
-            self.logger.info(f"Adapter configured: {self.adapter_address}")
-
-        except Exception as e:
-            self.logger.error(f"Failed to initialize adapter: {e}")
-            raise
-
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
@@ -196,41 +160,111 @@ class BluetoothServer:
             self.logger.error(f"Failed to start GLib main loop: {e}")
             raise
 
+    def setup_adapter(self):
+        """Initialize and configure the Bluetooth adapter with retry logic"""
+        MAX_RETRIES = 3
+        RETRY_DELAY = 1  # seconds
+        
+        try:
+            self.logger.debug("Restarting Bluetooth service...")
+            subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
+            self.logger.info("Bluetooth service restarted")
+            
+            # Wait for the service to be fully up
+            time.sleep(2)
+            
+            for attempt in range(MAX_RETRIES):
+                try:
+                    self.dongles = adapter.list_adapters()
+                    self.logger.info(f'Available dongles: {self.dongles}')
+                    
+                    if not self.dongles:
+                        raise Exception("No Bluetooth adapters found")
+
+                    self.adapter_obj = adapter.Adapter(self.dongles[0])
+                    self.adapter_address = self.adapter_obj.address
+                    
+                    # Power cycle the adapter
+                    self.adapter_obj.powered = False
+                    time.sleep(1)
+                    self.adapter_obj.powered = True
+                    time.sleep(1)  # Wait for power up
+                    
+                    # Configure adapter settings
+                    self.adapter_obj.discoverable = True
+                    self.adapter_obj.discoverable_timeout = 0
+                    self.adapter_obj.pairable = True
+                    self.adapter_obj.pairable_timeout = 0
+                    self.adapter_obj.alias = 'ConfigServer'
+
+                    # Verify adapter is powered and configured
+                    if not self.adapter_obj.powered:
+                        raise Exception("Adapter failed to power on")
+
+                    self.logger.info(f"Adapter configured successfully: {self.adapter_address}")
+                    return  # Success, exit the retry loop
+                    
+                except Exception as e:
+                    if attempt < MAX_RETRIES - 1:
+                        self.logger.warning(f"Adapter setup attempt {attempt + 1} failed: {e}. Retrying...")
+                        time.sleep(RETRY_DELAY)
+                    else:
+                        raise Exception(f"Failed to initialize adapter after {MAX_RETRIES} attempts: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize adapter: {e}")
+            raise
+
+    def register_advertisement_with_retry(self):
+        """Register advertisement with retry logic"""
+        MAX_RETRIES = 3
+        RETRY_DELAY = 1  # seconds
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                self.ad_manager.register_advertisement(self.advertisement, {})
+                self.logger.info("Advertisement registered successfully.")
+                return True
+            except dbus.exceptions.DBusException as e:
+                if attempt < MAX_RETRIES - 1:
+                    self.logger.warning(f"Advertisement registration attempt {attempt + 1} failed: {e}. Retrying...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    self.logger.error(f"Failed to register advertisement after {MAX_RETRIES} attempts: {e}")
+                    return False
+        return False
+
     def publish(self):
         """Publish the peripheral and set up the Bluetooth services"""
         try:
             self.logger.debug("Initializing D-Bus main loop...")
-            # Initialize D-Bus main loop in this thread
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
             self.main_context = self.mainloop.get_context()
 
             self.logger.debug("Starting Bluetooth Agent...")
-            # Start the agent
             self.start_agent()
 
             self.logger.debug("Setting up Bluetooth adapter...")
-            # Set up the adapter
             self.setup_adapter()
 
+            # Extra delay after adapter setup
+            time.sleep(1)
+
             self.logger.debug("Setting up peripheral...")
-            # Set up the peripheral
             self.setup_peripheral()
 
             if not self.adapter_obj.powered:
                 self.adapter_obj.powered = True
+                time.sleep(1)  # Wait for power up
 
             self.logger.debug("Registering GATT application...")
             self.srv_mng.register_application(self.app, {})
-            self.logger.debug("Registering Advertisement...")
 
-            try:
-                self.ad_manager.register_advertisement(self.advertisement, {})
-                self.logger.info("Advertisement registered successfully.")
-            except dbus.exceptions.DBusException as e:
-                self.logger.error(f"Failed to register advertisement: {e}")
-                raise
+            self.logger.debug("Registering Advertisement...")
+            if not self.register_advertisement_with_retry():
+                raise Exception("Failed to register advertisement after retries")
 
             # Mark agent initialization as complete
             if hasattr(self, 'agent') and self.agent is not None:
