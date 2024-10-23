@@ -121,6 +121,7 @@ class PenroseBluetoothServer:
             uuid=COMMAND_CHAR,
             value=[],
             flags=['write'],
+            notifying=False,
             write_callback=self.handle_command
         )
 
