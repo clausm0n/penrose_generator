@@ -28,8 +28,8 @@ class Agent(dbus.service.Object):
     def Release(self):
         try:
             self.logger.info("Agent Released")
-            if self.shutdown_callback:
-                self.shutdown_callback()
+            # if self.shutdown_callback:
+            #     self.shutdown_callback()
         except Exception as e:
             self.logger.error(f"Exception in Release method: {e}")
 
