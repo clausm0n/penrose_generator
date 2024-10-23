@@ -99,29 +99,43 @@ class PenroseBluetoothServer:
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
 
+    def configure_adapter(self):
+        """Configure the Bluetooth adapter"""
+        adapters = list(adapter.Adapter.available())
+        if not adapters:
+            raise RuntimeError("No Bluetooth adapter found")
+            
+        current_adapter = adapters[0]
+        self.logger.info(f"Using adapter: {current_adapter.address}")
+        
+        # Make adapter discoverable and pairable
+        current_adapter.discoverable = True
+        current_adapter.pairable = True
+        current_adapter.alias = "Penrose Generator"
+        
+        return current_adapter
+
     def setup_agent(self):
         """Set up the auto-accept Bluetooth agent"""
-        # Get the default adapter
-        adapter_path = f"/org/bluez/{list(adapter.Adapter.available())[0].address.replace(':', '_')}"
-        adapter_obj = self.bus.get_object(constants.BLUEZ_SERVICE_NAME, adapter_path)
-        adapter_props = dbus.Interface(adapter_obj, constants.DBUS_PROP_IFACE)
-        adapter_props.Set(constants.ADAPTER_INTERFACE, "Pairable", True)
-        
-        # Create and register agent
-        agent = AutoAcceptAgent(self.bus, AGENT_PATH)
-        agent_manager = dbus.Interface(
-            self.bus.get_object(constants.BLUEZ_SERVICE_NAME, "/org/bluez"),
-            AGENT_MANAGER_INTERFACE)
-        
         try:
+            # Configure adapter first
+            self.adapter = self.configure_adapter()
+            
+            # Create and register agent
+            agent = AutoAcceptAgent(self.bus, AGENT_PATH)
+            agent_manager = dbus.Interface(
+                self.bus.get_object(constants.BLUEZ_SERVICE_NAME, "/org/bluez"),
+                AGENT_MANAGER_INTERFACE)
+            
             agent_manager.RegisterAgent(AGENT_PATH, "NoInputNoOutput")
             agent_manager.RequestDefaultAgent(AGENT_PATH)
             self.logger.info("Bluetooth agent registered for auto-pairing")
+            
+            return agent
+            
         except Exception as e:
-            self.logger.error(f"Failed to register agent: {e}")
+            self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
-        
-        return agent
 
     def read_config(self) -> List[int]:
         """Read current configuration and convert to bytes"""
@@ -187,13 +201,10 @@ class PenroseBluetoothServer:
         # Setup auto-pairing agent
         self.agent = self.setup_agent()
         
-        # Get the default adapter address
-        adapter_addr = list(adapter.Adapter.available())[0].address
-        
-        # Create peripheral
-        self.peripheral = peripheral.Peripheral(adapter_addr,
+        # Create peripheral using the configured adapter
+        self.peripheral = peripheral.Peripheral(self.adapter.address,
                                              local_name='Penrose Generator',
-                                             appearance=0)  # Generic appearance
+                                             appearance=0)
 
         # Add main service
         self.peripheral.add_service(srv_id=1, 
