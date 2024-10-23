@@ -131,6 +131,7 @@ class BluetoothServer:
                 chr_id=1,
                 uuid=CONFIG_READ_CHAR_UUID,
                 value=[],
+                notifying=False,  # Added notifying parameter
                 flags=['read'],
                 read_callback=self.read_config_callback,
                 write_callback=None,
@@ -143,6 +144,7 @@ class BluetoothServer:
                 chr_id=2,
                 uuid=CONFIG_WRITE_CHAR_UUID,
                 value=[],
+                notifying=False,  # Added notifying parameter
                 flags=['write'],
                 read_callback=None,
                 write_callback=self.write_config_callback,
@@ -162,6 +164,7 @@ class BluetoothServer:
                 chr_id=1,
                 uuid=COMMAND_CHAR_UUID,
                 value=[],
+                notifying=False,  # Added notifying parameter
                 flags=['write'],
                 read_callback=None,
                 write_callback=self.command_callback,
