@@ -80,9 +80,9 @@ class BluetoothServer:
             self.peripheral = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='ConfigServer',
-                appearance=0,
-                service_uuids=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+                appearance=0
             )
+            
             # Add services before publishing
             self.add_services()
             self.peripheral.on_connect = self.connection_callback
@@ -90,20 +90,14 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
             sys.exit(1)
-    
-    def __del__(self):
-        try:
-            if hasattr(self, 'peripheral'):
-                self.peripheral.unpublish()
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
 
     def add_services(self):
+        """Add all services and characteristics."""
         # Add Config Service
         self.peripheral.add_service(
             srv_id=1,
             uuid=CONFIG_SERVICE_UUID,
-            primary=True
+            primary=True  # This will automatically add it to advertisement
         )
         self.logger.info(f"Added Config Service with UUID: {CONFIG_SERVICE_UUID}")
 
@@ -114,8 +108,8 @@ class BluetoothServer:
             uuid=CONFIG_READ_CHAR_UUID,
             flags=['read'],
             read_callback=self.read_config_callback,
-            value=[],          # Initial value
-            notifying=False    # Not notifying by default
+            value=[],
+            notifying=False
         )
         self.logger.info(f"Added Config Read Characteristic with UUID: {CONFIG_READ_CHAR_UUID}")
 
@@ -126,8 +120,8 @@ class BluetoothServer:
             uuid=CONFIG_WRITE_CHAR_UUID,
             flags=['write'],
             write_callback=self.write_config_callback,
-            value=[],          # Initial value
-            notifying=False    # Not notifying by default
+            value=[],
+            notifying=False
         )
         self.logger.info(f"Added Config Write Characteristic with UUID: {CONFIG_WRITE_CHAR_UUID}")
 
@@ -135,7 +129,7 @@ class BluetoothServer:
         self.peripheral.add_service(
             srv_id=2,
             uuid=COMMAND_SERVICE_UUID,
-            primary=True
+            primary=True  # This will automatically add it to advertisement
         )
         self.logger.info(f"Added Command Service with UUID: {COMMAND_SERVICE_UUID}")
 
@@ -146,11 +140,33 @@ class BluetoothServer:
             uuid=COMMAND_CHAR_UUID,
             flags=['write'],
             write_callback=self.command_callback,
-            value=[],          # Initial value
-            notifying=False    # Not notifying by default
+            value=[],
+            notifying=False
         )
         self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
 
+    def publish(self):
+        """Publish the peripheral and start the event loop."""
+        try:
+            self.peripheral.publish()
+            self.logger.info("Bluetooth GATT server is running...")
+            
+            self.logger.info(f"Advertising primary services...")
+            
+            while not self.shutdown_event.is_set():
+                async_tools.sleep(1)
+                
+        except Exception as e:
+            self.logger.error(f"Error in publish: {e}")
+        finally:
+            self.unpublish()
+
+    def unpublish(self):
+        """
+        Unpublish the peripheral and clean up.
+        """
+        self.peripheral.unpublish()
+        self.logger.info("Bluetooth GATT server has been shut down.")
 
     def read_config_callback(self):
         """
@@ -299,33 +315,6 @@ class BluetoothServer:
             self.logger.info(f"Sent notification: {message_json}")
         except Exception as e:
             self.logger.error(f"Error sending notification: {e}")
-
-    def publish(self):
-        """
-        Publish the peripheral and start the event loop.
-        """
-        try:
-            self.peripheral.publish()
-            self.logger.info("Bluetooth GATT server is running...")
-            
-            # Explicitly advertise services
-            service_uuids = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
-            self.logger.info(f"Advertising services: {service_uuids}")
-            
-            while not self.shutdown_event.is_set():
-                async_tools.sleep(1)
-                
-        except Exception as e:
-            self.logger.error(f"Error in publish: {e}")
-        finally:
-            self.unpublish()
-
-    def unpublish(self):
-        """
-        Unpublish the peripheral and clean up.
-        """
-        self.peripheral.unpublish()
-        self.logger.info("Bluetooth GATT server has been shut down.")
 
     def run_in_thread(self):
         """
