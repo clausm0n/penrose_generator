@@ -5,3 +5,4 @@ from .Tile import Tile
 from .BluetoothServer import BluetoothServer
 from .BluetoothAgent import Agent
 from .PenroseBluetoothServer import PenroseBluetoothServer
+from .PenroseBluetoothServer import run_bluetooth_server
