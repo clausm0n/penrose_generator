@@ -13,7 +13,7 @@ import os
 import dbus
 from gi.repository import GLib
 
-from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants
+from bluezero import adapter, advertisement, async_tools, localGATT, GATT, constants, peripheral
 
 # Static UUIDs for services and characteristics
 CONFIG_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cb'
@@ -107,23 +107,68 @@ class BluetoothServer:
             self.logger.error(f"Agent registration failed: {e}")
                 
     def setup_peripheral(self):
-        """Initialize and configure the peripheral device with registration tracking"""
+        """Initialize and configure the peripheral device"""
         try:
             self.logger.debug("Setting up GATT Application...")
-            self.app = localGATT.Application()
-            self.srv_mng = GATT.GattManager(self.adapter_address)
-            self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
             
-            # Add registration tracking
-            self._gatt_registered = False
-            self._registration_lock = threading.Lock()
+            # Create peripheral with proper adapter address
+            peripheral_device = peripheral.Peripheral(
+                self.adapter_address,
+                local_name='PenroseServer',
+                appearance=0  # Generic appearance
+            )
             
-            # Create advertisement
-            self.advertisement = ConfigAdvertisement(0)
+            # Add Configuration Service
+            peripheral_device.add_service(
+                srv_id=1, 
+                uuid=CONFIG_SERVICE_UUID, 
+                primary=True
+            )
             
-            # Add services and characteristics
-            self.add_services()
+            # Add Configuration Read Characteristic
+            peripheral_device.add_characteristic(
+                srv_id=1,
+                chr_id=1,
+                uuid=CONFIG_READ_CHAR_UUID,
+                value=[],
+                flags=['read'],
+                read_callback=self.read_config_callback,
+                write_callback=None,
+                notify_callback=None
+            )
             
+            # Add Configuration Write Characteristic
+            peripheral_device.add_characteristic(
+                srv_id=1,
+                chr_id=2,
+                uuid=CONFIG_WRITE_CHAR_UUID,
+                value=[],
+                flags=['write'],
+                read_callback=None,
+                write_callback=self.write_config_callback,
+                notify_callback=None
+            )
+            
+            # Add Command Service
+            peripheral_device.add_service(
+                srv_id=2,
+                uuid=COMMAND_SERVICE_UUID,
+                primary=True
+            )
+            
+            # Add Command Characteristic
+            peripheral_device.add_characteristic(
+                srv_id=2,
+                chr_id=1,
+                uuid=COMMAND_CHAR_UUID,
+                value=[],
+                flags=['write'],
+                read_callback=None,
+                write_callback=self.command_callback,
+                notify_callback=None
+            )
+            
+            self.peripheral = peripheral_device
             self.logger.info("Peripheral setup completed")
             
         except Exception as e:
@@ -199,78 +244,33 @@ class BluetoothServer:
             raise
 
     def setup_adapter(self):
-        """Initialize and configure the Bluetooth adapter with retry logic"""
-        MAX_RETRIES = 3
-        RETRY_DELAY = 2
-        SERVICE_STARTUP_DELAY = 5
-        
+        """Initialize and configure the Bluetooth adapter"""
         try:
             self.logger.debug("Restarting Bluetooth service...")
             subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
             self.logger.info("Bluetooth service restarted")
             
-            # Wait for service to be fully up
-            time.sleep(SERVICE_STARTUP_DELAY)
+            time.sleep(5)  # Wait for service to be fully up
             
-            for attempt in range(MAX_RETRIES):
-                try:
-                    self.dongles = adapter.list_adapters()
-                    self.logger.info(f'Available dongles: {self.dongles}')
-                    
-                    if not self.dongles:
-                        raise Exception("No Bluetooth adapters found")
+            self.dongles = adapter.list_adapters()
+            self.logger.info(f'Available dongles: {self.dongles}')
+            
+            if not self.dongles:
+                raise Exception("No Bluetooth adapters found")
 
-                    self.adapter_obj = adapter.Adapter(self.dongles[0])
-                    self.adapter_address = self.adapter_obj.address
-                    
-                    # Power cycle the adapter
-                    self.adapter_obj.powered = False
-                    time.sleep(2)
-                    
-                    # Configure adapter settings before powering on
-                    adapter_props = dbus.Interface(
-                        self.bus.get_object("org.bluez", self.adapter_obj.path),
-                        "org.freedesktop.DBus.Properties"
-                    )
-                    
-                    # Set required properties while powered off
-                    props_to_set = {
-                        'Discoverable': dbus.Boolean(True),
-                        'DiscoverableTimeout': dbus.UInt32(0),
-                        'Pairable': dbus.Boolean(True),
-                        'PairableTimeout': dbus.UInt32(0),
-                        'Alias': dbus.String('ConfigServer'),
-                        'Roles': dbus.Array(['peripheral'], signature='s')  # Only set peripheral role
-                    }
-                    
-                    for prop, value in props_to_set.items():
-                        try:
-                            adapter_props.Set("org.bluez.Adapter1", prop, value)
-                        except Exception as e:
-                            self.logger.warning(f"Failed to set {prop}: {e}")
-                    
-                    # Power on the adapter after configuration
-                    self.adapter_obj.powered = True
-                    time.sleep(2)
-                    
-                    # Verify adapter is powered and in peripheral mode
-                    current_roles = adapter_props.Get("org.bluez.Adapter1", "Roles")
-                    if not self.adapter_obj.powered or 'peripheral' not in current_roles:
-                        raise Exception("Adapter not properly configured")
-                    
-                    # Additional delay after configuration
-                    time.sleep(1)
-
-                    self.logger.info(f"Adapter configured successfully: {self.adapter_address}")
-                    return  # Success, exit the retry loop
-                    
-                except Exception as e:
-                    if attempt < MAX_RETRIES - 1:
-                        self.logger.warning(f"Adapter setup attempt {attempt + 1} failed: {e}. Retrying...")
-                        time.sleep(RETRY_DELAY)
-                    else:
-                        raise Exception(f"Failed to initialize adapter after {MAX_RETRIES} attempts: {e}")
-
+            use_adapter = adapter.Adapter(self.dongles[0])
+            self.adapter_address = use_adapter.address
+            
+            # Basic adapter configuration
+            use_adapter.powered = True
+            use_adapter.discoverable = True
+            use_adapter.discoverable_timeout = 0
+            use_adapter.pairable = True
+            
+            time.sleep(2)  # Wait for adapter to be ready
+            
+            self.logger.info(f"Adapter configured successfully: {self.adapter_address}")
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize adapter: {e}")
             raise
@@ -351,7 +351,6 @@ class BluetoothServer:
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
-            self.main_context = self.mainloop.get_context()
 
             self.logger.debug("Starting Bluetooth Agent...")
             self.start_agent()
@@ -359,41 +358,16 @@ class BluetoothServer:
             self.logger.debug("Setting up Bluetooth adapter...")
             self.setup_adapter()
 
-            # Extra delay after adapter setup
-            time.sleep(1)
-
             self.logger.debug("Setting up peripheral...")
             self.setup_peripheral()
-
-            if not self.adapter_obj.powered:
-                self.adapter_obj.powered = True
-                time.sleep(1)  # Wait for power up
-
-            # Register GATT application with duplicate protection
-            self.register_gatt_application()
-
-            self.logger.debug("Registering Advertisement...")
-            if not self.register_advertisement_with_retry():
-                raise Exception("Failed to register advertisement after retries")
 
             # Mark agent initialization as complete
             if hasattr(self, 'agent') and self.agent is not None:
                 self.agent.set_initialization_complete()
                 self.logger.info("Agent initialization marked as complete")
 
-            self.logger.info("GATT server published and advertising")
-
-            def on_bluezero_registration(*args):
-                """Handle bluezero registration callback"""
-                self.logger.debug("Received bluezero registration callback - ignoring if already registered")
-                return
-
-            # Add signal handler to catch and ignore duplicate registrations
-            self.bus.add_signal_receiver(
-                on_bluezero_registration,
-                dbus_interface="org.bluez.GattManager1",
-                signal_name="ApplicationRegistered"
-            )
+            self.logger.info("Publishing GATT server...")
+            self.peripheral.publish()  # This will start advertising automatically
 
             # Start the GLib main loop in the main thread
             self.mainloop.run()
@@ -405,24 +379,12 @@ class BluetoothServer:
     def unpublish(self):
         """Clean up advertising and GATT server"""
         try:
-            self.logger.debug("Unregistering Advertisement...")
-            if self.ad_manager:
-                try:
-                    self.ad_manager.unregister_advertisement(self.advertisement)
-                except Exception as e:
-                    self.logger.warning(f"Failed to unregister advertisement: {e}")
-                    
-            self.logger.debug("Unregistering GATT Application...")
-            if self.srv_mng and self._gatt_registered:
-                try:
-                    with self._registration_lock:
-                        self.srv_mng.unregister_application(self.app)
-                        self._gatt_registered = False
-                except Exception as e:
-                    self.logger.warning(f"Failed to unregister GATT application: {e}")
-                    
+            if hasattr(self, 'peripheral'):
+                self.logger.debug("Stopping peripheral...")
+                self.peripheral.stop()
+                
             self.logger.info("GATT server unpublished")
-                    
+                        
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")
 
