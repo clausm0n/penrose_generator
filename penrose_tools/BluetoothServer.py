@@ -106,28 +106,29 @@ class BluetoothServer:
         except dbus.exceptions.DBusException as e:
             self.logger.error(f"Agent registration failed: {e}")
                 
+
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
             self.logger.debug("Setting up GATT Application...")
             
-            # Create peripheral with proper adapter address and name, but inject our mainloop
-            self.mainloop = async_tools.EventLoop()  # Create mainloop first
+            # Create shared mainloop
+            self.mainloop = async_tools.EventLoop()
             
+            # Create peripheral
             peripheral_device = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
-                appearance=0  # Generic appearance
+                appearance=0
             )
-            # Override the peripheral's mainloop with ours
             peripheral_device.mainloop = self.mainloop
             
-            # Add Configuration Service (primary=True to make it advertised)
+            # Add Configuration Service
             self.logger.debug("Adding Configuration Service...")
             peripheral_device.add_service(
                 srv_id=1, 
                 uuid=CONFIG_SERVICE_UUID, 
-                primary=True  # This service will be advertised
+                primary=True
             )
             
             # Add Configuration Read Characteristic
@@ -158,12 +159,12 @@ class BluetoothServer:
                 notify_callback=None
             )
             
-            # Add Command Service (also primary)
+            # Add Command Service
             self.logger.debug("Adding Command Service...")
             peripheral_device.add_service(
                 srv_id=2,
                 uuid=COMMAND_SERVICE_UUID,
-                primary=True  # This service will be advertised
+                primary=True
             )
             
             # Add Command Characteristic
@@ -180,7 +181,6 @@ class BluetoothServer:
                 notify_callback=None
             )
             
-            # Store reference to peripheral
             self.peripheral = peripheral_device
             self.logger.info("Peripheral setup completed")
             
@@ -215,13 +215,31 @@ class BluetoothServer:
             self.peripheral.on_connect = self.on_device_connect
             self.peripheral.on_disconnect = self.on_device_disconnect
             
-            # Do the initial publish without running the mainloop
+            # Manually add all objects to the application before publishing
+            for service in self.peripheral.services:
+                self.peripheral.app.add_managed_object(service)
+            for characteristic in self.peripheral.characteristics:
+                self.peripheral.app.add_managed_object(characteristic)
+            for descriptor in self.peripheral.descriptors:
+                self.peripheral.app.add_managed_object(descriptor)
+
+            # Create the advertisement
+            self.peripheral._create_advertisement()
+            
+            # Make sure adapter is powered
             if not self.peripheral.dongle.powered:
                 self.peripheral.dongle.powered = True
+                time.sleep(1)  # Give it a moment to power up
+                
+            # Register GATT application
             self.peripheral.srv_mng.register_application(self.peripheral.app, {})
+            
+            # Register advertisement
             self.peripheral.ad_manager.register_advertisement(self.peripheral.advert, {})
+            
+            self.logger.info("GATT server and advertisement published")
 
-            # Now run our mainloop
+            # Run the mainloop
             try:
                 self.mainloop.run()
             except KeyboardInterrupt:
@@ -243,7 +261,12 @@ class BluetoothServer:
                 except Exception as e:
                     self.logger.warning(f"Error unregistering advertisement: {e}")
                     
-                if self.mainloop.is_running():
+                try:
+                    self.peripheral.srv_mng.unregister_application(self.peripheral.app)
+                except Exception as e:
+                    self.logger.warning(f"Error unregistering application: {e}")
+                    
+                if hasattr(self, 'mainloop') and self.mainloop.is_running():
                     self.mainloop.quit()
                 
             self.logger.info("GATT server unpublished")
