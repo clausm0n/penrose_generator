@@ -74,7 +74,7 @@ class BluetoothServer:
             
             # Power cycle the adapter
             self.adapter_obj.powered = False
-            async_tools.sleep(1)
+            time.sleep(1)
             self.adapter_obj.powered = True
             
             # Configure adapter
@@ -134,7 +134,7 @@ class BluetoothServer:
             self.logger.info("GATT server published")
             
             while not self.shutdown_event.is_set():
-                async_tools.sleep(1)
+                time.sleep(1)
                 
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
@@ -284,20 +284,20 @@ class BluetoothServer:
         
         return response
 
-    def send_notification(self, message):
-        """
-        Send a notification to subscribed clients.
+    # def send_notification(self, message):
+    #     """
+    #     Send a notification to subscribed clients.
 
-        :param message: Dictionary to send as JSON.
-        """
-        try:
-            message_json = json.dumps(message)
-            message_bytes = message_json.encode('utf-8')
-            byte_list = list(message_bytes)
-            self.peripheral.send_notify(NOTIFICATION_CHAR_UUID, byte_list)
-            self.logger.info(f"Sent notification: {message_json}")
-        except Exception as e:
-            self.logger.error(f"Error sending notification: {e}")
+    #     :param message: Dictionary to send as JSON.
+    #     """
+    #     try:
+    #         message_json = json.dumps(message)
+    #         message_bytes = message_json.encode('utf-8')
+    #         byte_list = list(message_bytes)
+    #         self.peripheral.send_notify(NOTIFICATION_CHAR_UUID, byte_list)
+    #         self.logger.info(f"Sent notification: {message_json}")
+    #     except Exception as e:
+    #         self.logger.error(f"Error sending notification: {e}")
 
     def run_in_thread(self):
         """
@@ -352,7 +352,7 @@ if __name__ == "__main__":
     # Keep the main thread alive
     try:
         while not shutdown_event.is_set():
-            asyncio.sleep(1)
+            time.sleep(1)
     except KeyboardInterrupt:
         shutdown_event.set()
         server.unpublish()
