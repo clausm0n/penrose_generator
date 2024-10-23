@@ -7,6 +7,10 @@ import threading
 import sys
 import uuid
 import subprocess
+import asyncio
+import time
+import os
+
 
 from bluezero import peripheral, adapter, async_tools, advertisement
 
@@ -348,7 +352,7 @@ if __name__ == "__main__":
     # Keep the main thread alive
     try:
         while not shutdown_event.is_set():
-            async_tools.sleep(1)
+            asyncio.sleep(1)
     except KeyboardInterrupt:
         shutdown_event.set()
         server.unpublish()
