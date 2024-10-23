@@ -26,9 +26,12 @@ class Agent(dbus.service.Object):
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="", out_signature="")
     def Release(self):
-        self.logger.info("Agent Released")
-        if self.shutdown_callback:
-            self.shutdown_callback()
+        try:
+            self.logger.info("Agent Released")
+            if self.shutdown_callback:
+                self.shutdown_callback()
+        except Exception as e:
+            self.logger.error(f"Exception in Release method: {e}")
 
     @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
     def RequestPinCode(self, device):

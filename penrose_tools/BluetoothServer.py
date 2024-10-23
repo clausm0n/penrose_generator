@@ -77,16 +77,16 @@ class BluetoothServer:
                 "org.bluez.AgentManager1"
             )
             
-            self.logger.debug("Registering Agent with Manager...")
             manager.RegisterAgent(AGENT_PATH, CAPABILITY)
             self.logger.info("Bluetooth Agent registered")
-            
             manager.RequestDefaultAgent(AGENT_PATH)
             self.logger.info("Bluetooth Agent set as default")
+        except dbus.exceptions.DBusException as e:
+            self.logger.error(f"Agent registration failed: {e}")
                 
-        except Exception as e:
-            self.logger.error(f"Failed to start Bluetooth Agent: {e}")
-            raise
+        # except Exception as e:
+        #     self.logger.error(f"Failed to start Bluetooth Agent: {e}")
+        #     raise
 
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
