@@ -19,6 +19,8 @@ CONFIG_READ_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cc'
 CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
 COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
+AD_TYPE_FLAGS = advertisement.AD_TYPE_FLAGS
+AD_TYPE_LOCAL_NAME_COMPLETE = advertisement.AD_TYPE_LOCAL_NAME_COMPLETE
 
 class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, advert_id):
