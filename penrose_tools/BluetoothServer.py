@@ -88,12 +88,16 @@ class BluetoothServer:
             self.logger.error(f"Agent registration failed: {e}")
                 
     def setup_peripheral(self):
-        """Initialize and configure the peripheral device"""
+        """Initialize and configure the peripheral device with registration tracking"""
         try:
             self.logger.debug("Setting up GATT Application...")
             self.app = localGATT.Application()
             self.srv_mng = GATT.GattManager(self.adapter_address)
             self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
+            
+            # Add registration tracking
+            self._gatt_registered = False
+            self._registration_lock = threading.Lock()
             
             # Create advertisement
             self.advertisement = ConfigAdvertisement(0)
@@ -105,6 +109,21 @@ class BluetoothServer:
             
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
+            raise
+        
+    def register_gatt_application(self):
+        """Register GATT application with duplicate protection"""
+        try:
+            with self._registration_lock:
+                if not self._gatt_registered:
+                    self.logger.debug("Registering GATT application...")
+                    self.srv_mng.register_application(self.app, {})
+                    self._gatt_registered = True
+                    self.logger.info("GATT application registered")
+                else:
+                    self.logger.debug("GATT application already registered, skipping")
+        except Exception as e:
+            self.logger.error(f"Failed to register GATT application: {e}")
             raise
 
     def add_services(self):
@@ -259,8 +278,8 @@ class BluetoothServer:
                 self.adapter_obj.powered = True
                 time.sleep(1)  # Wait for power up
 
-            self.logger.debug("Registering GATT application...")
-            self.srv_mng.register_application(self.app, {})
+            # Register GATT application with duplicate protection
+            self.register_gatt_application()
 
             self.logger.debug("Registering Advertisement...")
             if not self.register_advertisement_with_retry():
@@ -273,13 +292,24 @@ class BluetoothServer:
 
             self.logger.info("GATT server published and advertising")
 
+            def on_bluezero_registration(*args):
+                """Handle bluezero registration callback"""
+                self.logger.debug("Received bluezero registration callback - ignoring if already registered")
+                return
+
+            # Add signal handler to catch and ignore duplicate registrations
+            self.bus.add_signal_receiver(
+                on_bluezero_registration,
+                dbus_interface="org.bluez.GattManager1",
+                signal_name="ApplicationRegistered"
+            )
+
             # Start the GLib main loop in the main thread
             self.mainloop.run()
 
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
             self.unpublish()
-
 
     def unpublish(self):
         """Clean up advertising and GATT server"""
@@ -292,25 +322,15 @@ class BluetoothServer:
                     self.logger.warning(f"Failed to unregister advertisement: {e}")
                     
             self.logger.debug("Unregistering GATT Application...")
-            if self.srv_mng:
+            if self.srv_mng and self._gatt_registered:
                 try:
-                    self.srv_mng.unregister_application(self.app)
+                    with self._registration_lock:
+                        self.srv_mng.unregister_application(self.app)
+                        self._gatt_registered = False
                 except Exception as e:
                     self.logger.warning(f"Failed to unregister GATT application: {e}")
                     
             self.logger.info("GATT server unpublished")
-            
-            # Release the agent last, and only if initialization was complete
-            if hasattr(self, 'agent') and self.agent is not None:
-                if self.agent.initialization_complete and self.agent.can_shutdown():
-                    self.logger.debug("Releasing Bluetooth Agent...")
-                    try:
-                        # self.agent.Release()
-                        self.logger.info("Bluetooth Agent release attempted.")
-                    except Exception as e:
-                        self.logger.error(f"Error releasing agent: {e}")
-                else:
-                    self.logger.info("Skipping agent release as initialization is incomplete or in grace period")
                     
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")

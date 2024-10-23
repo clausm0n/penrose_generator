@@ -39,23 +39,23 @@ class Agent(dbus.service.Object):
         time_since_init = time.time() - self.initialization_time
         return time_since_init >= GRACE_PERIOD
 
-    # @dbus.service.method(AGENT_INTERFACE,
-    #                      in_signature="", out_signature="")
-    # def Release(self):
-    #     try:
-    #         self.logger.info("Agent Release called")
-    #         if self.initialization_complete and self.can_shutdown() and self.shutdown_callback:
-    #             self.logger.info("Agent Released - executing shutdown callback")
-    #             self.shutdown_callback()
-    #         else:
-    #             if not self.initialization_complete:
-    #                 self.logger.info("Agent Release called before initialization - ignoring")
-    #             elif not self.can_shutdown():
-    #                 self.logger.info("Agent Release called during grace period - ignoring")
-    #             else:
-    #                 self.logger.info("Agent Release called - no shutdown callback")
-    #     except Exception as e:
-    #         self.logger.error(f"Exception in Release method: {e}")
+    @dbus.service.method(AGENT_INTERFACE,
+                         in_signature="", out_signature="")
+    def Release(self):
+        try:
+            self.logger.info("Agent Release called")
+            if self.initialization_complete and self.can_shutdown() and self.shutdown_callback:
+                self.logger.info("Agent Released - executing shutdown callback")
+                self.shutdown_callback()
+            else:
+                if not self.initialization_complete:
+                    self.logger.info("Agent Release called before initialization - ignoring")
+                elif not self.can_shutdown():
+                    self.logger.info("Agent Release called during grace period - ignoring")
+                else:
+                    self.logger.info("Agent Release called - no shutdown callback")
+        except Exception as e:
+            self.logger.error(f"Exception in Release method: {e}")
 
     # Rest of the Agent methods remain the same...
     @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
