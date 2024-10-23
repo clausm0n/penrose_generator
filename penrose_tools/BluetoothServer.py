@@ -184,7 +184,7 @@ class BluetoothServer:
 
     def start_mainloop(self):
         """Start the GLib main loop in a separate thread."""
-        self.mainloop_thread = threading.Thread(target=self.mainloop.run, daemon=False)
+        self.mainloop_thread = threading.Thread(target=self.mainloop.run, daemon=True)
         self.mainloop_thread.start()
         self.logger.debug("GLib main loop started in a separate thread.")
 
