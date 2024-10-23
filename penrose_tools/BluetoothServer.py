@@ -204,7 +204,7 @@ class BluetoothServer:
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
-            self.main_context = self.mainloop.get_context()  # Store the main context
+            self.main_context = self.mainloop.get_context()
 
             self.logger.debug("Starting Bluetooth Agent...")
             # Start the agent
@@ -231,6 +231,11 @@ class BluetoothServer:
             except dbus.exceptions.DBusException as e:
                 self.logger.error(f"Failed to register advertisement: {e}")
                 raise
+
+            # Mark agent initialization as complete
+            if hasattr(self, 'agent') and self.agent is not None:
+                self.agent.set_initialization_complete()
+                self.logger.info("Agent initialization marked as complete")
 
             self.logger.info("GATT server published and advertising")
 

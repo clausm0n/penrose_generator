@@ -20,16 +20,25 @@ class Agent(dbus.service.Object):
         self.bus = bus
         self.path = path
         self.logger = logging.getLogger('BluetoothAgent')
-        self.shutdown_callback = shutdown_callback  # Callback to notify server to shutdown
+        self.shutdown_callback = shutdown_callback
+        self.initialization_complete = False  # Add flag
         self.logger.info("Bluetooth Agent created")
+
+    def set_initialization_complete(self):
+        """Mark the initialization as complete"""
+        self.initialization_complete = True
+        self.logger.debug("Agent initialization marked as complete")
 
     @dbus.service.method(AGENT_INTERFACE,
                          in_signature="", out_signature="")
     def Release(self):
         try:
-            self.logger.info("Agent Released")
-            if self.shutdown_callback:
+            self.logger.info("Agent Release called")
+            if self.initialization_complete and self.shutdown_callback:
+                self.logger.info("Agent Released - executing shutdown callback")
                 self.shutdown_callback()
+            elif not self.initialization_complete:
+                self.logger.info("Agent Release called during initialization - ignoring")
         except Exception as e:
             self.logger.error(f"Exception in Release method: {e}")
 
