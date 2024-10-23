@@ -183,6 +183,7 @@ def main():
                 randomize_colors_event=randomize_colors_event,
                 shutdown_event=shutdown_event
             )
+            # Start the Bluetooth server in a separate thread
             bluetooth_server.run_in_thread()
             logging.info("Bluetooth server started.")
         else:
@@ -214,6 +215,3 @@ def main():
         glfw.terminate()
         shutdown_event.set()
         logging.info("Application has been terminated.")
-
-if __name__ == '__main__':
-    main()
