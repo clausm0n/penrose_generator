@@ -11,7 +11,6 @@ import asyncio
 import time
 import os
 
-
 from bluezero import peripheral, adapter, async_tools, advertisement
 
 # Static UUIDs for services and characteristics
@@ -23,10 +22,12 @@ COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 
 class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, adapter_addr):
-        super().__init__(adapter_addr, 'peripheral', local_name='PenroseServer')
+        super().__init__(adapter_addr, 'peripheral')
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.data = {
+            advertisement.AD_TYPE_FLAGS: [0x06],  # General Discoverable and BR/EDR Not Supported
+            advertisement.AD_TYPE_LOCAL_NAME_COMPLETE: 'PenroseServer',
             0xFF: [0x70, 0x77]  # Manufacturer data (example values)
         }
 
@@ -105,7 +106,7 @@ class BluetoothServer:
             # Initialize peripheral with specific configuration
             self.peripheral = peripheral.Peripheral(
                 self.adapter_address,
-                local_name='ConfigServer',
+                local_name='PenroseServer',
                 appearance=0x0,  # Generic computer
                 manufacturer_data=bytes([0x70, 0x77])  # Example manufacturer data
             )
@@ -121,6 +122,17 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
             raise
+
+    def add_services(self):
+        """Add GATT services and characteristics to the peripheral"""
+        # Implement your services and characteristics here
+        # Example:
+        # config_service = peripheral.Service(CONFIG_SERVICE_UUID, True)
+        # read_characteristic = peripheral.Characteristic(
+        #     CONFIG_READ_CHAR_UUID, ['read'], config_service)
+        # read_characteristic.add_read_callback(self.read_config_callback)
+        # self.peripheral.add_service(config_service)
+        pass  # Replace with actual implementation
 
     def publish(self):
         """Publish the peripheral and start advertising"""
