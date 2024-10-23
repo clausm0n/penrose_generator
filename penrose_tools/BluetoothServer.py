@@ -22,31 +22,31 @@ CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
 COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
 
-class ConfigAdvertisement(advertisement.Advertisement):
-    def __init__(self, advert_id):
-        super().__init__(advert_id, 'peripheral')
-        # Clear any existing properties first
-        self.props[constants.LE_ADVERTISEMENT_IFACE] = {
-            'Type': 'peripheral',
-            'ServiceUUIDs': None,
-            'ManufacturerData': None,
-            'SolicitUUIDs': None,
-            'ServiceData': None,
-            'Includes': set(),
-            'Appearance': None,
-            'LocalName': None
-        }
+# class ConfigAdvertisement(advertisement.Advertisement):
+#     def __init__(self, advert_id):
+#         super().__init__(advert_id, 'peripheral')
+#         # Clear any existing properties first
+#         self.props[constants.LE_ADVERTISEMENT_IFACE] = {
+#             'Type': 'peripheral',
+#             'ServiceUUIDs': None,
+#             'ManufacturerData': None,
+#             'SolicitUUIDs': None,
+#             'ServiceData': None,
+#             'Includes': set(),
+#             'Appearance': None,
+#             'LocalName': None
+#         }
         
-        # Now set our properties
-        self.include_tx_power = True
-        self.local_name = 'PenroseServer'
-        self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+#         # Now set our properties
+#         self.include_tx_power = True
+#         self.local_name = 'PenroseServer'
+#         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         
-    @dbus.service.method(constants.LE_ADVERTISEMENT_IFACE,
-                        in_signature='', out_signature='')
-    def Release(self):
-        """Release the advertisement when requested by BlueZ"""
-        pass
+    # @dbus.service.method(constants.LE_ADVERTISEMENT_IFACE,
+    #                     in_signature='', out_signature='')
+    # def Release(self):
+    #     """Release the advertisement when requested by BlueZ"""
+    #     pass
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
@@ -115,11 +115,12 @@ class BluetoothServer:
             # Create shared mainloop
             self.mainloop = async_tools.EventLoop()
             
-            # Create peripheral
+            # Create peripheral with built-in advertisement handling
             peripheral_device = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='PenroseServer',
-                appearance=0
+                appearance=0,
+                services=[CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
             )
             peripheral_device.mainloop = self.mainloop
             
@@ -214,29 +215,13 @@ class BluetoothServer:
             # Set up connection callbacks
             self.peripheral.on_connect = self.on_device_connect
             self.peripheral.on_disconnect = self.on_device_disconnect
-            
-            # Manually add all objects to the application before publishing
-            for service in self.peripheral.services:
-                self.peripheral.app.add_managed_object(service)
-            for characteristic in self.peripheral.characteristics:
-                self.peripheral.app.add_managed_object(characteristic)
-            for descriptor in self.peripheral.descriptors:
-                self.peripheral.app.add_managed_object(descriptor)
 
-            # Create the advertisement
-            self.peripheral._create_advertisement()
-            
-            # Make sure adapter is powered
-            if not self.peripheral.dongle.powered:
-                self.peripheral.dongle.powered = True
-                time.sleep(1)  # Give it a moment to power up
-                
-            # Register GATT application
-            self.peripheral.srv_mng.register_application(self.peripheral.app, {})
-            
-            # Register advertisement
-            self.peripheral.ad_manager.register_advertisement(self.peripheral.advert, {})
-            
+            # No need to manually add managed objects or create advertisements
+            # bluezero Peripheral handles it internally
+
+            # Register GATT application and advertisement via Peripheral
+            self.peripheral.publish()
+
             self.logger.info("GATT server and advertisement published")
 
             # Run the mainloop
@@ -256,19 +241,8 @@ class BluetoothServer:
         try:
             if hasattr(self, 'peripheral'):
                 self.logger.debug("Stopping peripheral...")
-                try:
-                    self.peripheral.ad_manager.unregister_advertisement(self.peripheral.advert)
-                except Exception as e:
-                    self.logger.warning(f"Error unregistering advertisement: {e}")
+                self.peripheral.unpublish()
                     
-                try:
-                    self.peripheral.srv_mng.unregister_application(self.peripheral.app)
-                except Exception as e:
-                    self.logger.warning(f"Error unregistering application: {e}")
-                    
-                if hasattr(self, 'mainloop') and self.mainloop.is_running():
-                    self.mainloop.quit()
-                
             self.logger.info("GATT server unpublished")
                         
         except Exception as e:
