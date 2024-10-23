@@ -182,15 +182,16 @@ class BluetoothServer:
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter with retry logic"""
         MAX_RETRIES = 3
-        RETRY_DELAY = 1  # seconds
+        RETRY_DELAY = 2  # Increased from 1 to 2 seconds
+        SERVICE_STARTUP_DELAY = 5  # Increased from 2 to 5 seconds
         
         try:
             self.logger.debug("Restarting Bluetooth service...")
             subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
             self.logger.info("Bluetooth service restarted")
             
-            # Wait for the service to be fully up
-            time.sleep(2)
+            # Increased wait time for service to be fully up
+            time.sleep(SERVICE_STARTUP_DELAY)
             
             for attempt in range(MAX_RETRIES):
                 try:
@@ -203,11 +204,17 @@ class BluetoothServer:
                     self.adapter_obj = adapter.Adapter(self.dongles[0])
                     self.adapter_address = self.adapter_obj.address
                     
-                    # Power cycle the adapter
+                    # Power cycle the adapter with longer delays
                     self.adapter_obj.powered = False
-                    time.sleep(1)
+                    time.sleep(2)  # Increased from 1 to 2 seconds
                     self.adapter_obj.powered = True
-                    time.sleep(1)  # Wait for power up
+                    time.sleep(2)  # Increased from 1 to 2 seconds
+                    
+                    # Ensure previous advertisements are cleared
+                    try:
+                        self.adapter_obj.stop_advertising()
+                    except:
+                        pass  # Ignore if no advertisements exist
                     
                     # Configure adapter settings
                     self.adapter_obj.discoverable = True
@@ -219,6 +226,9 @@ class BluetoothServer:
                     # Verify adapter is powered and configured
                     if not self.adapter_obj.powered:
                         raise Exception("Adapter failed to power on")
+                    
+                    # Additional delay after configuration
+                    time.sleep(1)
 
                     self.logger.info(f"Adapter configured successfully: {self.adapter_address}")
                     return  # Success, exit the retry loop
@@ -235,22 +245,41 @@ class BluetoothServer:
             raise
 
     def register_advertisement_with_retry(self):
-        """Register advertisement with retry logic"""
-        MAX_RETRIES = 3
-        RETRY_DELAY = 1  # seconds
+        """Register advertisement with improved retry logic"""
+        MAX_RETRIES = 5  # Increased from 3 to 5
+        RETRY_DELAY = 2  # Increased from 1 to 2 seconds
         
         for attempt in range(MAX_RETRIES):
             try:
+                # Ensure adapter is powered
+                if not self.adapter_obj.powered:
+                    self.adapter_obj.powered = True
+                    time.sleep(1)
+                
+                # Clear any existing advertisements first
+                try:
+                    self.ad_manager.unregister_advertisement(self.advertisement)
+                except:
+                    pass  # Ignore if no advertisement was registered
+                
+                time.sleep(1)  # Wait before registering new advertisement
+                
                 self.ad_manager.register_advertisement(self.advertisement, {})
                 self.logger.info("Advertisement registered successfully.")
                 return True
+                
             except dbus.exceptions.DBusException as e:
+                error_name = e.get_dbus_name() if hasattr(e, 'get_dbus_name') else str(e)
                 if attempt < MAX_RETRIES - 1:
-                    self.logger.warning(f"Advertisement registration attempt {attempt + 1} failed: {e}. Retrying...")
+                    self.logger.warning(f"Advertisement registration attempt {attempt + 1} failed: {error_name}. Retrying...")
                     time.sleep(RETRY_DELAY)
                 else:
-                    self.logger.error(f"Failed to register advertisement after {MAX_RETRIES} attempts: {e}")
+                    self.logger.error(f"Failed to register advertisement after {MAX_RETRIES} attempts: {error_name}")
                     return False
+            except Exception as e:
+                self.logger.error(f"Unexpected error during advertisement registration: {e}")
+                return False
+                
         return False
 
     def publish(self):
