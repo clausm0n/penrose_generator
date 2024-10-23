@@ -19,18 +19,16 @@ CONFIG_READ_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cc'
 CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
 COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
-AD_TYPE_FLAGS = advertisement.AD_TYPE_FLAGS
-AD_TYPE_LOCAL_NAME_COMPLETE = advertisement.AD_TYPE_LOCAL_NAME_COMPLETE
 
 class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, advert_id):
-        super().__init__(advert_id, 'peripheral')  # Pass integer advert_id
+        super().__init__(advert_id, 'peripheral')
         self.include_tx_power = True
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
         self.data = {
-            advertisement.AD_TYPE_FLAGS: [0x06],  # General Discoverable and BR/EDR Not Supported
-            advertisement.AD_TYPE_LOCAL_NAME_COMPLETE: 'PenroseServer',
-            0xFF: [0x70, 0x77]  # Manufacturer data (example values)
+            0x01: [0x06],  # AD_TYPE_FLAGS
+            0x09: 'PenroseServer',  # AD_TYPE_LOCAL_NAME_COMPLETE
+            0xFF: [0x70, 0x77]  # Manufacturer data
         }
 
 class BluetoothServer:
