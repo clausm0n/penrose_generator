@@ -195,11 +195,11 @@ class BluetoothServer:
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
 
-            self.logger.debug("Starting Bluetooth Agent...")
-            self.start_agent()
-
             self.logger.debug("Setting up Bluetooth adapter...")
             self.setup_adapter()
+
+            self.logger.debug("Starting Bluetooth Agent...")
+            self.start_agent()
 
             self.logger.debug("Setting up peripheral...")
             self.setup_peripheral()
@@ -210,13 +210,10 @@ class BluetoothServer:
                 self.logger.info("Agent initialization marked as complete")
 
             self.logger.info("Publishing GATT server...")
-            
+
             # Set up connection callbacks
             self.peripheral.on_connect = self.on_device_connect
             self.peripheral.on_disconnect = self.on_device_disconnect
-
-            # No need to manually add managed objects or create advertisements
-            # bluezero Peripheral handles it internally
 
             # Register GATT application and advertisement via Peripheral
             self.peripheral.publish()
@@ -234,6 +231,7 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Error in publish: {e}")
             self.unpublish()
+
 
     def unpublish(self):
         """Clean up advertising and GATT server"""
@@ -318,11 +316,11 @@ class BluetoothServer:
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
         try:
-            self.logger.debug("Restarting Bluetooth service...")
-            subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
-            self.logger.info("Bluetooth service restarted")
+            # self.logger.debug("Restarting Bluetooth service...")
+            # subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
+            # self.logger.info("Bluetooth service restarted")
             
-            time.sleep(5)  # Wait for service to be fully up
+            # time.sleep(5)  # Wait for service to be fully up
             
             self.dongles = adapter.list_adapters()
             self.logger.info(f'Available dongles: {self.dongles}')
