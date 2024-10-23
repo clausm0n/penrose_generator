@@ -39,7 +39,7 @@ height = 0
 
 def initialize_config(path):
     if not os.path.isfile(path):
-        print("Config file not found. Creating a new one...")
+        logging.info("Config file not found. Creating a new one...")
         config = configparser.ConfigParser()
         config['Settings'] = {
             'size': str(DEFAULT_CONFIG['size']),
@@ -206,10 +206,10 @@ def main():
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
 
-            # Process GLib events if Bluetooth is enabled
-            if args.bluetooth and bluetooth_server.main_context:
-                while bluetooth_server.main_context.pending():
-                    bluetooth_server.main_context.iteration(False)
+            # Remove manual GLib iteration
+            # if args.bluetooth and bluetooth_server.main_context:
+            #     while bluetooth_server.main_context.pending():
+            #         bluetooth_server.main_context.iteration(False)
 
             glClear(GL_COLOR_BUFFER_BIT)
 
