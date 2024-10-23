@@ -11,7 +11,7 @@ import asyncio
 import time
 import os
 
-from bluezero import peripheral, adapter, async_tools, advertisement
+from bluezero import adapter, advertisement, async_tools, localGATT, GATT
 
 # Static UUIDs for services and characteristics
 CONFIG_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cb'
@@ -24,21 +24,14 @@ class ConfigAdvertisement(advertisement.Advertisement):
     def __init__(self, advert_id):
         super().__init__(advert_id, 'peripheral')
         self.include_tx_power = True
-
-        # Set service UUIDs
         self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
-
-        # Set local name
         self.local_name = 'PenroseServer'
-
-        # Set manufacturer data
-        self.manufacturer_data = {0x004C: [0x02, 0x15]}  # Example manufacturer data
-
+        self.manufacturer_data = {0x004C: [0x02, 0x15]}
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
         logging.basicConfig(
-            level=logging.DEBUG,  # Changed to DEBUG for more verbose logging
+            level=logging.DEBUG,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler("bluetooth_server.log"),
@@ -47,27 +40,21 @@ class BluetoothServer:
         )
         self.logger = logging.getLogger('BluetoothServer')
         
-        # Store parameters
         self.config_path = config_path
         self.update_event = update_event
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
 
-        # Initialize adapter
         self.setup_adapter()
-        
-        # Initialize Peripheral
         self.setup_peripheral()
 
     def setup_adapter(self):
         """Initialize and configure the Bluetooth adapter"""
         try:
-            # Reset Bluetooth service first
             subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
             self.logger.info("Bluetooth service restarted")
             
-            # Get available adapters
             self.dongles = adapter.list_adapters()
             self.logger.info(f'Available dongles: {self.dongles}')
             
@@ -77,25 +64,17 @@ class BluetoothServer:
             self.adapter_obj = adapter.Adapter(self.dongles[0])
             self.adapter_address = self.adapter_obj.address
             
-            # Power cycle the adapter
             self.adapter_obj.powered = False
             time.sleep(1)
             self.adapter_obj.powered = True
             
-            # Configure adapter
             self.adapter_obj.discoverable = True
-            self.adapter_obj.discoverable_timeout = 0  # Always discoverable
+            self.adapter_obj.discoverable_timeout = 0
             self.adapter_obj.pairable = True
-            self.adapter_obj.pairable_timeout = 0  # Always pairable
+            self.adapter_obj.pairable_timeout = 0
             self.adapter_obj.alias = 'ConfigServer'
 
-            self.logger.info(f"Adapter configured:")
-            self.logger.info(f"  Address: {self.adapter_address}")
-            self.logger.info(f"  Powered: {self.adapter_obj.powered}")
-            self.logger.info(f"  Discoverable: {self.adapter_obj.discoverable}")
-            self.logger.info(f"  Pairable: {self.adapter_obj.pairable}")
-            self.logger.info(f"  Name: {self.adapter_obj.name}")
-            self.logger.info(f"  Alias: {self.adapter_obj.alias}")
+            self.logger.info(f"Adapter configured: {self.adapter_address}")
 
         except Exception as e:
             self.logger.error(f"Failed to initialize adapter: {e}")
@@ -104,21 +83,15 @@ class BluetoothServer:
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
-            # Create and register advertisement with unique advert_id (e.g., 0)
-            self.advertisement = ConfigAdvertisement(advert_id=0)
+            self.app = localGATT.Application()
+            self.srv_mng = GATT.GattManager(self.adapter_address)
+            self.ad_manager = advertisement.AdvertisingManager(self.adapter_address)
             
-            # Initialize peripheral without manufacturer_data
-            self.peripheral = peripheral.Peripheral(
-                self.adapter_address,
-                local_name='PenroseServer',
-                appearance=0x0  # Generic computer
-            )
+            # Create advertisement
+            self.advertisement = ConfigAdvertisement(0)
             
+            # Add services and characteristics
             self.add_services()
-            
-            # Set callbacks
-            self.peripheral.on_connect = self.on_device_connect
-            self.peripheral.on_disconnect = self.on_device_disconnect
             
             self.logger.info("Peripheral setup completed")
             
@@ -127,51 +100,54 @@ class BluetoothServer:
             raise
 
     def add_services(self):
-        """Add GATT services and characteristics to the peripheral"""
-        # Configuration Service
-        config_service = peripheral.Service(CONFIG_SERVICE_UUID, True)
+        """Add GATT services and characteristics"""
+        try:
+            # Configuration Service
+            config_service = localGATT.Service(1, CONFIG_SERVICE_UUID, True)
+            self.app.add_managed_object(config_service)
 
-        # Read Characteristic
-        read_char = peripheral.Characteristic(
-            CONFIG_READ_CHAR_UUID,
-            ['read'],
-            config_service
-        )
-        read_char.add_read_callback(self.read_config_callback)
+            # Read Characteristic
+            read_char = localGATT.Characteristic(
+                1, 1, CONFIG_READ_CHAR_UUID,
+                [], False, ['read'],
+                self.read_config_callback, None, None
+            )
+            self.app.add_managed_object(read_char)
 
-        # Write Characteristic
-        write_char = peripheral.Characteristic(
-            CONFIG_WRITE_CHAR_UUID,
-            ['write'],
-            config_service
-        )
-        write_char.add_write_callback(self.write_config_callback)
+            # Write Characteristic
+            write_char = localGATT.Characteristic(
+                1, 2, CONFIG_WRITE_CHAR_UUID,
+                [], False, ['write'],
+                None, self.write_config_callback, None
+            )
+            self.app.add_managed_object(write_char)
 
-        # Command Service
-        command_service = peripheral.Service(COMMAND_SERVICE_UUID, True)
+            # Command Service
+            command_service = localGATT.Service(2, COMMAND_SERVICE_UUID, True)
+            self.app.add_managed_object(command_service)
 
-        # Command Characteristic
-        command_char = peripheral.Characteristic(
-            COMMAND_CHAR_UUID,
-            ['write'],
-            command_service
-        )
-        command_char.add_write_callback(self.command_callback)
+            # Command Characteristic
+            command_char = localGATT.Characteristic(
+                2, 1, COMMAND_CHAR_UUID,
+                [], False, ['write'],
+                None, self.command_callback, None
+            )
+            self.app.add_managed_object(command_char)
 
-        # Add services to peripheral
-        self.peripheral.add_service(config_service)
-        self.peripheral.add_service(command_service)
+        except Exception as e:
+            self.logger.error(f"Failed to add services: {e}")
+            raise
 
     def publish(self):
         """Publish the peripheral and start advertising"""
         try:
-            # Register and start advertising
-            self.advertisement.register()
-            self.logger.info("Advertisement registered")
+            if not self.adapter_obj.powered:
+                self.adapter_obj.powered = True
+                
+            self.srv_mng.register_application(self.app, {})
+            self.ad_manager.register_advertisement(self.advertisement, {})
             
-            # Publish GATT server
-            self.peripheral.publish()
-            self.logger.info("GATT server published")
+            self.logger.info("GATT server published and advertising")
             
             while not self.shutdown_event.is_set():
                 time.sleep(1)
@@ -184,63 +160,39 @@ class BluetoothServer:
     def unpublish(self):
         """Clean up advertising and GATT server"""
         try:
-            self.advertisement.release()
-            self.logger.info("Advertisement stopped")
-            self.peripheral.unpublish()
+            self.ad_manager.unregister_advertisement(self.advertisement)
+            self.srv_mng.unregister_application(self.app)
             self.logger.info("GATT server unpublished")
         except Exception as e:
             self.logger.error(f"Error in unpublish: {e}")
 
-    def read_config_callback(self):
-        """
-        Callback to handle read requests for configuration data.
-        Returns a list of byte values representing the JSON configuration.
-        """
+    def read_config_callback(self, options):
+        """Callback for configuration read requests"""
         try:
             config = self.read_config()
             config_json = json.dumps(config)
-            config_bytes = config_json.encode('utf-8')
-            byte_list = list(config_bytes)
-            self.logger.info(f"Config Read: {config_json}")
-            return byte_list
+            return list(config_json.encode('utf-8'))
         except Exception as e:
             self.logger.error(f"Error reading config: {e}")
             error_response = {'status': 'error', 'message': str(e)}
             return list(json.dumps(error_response).encode('utf-8'))
 
     def write_config_callback(self, value, options):
-        """
-        Callback to handle write requests for updating configuration data.
-
-        :param value: List of byte values written to the characteristic.
-        :param options: Additional options.
-        """
+        """Callback for configuration write requests"""
         try:
-            # Convert list of bytes to bytes object
-            value_bytes = bytes(value)
-            data_str = value_bytes.decode('utf-8')
+            data_str = bytes(value).decode('utf-8')
             data = json.loads(data_str)
             self.write_config(data)
-            self.logger.info(f"Configuration updated: {data}")
-
-            # Trigger the update event
             self.update_event.set()
         except Exception as e:
             self.logger.error(f"Error writing config: {e}")
 
     def command_callback(self, value, options):
-        """
-        Callback to handle write requests for executing commands.
-
-        :param value: List of byte values written to the characteristic.
-        :param options: Additional options.
-        """
+        """Callback for command requests"""
         try:
-            # Convert list of bytes to bytes object
-            value_bytes = bytes(value)
-            command = value_bytes.decode('utf-8').strip()
+            command = bytes(value).decode('utf-8').strip()
             self.logger.info(f"Received command: {command}")
-            response = self.handle_command(command)
+            self.handle_command(command)
         except Exception as e:
             self.logger.error(f"Error handling command: {e}")
 
