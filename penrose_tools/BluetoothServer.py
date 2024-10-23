@@ -8,25 +8,28 @@ import sys
 import uuid
 import subprocess
 
-from bluezero import peripheral, adapter, async_tools
-# Static UUIDs for services and characteristics
-# Generate your own unique UUIDs using a tool like https://www.uuidgenerator.net/
+from bluezero import peripheral, adapter, async_tools, advertisement
+
 # Static UUIDs for services and characteristics
 CONFIG_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cb'
 CONFIG_READ_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cc'
 CONFIG_WRITE_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cd'
 COMMAND_SERVICE_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8ce'
 COMMAND_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cf'
-NOTIFICATION_CHAR_UUID = '3b0055b8-37ed-40a5-b17f-f38b9417c8cg'  # Optional for notifications
+
+class ConfigAdvertisement(advertisement.Advertisement):
+    def __init__(self, adapter_addr):
+        super().__init__(adapter_addr, 'peripheral', local_name='ConfigServer')
+        self.include_tx_power = True
+        self.service_UUIDs = [CONFIG_SERVICE_UUID, COMMAND_SERVICE_UUID]
+        self.data = {
+            0xFF: [0x70, 0x77]  # Manufacturer data (example values)
+        }
 
 class BluetoothServer:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event, shutdown_event, adapter_address=None):
-        """
-        Initialize the Bluetooth Server with services and characteristics.
-        """
-        # Initialize logging first
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,  # Changed to DEBUG for more verbose logging
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler("bluetooth_server.log"),
@@ -34,7 +37,7 @@ class BluetoothServer:
             ]
         )
         self.logger = logging.getLogger('BluetoothServer')
-
+        
         # Store parameters
         self.config_path = config_path
         self.update_event = update_event
@@ -42,29 +45,43 @@ class BluetoothServer:
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
 
-        # Get available adapters
-        self.dongles = adapter.list_adapters()
-        self.logger.info(f'Available dongles: {self.dongles}')
-        
-        if not self.dongles:
-            self.logger.error("No Bluetooth adapters found")
-            sys.exit(1)
-
         # Initialize adapter
+        self.setup_adapter()
+        
+        # Initialize Peripheral
+        self.setup_peripheral()
+
+    def setup_adapter(self):
+        """Initialize and configure the Bluetooth adapter"""
         try:
+            # Reset Bluetooth service first
+            subprocess.run(['sudo', 'systemctl', 'restart', 'bluetooth'], check=True)
+            self.logger.info("Bluetooth service restarted")
+            
+            # Get available adapters
+            self.dongles = adapter.list_adapters()
+            self.logger.info(f'Available dongles: {self.dongles}')
+            
+            if not self.dongles:
+                raise Exception("No Bluetooth adapters found")
+
             self.adapter_obj = adapter.Adapter(self.dongles[0])
             self.adapter_address = self.adapter_obj.address
-            self.logger.info(f'Using adapter: {self.adapter_address}')
-
-            # Set adapter properties
-            if not self.adapter_obj.powered:
-                self.adapter_obj.powered = True
+            
+            # Power cycle the adapter
+            self.adapter_obj.powered = False
+            async_tools.sleep(1)
+            self.adapter_obj.powered = True
+            
+            # Configure adapter
             self.adapter_obj.discoverable = True
+            self.adapter_obj.discoverable_timeout = 0  # Always discoverable
             self.adapter_obj.pairable = True
-            self.adapter_obj.alias = 'ConfigServer'  # Set a friendly name
+            self.adapter_obj.pairable_timeout = 0  # Always pairable
+            self.adapter_obj.alias = 'ConfigServer'
 
-            # Log adapter status
-            self.logger.info(f"Adapter status:")
+            self.logger.info(f"Adapter configured:")
+            self.logger.info(f"  Address: {self.adapter_address}")
             self.logger.info(f"  Powered: {self.adapter_obj.powered}")
             self.logger.info(f"  Discoverable: {self.adapter_obj.discoverable}")
             self.logger.info(f"  Pairable: {self.adapter_obj.pairable}")
@@ -73,88 +90,44 @@ class BluetoothServer:
 
         except Exception as e:
             self.logger.error(f"Failed to initialize adapter: {e}")
-            sys.exit(1)
+            raise
 
-        # Initialize Peripheral
+    def setup_peripheral(self):
+        """Initialize and configure the peripheral device"""
         try:
+            # Create and register advertisement
+            self.advertisement = ConfigAdvertisement(self.adapter_address)
+            
+            # Initialize peripheral with specific configuration
             self.peripheral = peripheral.Peripheral(
                 self.adapter_address,
                 local_name='ConfigServer',
-                appearance=0
+                appearance=0x0,  # Generic computer
+                manufacturer_data=bytes([0x70, 0x77])  # Example manufacturer data
             )
             
-            # Add services before publishing
             self.add_services()
             
-            # Set both connect and disconnect callbacks
+            # Set callbacks
             self.peripheral.on_connect = self.on_device_connect
             self.peripheral.on_disconnect = self.on_device_disconnect
             
+            self.logger.info("Peripheral setup completed")
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
-            sys.exit(1)
-
-    def add_services(self):
-        """Add all services and characteristics."""
-        # Add Config Service
-        self.peripheral.add_service(
-            srv_id=1,
-            uuid=CONFIG_SERVICE_UUID,
-            primary=True  # This will automatically add it to advertisement
-        )
-        self.logger.info(f"Added Config Service with UUID: {CONFIG_SERVICE_UUID}")
-
-        # Add Config Read Characteristic
-        self.peripheral.add_characteristic(
-            srv_id=1,
-            chr_id=1,
-            uuid=CONFIG_READ_CHAR_UUID,
-            flags=['read'],
-            read_callback=self.read_config_callback,
-            value=[],
-            notifying=False
-        )
-        self.logger.info(f"Added Config Read Characteristic with UUID: {CONFIG_READ_CHAR_UUID}")
-
-        # Add Config Write Characteristic
-        self.peripheral.add_characteristic(
-            srv_id=1,
-            chr_id=2,
-            uuid=CONFIG_WRITE_CHAR_UUID,
-            flags=['write'],
-            write_callback=self.write_config_callback,
-            value=[],
-            notifying=False
-        )
-        self.logger.info(f"Added Config Write Characteristic with UUID: {CONFIG_WRITE_CHAR_UUID}")
-
-        # Add Command Service
-        self.peripheral.add_service(
-            srv_id=2,
-            uuid=COMMAND_SERVICE_UUID,
-            primary=True  # This will automatically add it to advertisement
-        )
-        self.logger.info(f"Added Command Service with UUID: {COMMAND_SERVICE_UUID}")
-
-        # Add Command Characteristic
-        self.peripheral.add_characteristic(
-            srv_id=2,
-            chr_id=1,
-            uuid=COMMAND_CHAR_UUID,
-            flags=['write'],
-            write_callback=self.command_callback,
-            value=[],
-            notifying=False
-        )
-        self.logger.info(f"Added Command Characteristic with UUID: {COMMAND_CHAR_UUID}")
+            raise
 
     def publish(self):
-        """Publish the peripheral and start the event loop."""
+        """Publish the peripheral and start advertising"""
         try:
-            self.peripheral.publish()
-            self.logger.info("Bluetooth GATT server is running...")
+            # Register and start advertising
+            self.advertisement.register()
+            self.logger.info("Advertisement registered")
             
-            self.logger.info(f"Advertising primary services...")
+            # Publish GATT server
+            self.peripheral.publish()
+            self.logger.info("GATT server published")
             
             while not self.shutdown_event.is_set():
                 async_tools.sleep(1)
@@ -165,11 +138,14 @@ class BluetoothServer:
             self.unpublish()
 
     def unpublish(self):
-        """
-        Unpublish the peripheral and clean up.
-        """
-        self.peripheral.unpublish()
-        self.logger.info("Bluetooth GATT server has been shut down.")
+        """Clean up advertising and GATT server"""
+        try:
+            self.advertisement.release()
+            self.logger.info("Advertisement stopped")
+            self.peripheral.unpublish()
+            self.logger.info("GATT server unpublished")
+        except Exception as e:
+            self.logger.error(f"Error in unpublish: {e}")
 
     def read_config_callback(self):
         """
