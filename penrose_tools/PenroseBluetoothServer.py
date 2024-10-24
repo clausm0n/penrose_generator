@@ -112,13 +112,10 @@ class PenroseBluetoothServer:
         self.mainloop = GLib.MainLoop()
 
     def read_config(self) -> List[int]:
-        """Read current configuration using Operations class"""
         try:
-            # Use Operations class to read config
             config_data = self.operations.read_config_file(self.config_file)
             self.logger.debug(f"Read config data: {config_data}")
             
-            # Format the data consistently
             formatted_settings = {
                 "size": config_data['size'],
                 "scale": config_data['scale'],
@@ -127,16 +124,17 @@ class PenroseBluetoothServer:
                 "color2": config_data['color2']
             }
             
-            # Convert to JSON string and then to bytes
             json_str = json.dumps(formatted_settings)
-            self.logger.debug(f"Sending config: {json_str}")
+            self.logger.debug(f"Formatted config JSON: {json_str}")
             
-            # Convert to list of integers (bytes)
-            return [ord(c) for c in json_str]
+            byte_array = [ord(c) for c in json_str]
+            self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
             
+            return byte_array
+                
         except Exception as e:
-            self.logger.error(f"Error reading config: {e}")
-            # Return a minimal valid JSON object if there's an error
+            self.logger.error(f"Error reading config: {str(e)}")
+            self.logger.exception("Full traceback:")
             return [ord(c) for c in '{"error": "Failed to read config"}']
 
     def write_config(self, value: List[int]) -> bool:
@@ -226,6 +224,8 @@ class PenroseBluetoothServer:
         """Initialize and start the Bluetooth server"""
         # Setup auto-pairing agent
         self.agent = self.setup_agent()
+
+        initial_config = self.read_config()
         
         # Create peripheral using the configured adapter
         self.peripheral = peripheral.Peripheral(self.adapter.address,
@@ -241,22 +241,25 @@ class PenroseBluetoothServer:
             srv_id=1,
             chr_id=1,
             uuid=CONFIG_CHAR,
-            value=[],
-            flags=['read', 'write', 'write-without-response'],  # Added write-without-response
+            value=initial_config,  # Set initial value
+            flags=['read', 'write', 'write-without-response', 'notify'],  # Added notify
             notifying=False,
             read_callback=self.read_config,
-            write_callback=self.write_config
+            write_callback=self.write_config,
+            notify_callback=None,  # Add if you want notifications
+            get_notification_value=None,  # Add if you want notifications
+            description="Penrose Configuration Characteristic"
         )
-
-        # Command characteristic also needs both write types
+        
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=2,
             uuid=COMMAND_CHAR,
             value=[],
-            flags=['write', 'write-without-response'],  # Added write-without-response
+            flags=['write', 'write-without-response'],
             notifying=False,
-            write_callback=self.handle_command
+            write_callback=self.handle_command,
+            description="Penrose Command Characteristic"
         )
 
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
