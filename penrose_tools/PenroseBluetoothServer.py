@@ -247,7 +247,6 @@ class PenroseBluetoothServer:
             read_callback=self.read_config,
             write_callback=self.write_config,
             notify_callback=None,
-            description="Penrose Configuration Characteristic"
         )
         
         self.peripheral.add_characteristic(
@@ -258,7 +257,6 @@ class PenroseBluetoothServer:
             flags=['write', 'write-without-response'],
             notifying=False,
             write_callback=self.handle_command,
-            description="Penrose Command Characteristic"
         )
 
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
