@@ -13,7 +13,7 @@ import json
 import threading
 import logging
 from typing import List
-
+from .Operations import Operations
 
 # Service and characteristic UUIDs
 PENROSE_SERVICE = '12345000-1234-1234-1234-123456789abc'
@@ -103,13 +103,69 @@ class PenroseBluetoothServer:
             handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             self.logger.addHandler(handler)
 
+        # Initialize Operations instance
+        self.operations = Operations()
+        
         # Initialize DBus mainloop
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
 
-        # Cache for current config
-        self._current_config = None
+    def read_config(self) -> List[int]:
+        """Read current configuration using Operations class"""
+        try:
+            # Use Operations class to read config
+            config_data = self.operations.read_config_file(self.config_file)
+            self.logger.debug(f"Read config data: {config_data}")
+            
+            # Format the data consistently
+            formatted_settings = {
+                "size": config_data['size'],
+                "scale": config_data['scale'],
+                "gamma": config_data['gamma'],
+                "color1": config_data['color1'],
+                "color2": config_data['color2']
+            }
+            
+            # Convert to JSON string and then to bytes
+            json_str = json.dumps(formatted_settings)
+            self.logger.debug(f"Sending config: {json_str}")
+            
+            # Convert to list of integers (bytes)
+            return [ord(c) for c in json_str]
+            
+        except Exception as e:
+            self.logger.error(f"Error reading config: {e}")
+            # Return a minimal valid JSON object if there's an error
+            return [ord(c) for c in '{"error": "Failed to read config"}']
+
+    def write_config(self, value: List[int]) -> bool:
+        """Handle configuration updates using Operations class"""
+        try:
+            # Convert list of integers to string
+            json_str = bytes(value).decode('utf-8')
+            self.logger.debug(f"Received config write: {json_str}")
+            
+            # Parse the JSON data
+            data = json.loads(json_str)
+            
+            # Use Operations class to update config
+            self.operations.update_config_file(
+                self.config_file,
+                size=data.get('size'),
+                scale=data.get('scale'),
+                gamma=data.get('gamma'),
+                color1=data.get('color1'),
+                color2=data.get('color2')
+            )
+            
+            self.logger.debug("Config written successfully")
+            self.update_event.set()
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Config write error: {e}")
+            return False
 
     def configure_adapter(self):
         """Configure the Bluetooth adapter"""
@@ -149,64 +205,6 @@ class PenroseBluetoothServer:
             self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
 
-    def read_config(self) -> List[int]:
-        """Read current configuration and convert to bytes"""
-        try:
-            config = configparser.ConfigParser()
-            config.read(self.config_file)
-            settings = dict(config['Settings'])
-            
-            formatted_settings = {
-                "size": int(settings.get('size', 0)),
-                "scale": int(settings.get('scale', 0)),
-                "gamma": [float(x.strip()) for x in settings.get('gamma', '').split(',')],
-                "color1": [int(x.strip()) for x in settings.get('color1', '').replace('(', '').replace(')', '').split(',')],
-                "color2": [int(x.strip()) for x in settings.get('color2', '').replace('(', '').replace(')', '').split(',')]
-            }
-            
-            # Convert to JSON string and then to bytes
-            json_str = json.dumps(formatted_settings)
-            self.logger.debug(f"Sending config: {json_str}")
-            return [ord(c) for c in json_str]  # Convert string to list of bytes
-            
-        except Exception as e:
-            self.logger.error(f"Error reading config: {e}")
-            # Return a minimal valid JSON object if there's an error
-            return [ord(c) for c in '{"error": "Failed to read config"}']
-
-    def write_config(self, value: List[int]) -> bool:
-        """Handle configuration updates from Bluetooth"""
-        try:
-            # Convert list of integers to bytes and then decode to string
-            json_str = bytes(value).decode('utf-8')
-            self.logger.debug(f"Received config write: {json_str}")
-            
-            data = json.loads(json_str)
-            config = configparser.ConfigParser()
-            
-            if not config.has_section('Settings'):
-                config.add_section('Settings')
-                
-            for key, value in data.items():
-                if isinstance(value, list):
-                    if key in ['color1', 'color2']:
-                        config.set('Settings', key, f"({', '.join(map(str, value))})")
-                    else:
-                        config.set('Settings', key, ', '.join(map(str, value)))
-                else:
-                    config.set('Settings', key, str(value))
-                    
-            with open(self.config_file, 'w') as configfile:
-                config.write(configfile)
-                
-            self.update_event.set()
-            self.logger.info("Config written successfully")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Config write error: {e}")
-            return False
-
     def handle_command(self, value: List[int]) -> bool:
         """Handle commands from Bluetooth"""
         try:
@@ -243,20 +241,21 @@ class PenroseBluetoothServer:
             srv_id=1,
             chr_id=1,
             uuid=CONFIG_CHAR,
-            value=[],  # Initial empty value
+            value=[],
+            flags=['read', 'write', 'write-without-response'],  # Added write-without-response
             notifying=False,
-            flags=['read', 'write', 'write-without-response', 'proper-read','broadcast'],  # Added proper-read flag
             read_callback=self.read_config,
             write_callback=self.write_config
         )
 
+        # Command characteristic also needs both write types
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=2,
             uuid=COMMAND_CHAR,
             value=[],
+            flags=['write', 'write-without-response'],  # Added write-without-response
             notifying=False,
-            flags=['write', 'write-without-response'],
             write_callback=self.handle_command
         )
 
