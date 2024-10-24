@@ -158,10 +158,14 @@ class PenroseBluetoothServer:
     def write_config(self, value: List[int]) -> bool:
         """Handle configuration updates from Bluetooth"""
         try:
+            self.logger.debug(f"Received write request with value: {bytes(value).decode()}")
             data = json.loads(bytes(value).decode())
             
             config = configparser.ConfigParser()
             config.read(self.config_file)
+            
+            # Add debug logging
+            self.logger.debug(f"Parsed config data: {data}")
             
             for key, value in data.items():
                 if isinstance(value, list):
@@ -171,10 +175,11 @@ class PenroseBluetoothServer:
                         config.set('Settings', key, ', '.join(map(str, value)))
                 else:
                     config.set('Settings', key, str(value))
-                    
+            
             with open(self.config_file, 'w') as configfile:
                 config.write(configfile)
                 
+            self.logger.debug("Config written successfully")
             self.update_event.set()
             return True
         except Exception as e:
@@ -213,27 +218,30 @@ class PenroseBluetoothServer:
                                   uuid=PENROSE_SERVICE,
                                   primary=True)
 
-        # Add characteristics
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=1,
             uuid=CONFIG_CHAR,
             value=[],
-            flags=['read', 'write'],
+            flags=['read', 'write', 'write-without-response'],  # Added write-without-response
             notifying=False,
             read_callback=self.read_config,
             write_callback=self.write_config
         )
 
+        # Command characteristic also needs both write types
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=2,
             uuid=COMMAND_CHAR,
             value=[],
-            flags=['write'],
+            flags=['write', 'write-without-response'],  # Added write-without-response
             notifying=False,
             write_callback=self.handle_command
         )
+
+        self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
+        self.logger.debug(f"Setting up COMMAND_CHAR with UUID: {COMMAND_CHAR}")
 
         # Start the server
         self.logger.info("Starting Bluetooth server with auto-pairing...")
