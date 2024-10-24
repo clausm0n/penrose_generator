@@ -246,8 +246,7 @@ class PenroseBluetoothServer:
             notifying=False,
             read_callback=self.read_config,
             write_callback=self.write_config,
-            notify_callback=None,  # Add if you want notifications
-            get_notification_value=None,  # Add if you want notifications
+            notify_callback=None,
             description="Penrose Configuration Characteristic"
         )
         
