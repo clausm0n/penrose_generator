@@ -44,16 +44,16 @@ class Agent(dbus.service.Object):
     def Release(self):
         try:
             self.logger.info("Agent Release called")
-            if self.initialization_complete and self.can_shutdown() and self.shutdown_callback:
-                self.logger.info("Agent Released - executing shutdown callback")
-                self.shutdown_callback()
-            else:
-                if not self.initialization_complete:
-                    self.logger.info("Agent Release called before initialization - ignoring")
-                elif not self.can_shutdown():
-                    self.logger.info("Agent Release called during grace period - ignoring")
-                else:
-                    self.logger.info("Agent Release called - no shutdown callback")
+            # if self.initialization_complete and self.can_shutdown() and self.shutdown_callback:
+            #     self.logger.info("Agent Released - executing shutdown callback")
+            #     self.shutdown_callback()
+            # else:
+            #     if not self.initialization_complete:
+            #         self.logger.info("Agent Release called before initialization - ignoring")
+            #     elif not self.can_shutdown():
+            #         self.logger.info("Agent Release called during grace period - ignoring")
+            #     else:
+            #         self.logger.info("Agent Release called - no shutdown callback")
         except Exception as e:
             self.logger.error(f"Exception in Release method: {e}")
 

@@ -241,8 +241,8 @@ class BluetoothServer:
             self.logger.debug("Setting up Bluetooth adapter...")
             self.setup_adapter()
 
-            self.logger.debug("Starting Bluetooth Agent...")
-            self.start_agent()
+            # self.logger.debug("Starting Bluetooth Agent...")
+            # self.start_agent()
 
             self.logger.debug("Setting up peripheral...")
             self.setup_peripheral()
