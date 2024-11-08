@@ -82,6 +82,87 @@ class BluetoothServer:
             self.logger.error(f"Agent registration failed: {e}")
                 
 
+    # def setup_peripheral(self):
+    #     """Initialize and configure the peripheral device"""
+    #     try:
+    #         self.logger.debug("Setting up GATT Application...")
+            
+    #         # Create shared mainloop
+    #         self.mainloop = async_tools.EventLoop()
+            
+    #         # Create peripheral with built-in advertisement handling
+    #         peripheral_device = peripheral.Peripheral(
+    #             self.adapter_address,
+    #             local_name='PenroseServer',
+    #             appearance=0
+    #         )
+    #         peripheral_device.mainloop = self.mainloop
+            
+    #         # Add Configuration Service
+    #         self.logger.debug("Adding Configuration Service...")
+    #         peripheral_device.add_service(
+    #             srv_id=1, 
+    #             uuid=CONFIG_SERVICE_UUID, 
+    #             primary=True
+    #         )
+            
+    #         # Add Configuration Read Characteristic
+    #         self.logger.debug("Adding Configuration Read Characteristic...")
+    #         peripheral_device.add_characteristic(
+    #             srv_id=1,
+    #             chr_id=1,
+    #             uuid=CONFIG_READ_CHAR_UUID,
+    #             value=[],
+    #             notifying=False,
+    #             flags=['read'],
+    #             read_callback=self.read_config_callback,
+    #             write_callback=None,
+    #             notify_callback=None
+    #         )
+            
+    #         # Add Configuration Write Characteristic
+    #         self.logger.debug("Adding Configuration Write Characteristic...")
+    #         peripheral_device.add_characteristic(
+    #             srv_id=1,
+    #             chr_id=2,
+    #             uuid=CONFIG_WRITE_CHAR_UUID,
+    #             value=[],
+    #             notifying=False,
+    #             flags=['write'],
+    #             read_callback=None,
+    #             write_callback=self.write_config_callback,
+    #             notify_callback=None
+    #         )
+            
+    #         # Add Command Service
+    #         self.logger.debug("Adding Command Service...")
+    #         peripheral_device.add_service(
+    #             srv_id=2,
+    #             uuid=COMMAND_SERVICE_UUID,
+    #             primary=True
+    #         )
+            
+    #         # Add Command Characteristic
+    #         self.logger.debug("Adding Command Characteristic...")
+    #         peripheral_device.add_characteristic(
+    #             srv_id=2,
+    #             chr_id=1,
+    #             uuid=COMMAND_CHAR_UUID,
+    #             value=[],
+    #             notifying=False,
+    #             flags=['write'],
+    #             read_callback=None,
+    #             write_callback=self.command_callback,
+    #             notify_callback=None
+    #         )
+            
+    #         self.peripheral = peripheral_device
+    #         self.logger.info("Peripheral setup completed")
+            
+    #     except Exception as e:
+    #         self.logger.error(f"Failed to initialize peripheral: {e}")
+    #         raise
+
     def setup_peripheral(self):
         """Initialize and configure the peripheral device"""
         try:
@@ -100,61 +181,47 @@ class BluetoothServer:
             
             # Add Configuration Service
             self.logger.debug("Adding Configuration Service...")
-            peripheral_device.add_service(
-                srv_id=1, 
-                uuid=CONFIG_SERVICE_UUID, 
-                primary=True
-            )
+            config_service = peripheral.Service(CONFIG_SERVICE_UUID, primary=True)
             
             # Add Configuration Read Characteristic
             self.logger.debug("Adding Configuration Read Characteristic...")
-            peripheral_device.add_characteristic(
-                srv_id=1,
-                chr_id=1,
+            read_char = peripheral.Characteristic(
                 uuid=CONFIG_READ_CHAR_UUID,
-                value=[],
-                notifying=False,
-                flags=['read'],
-                read_callback=self.read_config_callback,
-                write_callback=None,
-                notify_callback=None
+                properties=['read'],
+                read_callback=self.read_config_callback
             )
+            # Add the characteristic to the service
+            config_service.add_characteristic(read_char)
             
             # Add Configuration Write Characteristic
             self.logger.debug("Adding Configuration Write Characteristic...")
-            peripheral_device.add_characteristic(
-                srv_id=1,
-                chr_id=2,
+            write_char = peripheral.Characteristic(
                 uuid=CONFIG_WRITE_CHAR_UUID,
-                value=[],
-                notifying=False,
-                flags=['write'],
-                read_callback=None,
-                write_callback=self.write_config_callback,
-                notify_callback=None
+                properties=['write'],
+                write_callback=self.write_config_callback
             )
+            # Add the characteristic to the service
+            config_service.add_characteristic(write_char)
+            
+            # Add the service to the peripheral
+            peripheral_device.add_service(config_service)
             
             # Add Command Service
             self.logger.debug("Adding Command Service...")
-            peripheral_device.add_service(
-                srv_id=2,
-                uuid=COMMAND_SERVICE_UUID,
-                primary=True
-            )
+            command_service = peripheral.Service(COMMAND_SERVICE_UUID, primary=True)
             
             # Add Command Characteristic
             self.logger.debug("Adding Command Characteristic...")
-            peripheral_device.add_characteristic(
-                srv_id=2,
-                chr_id=1,
+            command_char = peripheral.Characteristic(
                 uuid=COMMAND_CHAR_UUID,
-                value=[],
-                notifying=False,
-                flags=['write'],
-                read_callback=None,
-                write_callback=self.command_callback,
-                notify_callback=None
+                properties=['write'],
+                write_callback=self.command_callback
             )
+            # Add the characteristic to the service
+            command_service.add_characteristic(command_char)
+            
+            # Add the service to the peripheral
+            peripheral_device.add_service(command_service)
             
             self.peripheral = peripheral_device
             self.logger.info("Peripheral setup completed")
@@ -162,6 +229,7 @@ class BluetoothServer:
         except Exception as e:
             self.logger.error(f"Failed to initialize peripheral: {e}")
             raise
+
 
     def publish(self):
         """Publish the peripheral and set up the Bluetooth services"""
