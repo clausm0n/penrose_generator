@@ -364,6 +364,7 @@ class BluetoothServer:
             use_adapter.discoverable = True
             use_adapter.discoverable_timeout = 0
             use_adapter.pairable = True
+            use_adapter.alias = 'PenroseServer'
             
             time.sleep(2)  # Wait for adapter to be ready
             
