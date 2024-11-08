@@ -508,7 +508,7 @@ class BluetoothServer:
             "color1": [int(x.strip()) for x in settings.get('color1', '').replace('(', '').replace(')', '').split(',')],
             "color2": [int(x.strip()) for x in settings.get('color2', '').replace('(', '').replace(')', '').split(',')]
         }
-        self.logger.debug(f"Formatted settings: {formatted_settings}")
+        # self.logger.debug(f"Formatted settings: {formatted_settings}")
         return formatted_settings
 
     def write_config(self, new_settings):
@@ -531,7 +531,7 @@ class BluetoothServer:
                 config.set('Settings', key, str(value))
         with open(self.config_path, 'w') as configfile:
             config.write(configfile)
-        self.logger.debug(f"New settings written to {self.config_path}: {new_settings}")
+        # self.logger.debug(f"New settings written to {self.config_path}: {new_settings}")
         self.update_event.set()
 
     def handle_command(self, command):
