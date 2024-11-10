@@ -193,15 +193,16 @@ class PenroseBluetoothServer:
                 self.bus.get_object(constants.BLUEZ_SERVICE_NAME, "/org/bluez"),
                 AGENT_MANAGER_INTERFACE)
             
-            agent_manager.RegisterAgent(AGENT_PATH, "NoInputNoOutput")
+            agent_manager.RegisterAgent(AGENT_PATH, "DisplayYesNo")
             agent_manager.RequestDefaultAgent(AGENT_PATH)
-            self.logger.info("Bluetooth agent registered for auto-pairing")
+            self.logger.info("Bluetooth agent registered for auto-pairing with DisplayYesNo capability")
             
             return agent
             
         except Exception as e:
             self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
+
 
     def handle_command(self, value: List[int]) -> bool:
         """Handle commands from Bluetooth"""
