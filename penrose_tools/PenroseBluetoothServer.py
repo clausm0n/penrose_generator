@@ -99,6 +99,7 @@ class PenroseBluetoothServer:
         self.peripheral = None
         self.logger = logging.getLogger('PenroseBLE')
         self.logger.setLevel(logging.DEBUG)
+        self.notification_id = None
         
         # Add handler if none exists
         if not self.logger.handlers:
@@ -257,11 +258,11 @@ class PenroseBluetoothServer:
             chr_id=1,
             uuid=CONFIG_CHAR,
             value=initial_config,  # Set initial value
-            flags=['read', 'write', 'write-without-response', 'notify'],  # Added notify
+            flags=['read', 'write', 'write-without-response', 'notify'],
             notifying=False,
             read_callback=self.read_config,
             write_callback=self.write_config,
-            notify_callback=None,
+            notify_callback=self.config_notify_cb,  # Set the notify callback
         )
         
         self.peripheral.add_characteristic(
@@ -288,12 +289,45 @@ class PenroseBluetoothServer:
         GLib.idle_add(self.check_shutdown_event)
         self.peripheral.run()
 
+    def config_notify_cb(self, notifying, characteristic):
+        """Callback when notifications are started or stopped."""
+        self.logger.info(f"Notifications {'started' if notifying else 'stopped'} on CONFIG_CHAR")
+        if notifying:
+            self.start_notifications()
+        else:
+            if self.notification_id is not None:
+                GLib.source_remove(self.notification_id)
+                self.notification_id = None
+
+    def notify_config(self):
+        """Notify clients of config changes."""
+        try:
+            # Get the characteristic object
+            config_char = self.peripheral.characteristics[1][1]
+            if config_char.notifying:
+                value = self.read_config()
+                config_char.set_value(value)
+                self.logger.debug("Sent notification with config data")
+            return True  # Continue calling this function
+        except Exception as e:
+            self.logger.error(f"Error in notify_config: {e}")
+            return False  # Stop calling this function
+
+    def start_notifications(self):
+        """Start periodic notifications."""
+        if self.notification_id is None:
+            self.notification_id = GLib.timeout_add_seconds(10, self.notify_config)
+            self.logger.info("Started periodic notifications for CONFIG_CHAR")
+
     def check_shutdown_event(self):
-            if self.shutdown_event.is_set():
-                self.logger.info("Shutdown event detected, quitting mainloop")
-                self.peripheral.quit()
-                return False  # Remove this idle function
-            return True  # Keep the idle function
+        if self.shutdown_event.is_set():
+            self.logger.info("Shutdown event detected, quitting mainloop")
+            if self.notification_id is not None:
+                GLib.source_remove(self.notification_id)
+                self.notification_id = None
+            self.peripheral.quit()
+            return False  # Remove this idle function
+        return True  # Keep the idle function
 
 def run_bluetooth_server(config_file: str,
                         update_event: threading.Event,
