@@ -33,8 +33,8 @@ class AutoAcceptAgent(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
         self.logger = logging.getLogger('PenroseBLE.Agent')
-        self.context = GLib.MainContext()
-        self.mainloop = GLib.MainLoop(context=self.context)
+        # self.context = GLib.MainContext()
+        # self.mainloop = GLib.MainLoop(context=self.context)
 
         
     @dbus.service.method(AGENT_INTERFACE,
@@ -226,14 +226,14 @@ class PenroseBluetoothServer:
             self.logger.error(f"Command error: {e}")
             return False
 
-    def run_mainloop(self):
-        # Set the thread's default context to the new context
-        self.context.push_thread_default()
-        try:
-            self.mainloop.run()
-        finally:
-            # Clean up the context
-            self.context.pop_thread_default()
+    # def run_mainloop(self):
+    #     # Set the thread's default context to the new context
+    #     self.context.push_thread_default()
+    #     try:
+    #         self.mainloop.run()
+    #     finally:
+    #         # Clean up the context
+    #         self.context.pop_thread_default()
 
     def start_server(self):
         """Initialize and start the Bluetooth server"""
@@ -277,30 +277,41 @@ class PenroseBluetoothServer:
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
         self.logger.debug(f"Setting up COMMAND_CHAR with UUID: {COMMAND_CHAR}")
 
-        # Start the server
-        self.logger.info("Starting Bluetooth server with auto-pairing...")
-        self.peripheral.publish()
+        # # Start the server
+        # self.logger.info("Starting Bluetooth server with auto-pairing...")
+        # self.peripheral.publish()
         
         # Start mainloop for DBus
-        threading.Thread(target=self.mainloop.run, daemon=True).start()
+        # threading.Thread(target=self.mainloop.run, daemon=True).start()
+        self.logger.info("Starting Bluetooth server with auto-pairing...")
+        self.peripheral.publish()
+        GLib.idle_add(self.check_shutdown_event)
+        self.peripheral.run()
 
-def run_bluetooth_server(config_file: str,
-                        update_event: threading.Event,
-                        toggle_shader_event: threading.Event,
-                        randomize_colors_event: threading.Event,
-                        shutdown_event: threading.Event):
-    """Main function to run the Bluetooth server"""
-    server = PenroseBluetoothServer(
-        config_file,
-        update_event,
-        toggle_shader_event,
-        randomize_colors_event,
-        shutdown_event
-    )
-    
-    server.start_server()
-    
-    # Wait for shutdown event
-    shutdown_event.wait()
-    server.logger.info("Bluetooth server shutting down...")
-    server.mainloop.quit()
+    def check_shutdown_event(self):
+            if self.shutdown_event.is_set():
+                self.logger.info("Shutdown event detected, quitting mainloop")
+                self.peripheral.quit()
+                return False  # Remove this idle function
+            return True  # Keep the idle function
+
+    def run_bluetooth_server(config_file: str,
+                            update_event: threading.Event,
+                            toggle_shader_event: threading.Event,
+                            randomize_colors_event: threading.Event,
+                            shutdown_event: threading.Event):
+        """Main function to run the Bluetooth server"""
+        server = PenroseBluetoothServer(
+            config_file,
+            update_event,
+            toggle_shader_event,
+            randomize_colors_event,
+            shutdown_event
+        )
+        
+        server.start_server()
+        
+        # # Wait for shutdown event
+        # shutdown_event.wait()
+        # server.logger.info("Bluetooth server shutting down...")
+        # server.mainloop.quit()
