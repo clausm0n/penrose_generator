@@ -4,7 +4,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event, PenroseBluetoothServer
+from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
 import logging
 import configparser
 import signal
