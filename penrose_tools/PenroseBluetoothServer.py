@@ -57,9 +57,10 @@ class AutoAcceptAgent(dbus.service.Object):
 
     @dbus.service.method(AGENT_INTERFACE,
                         in_signature="ouq", out_signature="")
-    def RequestConfirmation(self, device, passkey, _):
+    def RequestConfirmation(self, device, passkey):
         """Automatically confirm pairing"""
         self.logger.info(f"Auto-accepting pairing request with passkey: {passkey}")
+        # Simply return to accept the pairing
         return
 
     @dbus.service.method(AGENT_INTERFACE,
@@ -193,7 +194,7 @@ class PenroseBluetoothServer:
                 self.bus.get_object(constants.BLUEZ_SERVICE_NAME, "/org/bluez"),
                 AGENT_MANAGER_INTERFACE)
             
-            agent_manager.RegisterAgent(AGENT_PATH, "DisplayYesNo")
+            agent_manager.RegisterAgent(AGENT_PATH, "NoInputNoOutput")
             agent_manager.RequestDefaultAgent(AGENT_PATH)
             self.logger.info("Bluetooth agent registered for auto-pairing with DisplayYesNo capability")
             
