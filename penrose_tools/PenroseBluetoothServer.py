@@ -301,7 +301,7 @@ def run_bluetooth_server(config_file: str,
     
     server.start_server()
     
-    # Wait for shutdown event
-    shutdown_event.wait()
-    server.logger.info("Bluetooth server shutting down...")
-    server.mainloop.quit()
+    # # Wait for shutdown event
+    # shutdown_event.wait()
+    # server.logger.info("Bluetooth server shutting down...")
+    # server.mainloop.quit()
