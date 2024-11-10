@@ -4,13 +4,12 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event
+from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event, PenroseBluetoothServer
 import logging
 import configparser
 import signal
 import argparse
 import asyncio
-import threading
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -151,32 +150,8 @@ def setup_window(fullscreen=False):
 
     return window
 
-def rendering_loop(fullscreen):
-    global width, height, config_data, running
-
-    window = setup_window(fullscreen=fullscreen)
-    shaders = Shader()
-    last_time = glfw.get_time()
-
-    while not glfw.window_should_close(window) and running:
-        glfw.poll_events()
-        glClear(GL_COLOR_BUFFER_BIT)
-
-        if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
-            update_toggles(shaders)
-
-        render_tiles(shaders, width, height)
-        glfw.swap_buffers(window)
-
-        while glfw.get_time() < last_time + 1.0 / 60.0:
-            pass
-        last_time = glfw.get_time()
-
-    glfw.terminate()
-
-
 def main():
-    global width, height, config_data, running
+    global width, height, config_data
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
@@ -194,27 +169,44 @@ def main():
 
     try:
         logging.info("Starting the penrose generator script.")
+        window = setup_window(fullscreen=args.fullscreen)
+        shaders = Shader()
+        last_time = glfw.get_time()
 
         if args.bluetooth:
-            # Run the Bluetooth server in the main thread
-            run_bluetooth_server(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event, shutdown_event)
+            server_thread = Thread(target=run_bluetooth_server, 
+                                args=(CONFIG_PATH, update_event, toggle_shader_event,
+                                        randomize_colors_event, shutdown_event),
+                                daemon=True)
+            server_thread.start()
+            logging.info("Bluetooth server started.")
         else:
-            # Start HTTP server in a separate thread if needed
+            # HTTP server
             server_thread = Thread(target=run_server, daemon=True)
             server_thread.start()
             logging.info("HTTP server started.")
 
-        # Start the OpenGL rendering in a separate thread
-        rendering_thread = threading.Thread(target=rendering_loop, args=(args.fullscreen,))
-        rendering_thread.start()
+        while not glfw.window_should_close(window) and running:
+            glfw.poll_events()
+            glClear(GL_COLOR_BUFFER_BIT)
 
-        # Wait for the rendering thread to finish
-        rendering_thread.join()
+            # Check if any relevant event is set
+            if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
+                update_toggles(shaders)
+
+            render_tiles(shaders, width, height)
+            glfw.swap_buffers(window)
+
+            # Frame rate control
+            while glfw.get_time() < last_time + 1.0 / 60.0:
+                pass
+            last_time = glfw.get_time()
 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         raise
     finally:
+        glfw.terminate()
         shutdown_event.set()
         logging.info("Application has been terminated.")
 
