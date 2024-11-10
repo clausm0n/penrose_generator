@@ -97,7 +97,6 @@ class PenroseBluetoothServer:
         self.randomize_colors_event = randomize_colors_event
         self.shutdown_event = shutdown_event
         self.peripheral = None
-        self.agent = None
         self.logger = logging.getLogger('PenroseBLE')
         self.logger.setLevel(logging.DEBUG)
         
@@ -283,15 +282,13 @@ class PenroseBluetoothServer:
         self.peripheral.publish()
         
         # Start mainloop for DBus
-        # and store the mainloop in the main thread
-        self.mainloop_thread = threading.Thread(target=self.run_mainloop, name="GLibMainLoopThread")
-        self.mainloop_thread.start()
+        threading.Thread(target=self.mainloop.run, daemon=True).start()
 
 def run_bluetooth_server(config_file: str,
-                         update_event: threading.Event,
-                         toggle_shader_event: threading.Event,
-                         randomize_colors_event: threading.Event,
-                         shutdown_event: threading.Event):
+                        update_event: threading.Event,
+                        toggle_shader_event: threading.Event,
+                        randomize_colors_event: threading.Event,
+                        shutdown_event: threading.Event):
     """Main function to run the Bluetooth server"""
     server = PenroseBluetoothServer(
         config_file,

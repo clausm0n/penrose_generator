@@ -1,5 +1,3 @@
-# Pensorse Tiling Generator Main Script
-
 import os
 import numpy as np
 import glfw
@@ -176,11 +174,10 @@ def main():
         last_time = glfw.get_time()
 
         if args.bluetooth:
-            server_thread = Thread(
-                target=run_bluetooth_server,
-                args=(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event, shutdown_event),
-                name="BluetoothServerThread"
-            )
+            server_thread = Thread(target=run_bluetooth_server, 
+                                args=(CONFIG_PATH, update_event, toggle_shader_event,
+                                        randomize_colors_event, shutdown_event),
+                                daemon=True)
             server_thread.start()
             logging.info("Bluetooth server started.")
         else:
