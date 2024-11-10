@@ -57,7 +57,7 @@ class AutoAcceptAgent(dbus.service.Object):
 
     @dbus.service.method(AGENT_INTERFACE,
                         in_signature="ou", out_signature="")
-    def RequestConfirmation(self, device, passkey, _):
+    def RequestConfirmation(self, device, passkey):
         """Automatically confirm pairing"""
         self.logger.info(f"Auto-accepting pairing request with passkey: {passkey}")
         return
