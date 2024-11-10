@@ -33,9 +33,6 @@ class AutoAcceptAgent(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
         self.logger = logging.getLogger('PenroseBLE.Agent')
-        # self.context = GLib.MainContext()
-        # self.mainloop = GLib.MainLoop(context=self.context)
-
         
     @dbus.service.method(AGENT_INTERFACE,
                         in_signature="os", out_signature="")
@@ -99,7 +96,6 @@ class PenroseBluetoothServer:
         self.peripheral = None
         self.logger = logging.getLogger('PenroseBLE')
         self.logger.setLevel(logging.DEBUG)
-        self.notification_id = None
         
         # Add handler if none exists
         if not self.logger.handlers:
@@ -185,9 +181,6 @@ class PenroseBluetoothServer:
         
         return current_adapter
 
-
-    
-
     def setup_agent(self):
         """Set up the auto-accept Bluetooth agent"""
         try:
@@ -227,15 +220,6 @@ class PenroseBluetoothServer:
             self.logger.error(f"Command error: {e}")
             return False
 
-    # def run_mainloop(self):
-    #     # Set the thread's default context to the new context
-    #     self.context.push_thread_default()
-    #     try:
-    #         self.mainloop.run()
-    #     finally:
-    #         # Clean up the context
-    #         self.context.pop_thread_default()
-
     def start_server(self):
         """Initialize and start the Bluetooth server"""
         # Setup auto-pairing agent
@@ -258,11 +242,11 @@ class PenroseBluetoothServer:
             chr_id=1,
             uuid=CONFIG_CHAR,
             value=initial_config,  # Set initial value
-            flags=['read', 'write', 'write-without-response', 'notify'],
+            flags=['read', 'write', 'write-without-response', 'notify'],  # Added notify
             notifying=False,
             read_callback=self.read_config,
             write_callback=self.write_config,
-            notify_callback=self.config_notify_cb,  # Set the notify callback
+            notify_callback=None,
         )
         
         self.peripheral.add_characteristic(
@@ -278,56 +262,12 @@ class PenroseBluetoothServer:
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
         self.logger.debug(f"Setting up COMMAND_CHAR with UUID: {COMMAND_CHAR}")
 
-        # # Start the server
-        # self.logger.info("Starting Bluetooth server with auto-pairing...")
-        # self.peripheral.publish()
-        
-        # Start mainloop for DBus
-        # threading.Thread(target=self.mainloop.run, daemon=True).start()
+        # Start the server
         self.logger.info("Starting Bluetooth server with auto-pairing...")
         self.peripheral.publish()
-        GLib.idle_add(self.check_shutdown_event)
-        self.peripheral.run()
-
-    def config_notify_cb(self, notifying, characteristic):
-        """Callback when notifications are started or stopped."""
-        self.logger.info(f"Notifications {'started' if notifying else 'stopped'} on CONFIG_CHAR")
-        if notifying:
-            self.start_notifications()
-        else:
-            if self.notification_id is not None:
-                GLib.source_remove(self.notification_id)
-                self.notification_id = None
-
-    def notify_config(self):
-        """Notify clients of config changes."""
-        try:
-            # Get the characteristic object
-            config_char = self.peripheral.characteristics[1][1]
-            if config_char.notifying:
-                value = self.read_config()
-                config_char.set_value(value)
-                self.logger.debug("Sent notification with config data")
-            return True  # Continue calling this function
-        except Exception as e:
-            self.logger.error(f"Error in notify_config: {e}")
-            return False  # Stop calling this function
-
-    def start_notifications(self):
-        """Start periodic notifications."""
-        if self.notification_id is None:
-            self.notification_id = GLib.timeout_add_seconds(10, self.notify_config)
-            self.logger.info("Started periodic notifications for CONFIG_CHAR")
-
-    def check_shutdown_event(self):
-        if self.shutdown_event.is_set():
-            self.logger.info("Shutdown event detected, quitting mainloop")
-            if self.notification_id is not None:
-                GLib.source_remove(self.notification_id)
-                self.notification_id = None
-            self.peripheral.quit()
-            return False  # Remove this idle function
-        return True  # Keep the idle function
+        
+        # Start mainloop for DBus
+        threading.Thread(target=self.mainloop.run, daemon=True).start()
 
 def run_bluetooth_server(config_file: str,
                         update_event: threading.Event,
@@ -345,7 +285,7 @@ def run_bluetooth_server(config_file: str,
     
     server.start_server()
     
-    # # Wait for shutdown event
-    # shutdown_event.wait()
-    # server.logger.info("Bluetooth server shutting down...")
-    # server.mainloop.quit()
+    # Wait for shutdown event
+    shutdown_event.wait()
+    server.logger.info("Bluetooth server shutting down...")
+    server.mainloop.quit()
