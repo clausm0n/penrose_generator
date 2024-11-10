@@ -1,3 +1,5 @@
+# Pensorse Tiling Generator Main Script
+
 import os
 import numpy as np
 import glfw

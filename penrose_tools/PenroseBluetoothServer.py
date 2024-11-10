@@ -283,13 +283,15 @@ class PenroseBluetoothServer:
         self.peripheral.publish()
         
         # Start mainloop for DBus
-        threading.Thread(target=self.run_mainloop, name="GLibMainLoopThread").start()
+        # and store the mainloop in the main thread
+        self.mainloop_thread = threading.Thread(target=self.run_mainloop, name="GLibMainLoopThread")
+        self.mainloop_thread.start()
 
 def run_bluetooth_server(config_file: str,
-                        update_event: threading.Event,
-                        toggle_shader_event: threading.Event,
-                        randomize_colors_event: threading.Event,
-                        shutdown_event: threading.Event):
+                         update_event: threading.Event,
+                         toggle_shader_event: threading.Event,
+                         randomize_colors_event: threading.Event,
+                         shutdown_event: threading.Event):
     """Main function to run the Bluetooth server"""
     server = PenroseBluetoothServer(
         config_file,
@@ -301,7 +303,7 @@ def run_bluetooth_server(config_file: str,
     
     server.start_server()
     
-    # # Wait for shutdown event
-    # shutdown_event.wait()
-    # server.logger.info("Bluetooth server shutting down...")
-    # server.mainloop.quit()
+    # Wait for shutdown event
+    shutdown_event.wait()
+    server.logger.info("Bluetooth server shutting down...")
+    server.mainloop.quit()
