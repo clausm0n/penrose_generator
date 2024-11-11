@@ -210,17 +210,16 @@ class PenroseBluetoothServer:
             raise
 
 
-    def handle_command(self, value: bytes) -> None:
-        """Handle commands from Bluetooth"""
+    def handle_command(self, value: bytes, options: dict) -> None:
         try:
-            self.logger.debug(f"handle_command called with value: {value}")
+            self.logger.debug(f"handle_command called with value: {value} and options: {options}")
 
             # Decode the bytes to a UTF-8 string
-            command_str = value.decode('utf-8')
-            self.logger.info(f"Decoded command string: {command_str}")
+            json_str = value.decode('utf-8')
+            self.logger.info(f"Decoded command string: {json_str}")
 
             # Parse the JSON data
-            command_data = json.loads(command_str)
+            command_data = json.loads(json_str)
             self.logger.info(f"Parsed command data: {command_data}")
 
             # Set the appropriate event based on the command
@@ -240,7 +239,6 @@ class PenroseBluetoothServer:
         except Exception as e:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
-
 
 
     def start_server(self):
