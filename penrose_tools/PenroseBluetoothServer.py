@@ -176,35 +176,32 @@ class PenroseBluetoothServer:
 
     def process_complete_message(self, message_id: str):
         try:
+            self.logger.info(f"Processing complete message {message_id}")
             message_data = self.message_frames[message_id]
-            command = message_data['command']
             frames = message_data['frames']
+            total_frames = message_data['total_frames']
             
             # Combine all frames in order
             complete_data = ''
-            for i in range(message_data['total_frames']):
+            for i in range(total_frames):
                 if i not in frames:
                     raise ValueError(f"Missing frame {i}")
                 complete_data += frames[i]
-
-            # Process based on command
-            if command == 'init_image_upload':
-                self.init_image_upload()
-            elif command == 'image_data':
-                self.process_image(complete_data)
-            else:
-                self.logger.warning(f"Unknown command: {command}")
-
+                
+            # Process the image data
+            self.process_image(complete_data)
+                
             # Cleanup
             del self.message_frames[message_id]
-
+            self.logger.info(f"Completed processing message {message_id}")
+            
         except Exception as e:
             self.logger.error(f"Error processing complete message: {str(e)}")
             raise
 
     def init_image_upload(self):
+        """Initialize a new image upload by clearing previous state"""
         self.logger.info("Initializing new image upload")
-        # Clear any previous upload state
         self.message_frames = {}
         self.message_buffer = ""
 
@@ -328,82 +325,102 @@ class PenroseBluetoothServer:
         try:
             self.logger.debug(f"handle_command called with value: {value} and options: {options}")
 
-            # Convert list of bytes to bytes object
+            # Convert bytes to string and add to buffer
             byte_array = bytes(value)
             new_data = byte_array.decode('utf-8')
+            self.logger.debug(f"Received data: {new_data[:100]}...")
+            
             self.message_buffer += new_data
-
-            # Decode the bytes to a UTF-8 string
-            json_str = byte_array.decode('utf-8')
+                
+            # Process any complete messages in buffer
             while '\n' in self.message_buffer:
                 # Split on first newline
                 message, self.message_buffer = self.message_buffer.split('\n', 1)
                 try:
-                    self.process_frame(message)
+                    data = json.loads(message)
+                    command = data.get('command')
+                    
+                    if command == 'init_image_upload':
+                        self.init_image_upload()
+                    elif command == 'image_data':
+                        # Store frame in message frames
+                        message_id = data.get('messageId')
+                        frame_index = data.get('frameIndex')
+                        total_frames = data.get('totalFrames')
+                        payload = data.get('payload')
+                        is_last = data.get('isLast', False)
+                        
+                        # Initialize frame storage for new message
+                        if message_id not in self.message_frames:
+                            self.message_frames[message_id] = {
+                                'command': command,
+                                'frames': {},
+                                'total_frames': total_frames,
+                                'received_frames': 0
+                            }
+                        
+                        # Store the frame
+                        if frame_index not in self.message_frames[message_id]['frames']:
+                            self.message_frames[message_id]['frames'][frame_index] = payload
+                            self.message_frames[message_id]['received_frames'] += 1
+                            
+                            self.logger.debug(
+                                f"Stored frame {frame_index + 1}/{total_frames} "
+                                f"for message {message_id}"
+                            )
+                        
+                        # Check if message is complete
+                        if (is_last and 
+                            self.message_frames[message_id]['received_frames'] == total_frames):
+                            self.logger.info("All frames received, processing complete message")
+                            self.process_complete_message(message_id)
+                    
+                    elif command == 'update_config':
+                        config = data.get('config')
+                        if config:
+                            config_parser = configparser.ConfigParser()
+                            config_parser.read(self.config_file)
+                            
+                            if 'Settings' not in config_parser:
+                                config_parser.add_section('Settings')
+                            
+                            for key, value in config.items():
+                                if isinstance(value, list):
+                                    if key in ['color1', 'color2']:
+                                        config_parser.set('Settings', key, f"({', '.join(map(str, value))})")
+                                    else:
+                                        config_parser.set('Settings', key, ', '.join(map(str, value)))
+                                else:
+                                    config_parser.set('Settings', key, str(value))
+                            
+                            with open(self.config_file, 'w') as configfile:
+                                config_parser.write(configfile)
+                            
+                            self.logger.info("Config updated through command channel")
+                            self.update_event.set()
+                        else:
+                            self.logger.error("No config data in update_config command")
+                            
+                    elif command == 'toggle_shader':
+                        self.logger.info("Setting toggle_shader_event")
+                        self.toggle_shader_event.set()
+                    elif command == 'randomize_colors':
+                        self.logger.info("Setting randomize_colors_event")
+                        self.randomize_colors_event.set()
+                    elif command == 'shutdown':
+                        self.logger.info("Setting shutdown_event")
+                        self.shutdown_event.set()
+                    else:
+                        self.logger.warning(f"Unknown command: {command}")
+                        
                 except json.JSONDecodeError as e:
                     self.logger.error(f"JSON decode error for message: {message[:100]}...")
                     self.logger.error(f"Error details: {str(e)}")
                     continue
 
-
-            # Parse the JSON data
-            command_data = json.loads(json_str)
-            self.logger.info(f"Parsed command data: {command_data}")
-
-            # Get the command
-            command = command_data.get('command')
-
-            if command == 'init_image_upload':
-                self.init_image_upload(command_data)
-            elif command == 'image_chunk':
-                self.handle_image_chunk(command_data)
-            
-            if command == 'update_config':
-                # Extract config from command data
-                config = command_data.get('config')
-                if config:
-                    # Update config file
-                    config_parser = configparser.ConfigParser()
-                    config_parser.read(self.config_file)
-                    
-                    if 'Settings' not in config_parser:
-                        config_parser.add_section('Settings')
-                    
-                    for key, value in config.items():
-                        if isinstance(value, list):
-                            if key in ['color1', 'color2']:
-                                config_parser.set('Settings', key, f"({', '.join(map(str, value))})")
-                            else:
-                                config_parser.set('Settings', key, ', '.join(map(str, value)))
-                        else:
-                            config_parser.set('Settings', key, str(value))
-                    
-                    with open(self.config_file, 'w') as configfile:
-                        config_parser.write(configfile)
-                    
-                    self.logger.info("Config updated through command channel")
-                    self.update_event.set()
-                else:
-                    self.logger.error("No config data in update_config command")
-                    
-            elif command == 'toggle_shader':
-                self.logger.info("Setting toggle_shader_event")
-                self.toggle_shader_event.set()
-            elif command == 'randomize_colors':
-                self.logger.info("Setting randomize_colors_event")
-                self.randomize_colors_event.set()
-            elif command == 'shutdown':
-                self.logger.info("Setting shutdown_event")
-                self.shutdown_event.set()
-            else:
-                self.logger.warning(f"Unknown command: {command}")
-
         except Exception as e:
-            self.logger.error(f"Command error: {e}")
+            self.logger.error(f"Command error: {str(e)}")
             self.logger.exception("Exception occurred while handling command")
-
-
-
 
     def start_server(self):
         """Initialize and start the Bluetooth server"""
