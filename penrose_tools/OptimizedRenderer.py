@@ -11,31 +11,26 @@ class OptimizedRenderer:
     def __init__(self):
         self.vbo = None
         self.color_vbo = None
+        self.ebo = None  # Element buffer for indices
         self.shader_program = None
         self.spatial_grid = {}
-        self.grid_size = 100  # Size of each grid cell
+        self.grid_size = 100
         self.tile_cache = {}
         self.visible_tiles_cache = set()
+        self.indices = []
+        self.vertices_per_tile = 0
         
     def setup_shader(self):
-        # Modified vertex shader with proper scaling
+        # Simpler vertex shader that just transforms coordinates
         vertex_shader = """
         #version 120
         
         attribute vec2 position;
         attribute vec4 color;
-        uniform float time;
-        uniform vec2 center;
-        uniform float scale;
-        uniform vec2 screen_size;
         varying vec4 frag_color;
         
         void main() {
-            // Convert to normalized device coordinates
-            vec2 pos = position;
-            vec2 normalized_pos = 2.0 * (pos / screen_size) - 1.0;
-            normalized_pos.y = -normalized_pos.y;  // Flip Y coordinate
-            gl_Position = vec4(normalized_pos, 0.0, 1.0);
+            gl_Position = gl_ModelViewProjectionMatrix * vec4(position, 0.0, 1.0);
             frag_color = color;
         }
         """
@@ -55,13 +50,8 @@ class OptimizedRenderer:
             fragment = shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER)
             self.shader_program = shaders.compileProgram(vertex, fragment)
             
-            # Get locations
             self.position_loc = glGetAttribLocation(self.shader_program, 'position')
             self.color_loc = glGetAttribLocation(self.shader_program, 'color')
-            self.time_loc = glGetUniformLocation(self.shader_program, 'time')
-            self.center_loc = glGetUniformLocation(self.shader_program, 'center')
-            self.scale_loc = glGetUniformLocation(self.shader_program, 'scale')
-            self.screen_size_loc = glGetUniformLocation(self.shader_program, 'screen_size')
             
         except Exception as e:
             print(f"Shader compilation error: {e}")
@@ -70,88 +60,63 @@ class OptimizedRenderer:
     def setup_buffers(self, tiles, width, height, scale_value):
         vertices = []
         colors = []
+        indices = []
         
-        # Calculate center for transformations
         center = complex(width / 2, height / 2)
+        vertex_count = 0
         
         for tile in tiles:
             # Transform vertices to screen space
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
-            vertices.extend(screen_verts)
             
-            # Add colors for each vertex
-            tile_color = tile.color + (255,)
-            colors.extend([tile_color] * len(screen_verts))
+            # Add vertices
+            for x, y in screen_verts:
+                vertices.extend([x, y])
+            
+            # Create triangle fan indices for polygon
+            num_verts = len(screen_verts)
+            for i in range(1, num_verts - 1):
+                indices.extend([vertex_count, vertex_count + i, vertex_count + i + 1])
+            
+            # Add base color for all vertices of this tile
+            colors.extend(tile.color * num_verts)
+            vertex_count += num_verts
         
         # Convert to numpy arrays
-        vertices_array = np.array(vertices, dtype=np.float32).flatten()
-        colors_array = np.array(colors, dtype=np.uint8).flatten()
+        self.vertices_array = np.array(vertices, dtype=np.float32)
+        self.colors_array = np.array(colors, dtype=np.uint8)
+        self.indices_array = np.array(indices, dtype=np.uint32)
         
         # Create and bind vertex buffer
         if self.vbo is None:
             self.vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertices_array.nbytes, vertices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, self.vertices_array, GL_STATIC_DRAW)
         
         # Create and bind color buffer
         if self.color_vbo is None:
             self.color_vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
-        glBufferData(GL_ARRAY_BUFFER, colors_array.nbytes, colors_array, GL_DYNAMIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, self.colors_array.nbytes, self.colors_array, GL_DYNAMIC_DRAW)
         
-        self.num_vertices = len(vertices)
+        # Create and bind element buffer
+        if self.ebo is None:
+            self.ebo = glGenBuffers(1)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
+        
+        self.num_indices = len(indices)
     
-    def update_spatial_grid(self, tiles, width, height):
-        """Updates the spatial partitioning grid with the current tiles."""
-        self.spatial_grid.clear()
-        grid_size = self.grid_size
-        
-        # Calculate grid dimensions
-        num_cols = (width + grid_size - 1) // grid_size
-        num_rows = (height + grid_size - 1) // grid_size
-        
+    def update_colors(self, tiles, shader_func, current_time, width, height, color1, color2, scale_value):
+        """Update color buffer based on current shader effect"""
+        colors = []
         for tile in tiles:
-            # Get tile bounds
-            vertices = [op.to_canvas([v], 1, complex(0, 0))[0] for v in tile.vertices]
-            x_coords = [v[0] for v in vertices]
-            y_coords = [v[1] for v in vertices]
-            
-            min_x, max_x = min(x_coords), max(x_coords)
-            min_y, max_y = min(y_coords), max(y_coords)
-            
-            # Calculate grid cells this tile intersects with
-            start_cell_x = max(0, int(min_x / grid_size))
-            end_cell_x = min(num_cols - 1, int(max_x / grid_size))
-            start_cell_y = max(0, int(min_y / grid_size))
-            end_cell_y = min(num_rows - 1, int(max_y / grid_size))
-            
-            # Add tile to all intersecting grid cells
-            for cell_x in range(start_cell_x, end_cell_x + 1):
-                for cell_y in range(start_cell_y, end_cell_y + 1):
-                    cell_key = (cell_x, cell_y)
-                    if cell_key not in self.spatial_grid:
-                        self.spatial_grid[cell_key] = set()
-                    self.spatial_grid[cell_key].add(tile)
-    
-    def get_visible_tiles(self, width, height):
-        """Returns set of tiles that are potentially visible in the viewport."""
-        visible_tiles = set()
-        grid_size = self.grid_size
+            modified_color = shader_func(tile, current_time, tiles, color1, color2, width, height, scale_value)
+            colors.extend([modified_color[0], modified_color[1], modified_color[2], modified_color[3]] * len(tile.vertices))
         
-        # Calculate visible grid range
-        start_cell_x = 0
-        end_cell_x = (width + grid_size - 1) // grid_size
-        start_cell_y = 0
-        end_cell_y = (height + grid_size - 1) // grid_size
-        
-        # Collect tiles from visible cells
-        for cell_x in range(start_cell_x, end_cell_x):
-            for cell_y in range(start_cell_y, end_cell_y):
-                cell_key = (cell_x, cell_y)
-                if cell_key in self.spatial_grid:
-                    visible_tiles.update(self.spatial_grid[cell_key])
-        
-        return visible_tiles
+        colors_array = np.array(colors, dtype=np.uint8)
+        glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
+        glBufferData(GL_ARRAY_BUFFER, colors_array.nbytes, colors_array, GL_DYNAMIC_DRAW)
     
     def render_tiles(self, shaders, width, height, config_data):
         current_time = glfw.get_time() * 1000
@@ -172,22 +137,33 @@ class OptimizedRenderer:
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
             
-            # Initialize shader program if not already done
             if self.shader_program is None:
                 self.setup_shader()
             
-            self.update_spatial_grid(tiles, width, height)
             self.setup_buffers(tiles, width, height, config_data['scale'])
         
+        # Get current shader function
+        shader_func = shaders.current_shader()
+        
         try:
-            # Use shader program
-            glUseProgram(self.shader_program)
+            # Update projection matrix
+            glMatrixMode(GL_PROJECTION)
+            glLoadIdentity()
+            glOrtho(0, width, height, 0, -1, 1)
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
             
-            # Set uniforms
-            glUniform1f(self.time_loc, current_time)
-            glUniform2f(self.center_loc, width/2, height/2)
-            glUniform1f(self.scale_loc, config_data['scale'])
-            glUniform2f(self.screen_size_loc, width, height)
+            # Update colors based on current shader
+            self.update_colors(
+                self.tile_cache[cache_key],
+                shader_func,
+                current_time,
+                width,
+                height,
+                config_data["color1"],
+                config_data["color2"],
+                config_data['scale']
+            )
             
             # Bind vertex buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
@@ -199,13 +175,13 @@ class OptimizedRenderer:
             glVertexAttribPointer(self.color_loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, None)
             glEnableVertexAttribArray(self.color_loc)
             
-            # Draw using triangles
-            glDrawArrays(GL_TRIANGLES, 0, self.num_vertices)
+            # Bind element buffer and draw
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+            glDrawElements(GL_TRIANGLES, self.num_indices, GL_UNSIGNED_INT, None)
             
             # Clean up
             glDisableVertexAttribArray(self.position_loc)
             glDisableVertexAttribArray(self.color_loc)
-            glUseProgram(0)
             
         except GLError as e:
             print(f"OpenGL error during rendering: {e}")
