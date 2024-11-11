@@ -116,7 +116,7 @@ class PenroseBluetoothServer:
     def read_config(self) -> List[int]:
         try:
             config_data = self.operations.read_config_file(self.config_file)
-            # self.logger.debug(f"Read config data: {config_data}")
+            self.logger.debug(f"Read config data: {config_data}")
             
             formatted_settings = {
                 "size": config_data['size'],
@@ -127,10 +127,10 @@ class PenroseBluetoothServer:
             }
             
             json_str = json.dumps(formatted_settings)
-            # self.logger.debug(f"Formatted config JSON: {json_str}")
+            self.logger.debug(f"Formatted config JSON: {json_str}")
             
             byte_array = [ord(c) for c in json_str]
-            # self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
+            self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
             
             return byte_array
                 
