@@ -4,12 +4,14 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server, update_event, toggle_shader_event, toggle_regions_event, toggle_gui_event, randomize_colors_event, shutdown_event, PenroseBluetoothServer
+from penrose_tools import Operations, Tile, Shader, run_server, run_bluetooth_server
 import logging
 import configparser
 import signal
 import argparse
 import asyncio
+from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event
+
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'

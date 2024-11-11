@@ -14,6 +14,8 @@ import threading
 import logging
 from typing import List
 from .Operations import Operations
+from .events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event
+
 
 # Service and characteristic UUIDs
 PENROSE_SERVICE = '12345000-1234-1234-1234-123456789abc'
@@ -137,16 +139,19 @@ class PenroseBluetoothServer:
             self.logger.exception("Full traceback:")
             return [ord(c) for c in '{"error": "Failed to read config"}']
 
-    def write_config(self, value: List[int]) -> bool:
+    def write_config(self, value: bytes) -> None:
         """Handle configuration updates using Operations class"""
         try:
-            # Convert list of integers to string
-            json_str = bytes(value).decode('utf-8')
-            self.logger.debug(f"Received config write: {json_str}")
-            
+            self.logger.debug(f"Received config write: {value}")
+
+            # Decode the bytes to a UTF-8 string
+            json_str = value.decode('utf-8')
+            self.logger.debug(f"Decoded config string: {json_str}")
+
             # Parse the JSON data
             data = json.loads(json_str)
-            
+            self.logger.debug(f"Parsed config data: {data}")
+
             # Use Operations class to update config
             self.operations.update_config_file(
                 self.config_file,
@@ -156,14 +161,14 @@ class PenroseBluetoothServer:
                 color1=data.get('color1'),
                 color2=data.get('color2')
             )
-            
+
             self.logger.debug("Config written successfully")
             self.update_event.set()
-            return True
-            
+
         except Exception as e:
             self.logger.error(f"Config write error: {e}")
-            return False
+            self.logger.exception("Exception occurred while writing config")
+
 
     def configure_adapter(self):
         """Configure the Bluetooth adapter"""
