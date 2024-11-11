@@ -375,77 +375,69 @@ class PenroseBluetoothServer:
                         self.logger.info("Setting shutdown_event")
                         self.shutdown_event.set()
                 
-                # Handle image-related commands
-                elif command == 'init_image_upload':
-                    self.init_image_upload()
-                    self.logger.info("Image upload initialized")
-                
-                elif command == 'image_data':
-                    message_id = data.get('messageId')
-                    frame_index = data.get('frameIndex')
-                    total_frames = data.get('totalFrames')
-                    payload = data.get('payload')
-                    is_last = data.get('isLast', False)
+                    # Handle image-related commands
+                    elif command == 'init_image_upload':
+                        self.init_image_upload()
+                        self.logger.info("Image upload initialized")
                     
-                    if None in (message_id, frame_index, total_frames, payload):
-                        raise ValueError("Missing required image data fields")
-                    
-                    # Initialize frame storage for new message
-                    if message_id not in self.message_frames:
-                        self.message_frames[message_id] = {
-                            'frames': {},
-                            'total_frames': total_frames,
-                            'received_frames': 0,
-                            'complete_data': ''
-                        }
-                    
-                    # Store the frame
-                    message_data = self.message_frames[message_id]
-                    if frame_index not in message_data['frames']:
-                        message_data['frames'][frame_index] = payload
-                        message_data['received_frames'] += 1
+                    elif command == 'image_data':
+                        message_id = data.get('messageId')
+                        frame_index = data.get('frameIndex')
+                        total_frames = data.get('totalFrames')
+                        payload = data.get('payload')
+                        is_last = data.get('isLast', False)
                         
-                        self.logger.debug(
-                            f"Stored frame {frame_index + 1}/{total_frames} "
-                            f"for message {message_id} "
-                            f"({message_data['received_frames']} frames received)"
-                        )
-                    
-                    # Check if message is complete
-                    if message_data['received_frames'] == total_frames:
-                        self.logger.info(f"Received all {total_frames} frames for message {message_id}")
+                        if None in (message_id, frame_index, total_frames, payload):
+                            raise ValueError("Missing required image data fields")
                         
-                        try:
-                            # Combine frames in order
-                            complete_data = ''
-                            for i in range(total_frames):
-                                if i not in message_data['frames']:
-                                    raise ValueError(f"Missing frame {i}")
-                                complete_data += message_data['frames'][i]
+                        # Initialize frame storage for new message
+                        if message_id not in self.message_frames:
+                            self.logger.info(f"Starting new image upload with ID: {message_id}")
+                            self.message_frames[message_id] = {
+                                'frames': {},
+                                'total_frames': total_frames,
+                                'received_frames': 0
+                            }
+                        
+                        # Store the frame if we haven't seen it before
+                        message_data = self.message_frames[message_id]
+                        if frame_index not in message_data['frames']:
+                            message_data['frames'][frame_index] = payload
+                            message_data['received_frames'] += 1
                             
-                            # Process the complete image
-                            self.process_image(complete_data)
+                            self.logger.info(
+                                f"Frame progress: {message_data['received_frames']}/{total_frames} "
+                                f"for message {message_id}"
+                            )
+                        
+                        # Check if we've received all frames
+                        if len(message_data['frames']) == total_frames:
+                            self.logger.info(f"All {total_frames} frames received for message {message_id}")
                             
-                            # Cleanup
-                            del self.message_frames[message_id]
-                            self.logger.info("Image processing completed successfully")
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error processing complete message: {str(e)}")
-                            # Cleanup on error
-                            del self.message_frames[message_id]
-                            raise
-                
-                else:
-                    self.logger.warning(f"Unknown command: {command}")
+                            try:
+                                # Combine frames in order
+                                complete_data = ''
+                                for i in range(total_frames):
+                                    if i not in message_data['frames']:
+                                        raise ValueError(f"Missing frame {i}")
+                                    complete_data += message_data['frames'][i]
+                                
+                                # Process the complete image
+                                self.process_image(complete_data)
+                                
+                                # Cleanup
+                                del self.message_frames[message_id]
+                                self.logger.info("Image upload and processing completed successfully")
+                                
+                            except Exception as e:
+                                self.logger.error(f"Error processing complete message: {str(e)}")
+                                # Cleanup on error
+                                del self.message_frames[message_id]
+                                raise
 
-            except json.JSONDecodeError as e:
-                self.logger.error(f"JSON decode error: {str(e)}")
-                raise
-
-        except Exception as e:
-            self.logger.error(f"Command error: {str(e)}")
-            self.logger.exception("Exception occurred while handling command")
+            except Exception as e:
+                self.logger.error(f"Command error: {str(e)}")
+                self.logger.exception("Exception occurred while handling command")
 
     def start_server(self):
         """Initialize and start the Bluetooth server"""
