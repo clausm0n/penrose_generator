@@ -300,13 +300,7 @@ class PenroseBluetoothServer:
 
 def run_bluetooth_server():
     """Main function to run the Bluetooth server"""
-    server = PenroseBluetoothServer(
-        config,
-        update_event,
-        toggle_shader_event,
-        randomize_colors_event,
-        shutdown_event
-    )
+    server = PenroseBluetoothServer()
     
     server.start_server()
     
