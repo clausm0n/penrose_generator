@@ -19,6 +19,7 @@ class OptimizedRenderer:
         self.visible_tiles_cache = set()
         self.indices = []
         self.vertices_per_tile = 0
+        self.tile_vertex_counts = {}
         
     def setup_shader(self):
         # Simpler vertex shader that just transforms coordinates
@@ -65,9 +66,16 @@ class OptimizedRenderer:
         center = complex(width / 2, height / 2)
         vertex_count = 0
         
+        # Clear the vertex counts dictionary
+        self.tile_vertex_counts.clear()
+        self.tile_start_indices = {}  # Track where each tile's vertices start
+        
         for tile in tiles:
             # Transform vertices to screen space
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
+            
+            # Store the starting index for this tile
+            self.tile_start_indices[tile] = len(vertices) // 2
             
             # Add vertices
             for x, y in screen_verts:
@@ -78,8 +86,13 @@ class OptimizedRenderer:
             for i in range(1, num_verts - 1):
                 indices.extend([vertex_count, vertex_count + i, vertex_count + i + 1])
             
-            # Add base color for all vertices of this tile
-            colors.extend(tile.color * num_verts)
+            # Store number of vertices for this tile
+            self.tile_vertex_counts[tile] = num_verts
+            
+            # Add initial colors (will be updated by shader effects)
+            base_color = tile.color + (255,)  # Add alpha
+            colors.extend(base_color * num_verts)
+            
             vertex_count += num_verts
         
         # Convert to numpy arrays
@@ -106,17 +119,30 @@ class OptimizedRenderer:
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
         
         self.num_indices = len(indices)
+        self.total_vertices = len(vertices) // 2
     
     def update_colors(self, tiles, shader_func, current_time, width, height, color1, color2, scale_value):
-        """Update color buffer based on current shader effect"""
-        colors = []
-        for tile in tiles:
-            modified_color = shader_func(tile, current_time, tiles, color1, color2, width, height, scale_value)
-            colors.extend([modified_color[0], modified_color[1], modified_color[2], modified_color[3]] * len(tile.vertices))
+        """Update color buffer with shader effects"""
+        colors = np.zeros(self.total_vertices * 4, dtype=np.uint8)  # 4 components (RGBA) per vertex
         
-        colors_array = np.array(colors, dtype=np.uint8)
+        for tile in tiles:
+            # Get shader color for this tile
+            modified_color = shader_func(tile, current_time, tiles, color1, color2, width, height, scale_value)
+            
+            # Calculate the start and end positions in the color array
+            start_idx = self.tile_start_indices[tile] * 4  # 4 components per vertex
+            num_vertices = self.tile_vertex_counts[tile]
+            end_idx = start_idx + (num_vertices * 4)
+            
+            # Create the color data for all vertices of this tile
+            tile_colors = np.tile(modified_color, num_vertices)
+            
+            # Update the color array
+            colors[start_idx:end_idx] = np.repeat(modified_color, num_vertices)
+        
+        # Update the GPU buffer
         glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
-        glBufferData(GL_ARRAY_BUFFER, colors_array.nbytes, colors_array, GL_DYNAMIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, colors.nbytes, colors, GL_DYNAMIC_DRAW)
     
     def render_tiles(self, shaders, width, height, config_data):
         current_time = glfw.get_time() * 1000
@@ -142,10 +168,10 @@ class OptimizedRenderer:
             
             self.setup_buffers(tiles, width, height, config_data['scale'])
         
-        # Get current shader function
-        shader_func = shaders.current_shader()
-        
         try:
+            # Use our shader program
+            glUseProgram(self.shader_program)
+            
             # Update projection matrix
             glMatrixMode(GL_PROJECTION)
             glLoadIdentity()
@@ -153,10 +179,10 @@ class OptimizedRenderer:
             glMatrixMode(GL_MODELVIEW)
             glLoadIdentity()
             
-            # Update colors based on current shader
+            # Update colors based on current shader effect
             self.update_colors(
                 self.tile_cache[cache_key],
-                shader_func,
+                shaders.current_shader(),
                 current_time,
                 width,
                 height,
@@ -164,6 +190,10 @@ class OptimizedRenderer:
                 config_data["color2"],
                 config_data['scale']
             )
+            
+            # Enable alpha blending
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
             # Bind vertex buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
@@ -182,6 +212,7 @@ class OptimizedRenderer:
             # Clean up
             glDisableVertexAttribArray(self.position_loc)
             glDisableVertexAttribArray(self.color_loc)
+            glUseProgram(0)
             
         except GLError as e:
             print(f"OpenGL error during rendering: {e}")
