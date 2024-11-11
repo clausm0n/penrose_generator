@@ -27,7 +27,6 @@ AGENT_PATH = "/org/bluez/AutoAgent"
 CONFIG_FILE = 'config.ini'
 
 config = configparser.ConfigParser()
-config.read(CONFIG_FILE)
 
 update_event = threading.Event()
 toggle_shader_event = threading.Event()
@@ -121,7 +120,8 @@ class PenroseBluetoothServer:
 
     def read_config(self) -> List[int]:
         try:
-            config_data = self.operations.read_config_file(self.config_file)
+            config.read(CONFIG_FILE)
+            config_data = dict(config['Settings'])
             # self.logger.debug(f"Read config data: {config_data}")
             
             formatted_settings = {
