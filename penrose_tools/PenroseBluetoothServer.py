@@ -204,32 +204,6 @@ class PenroseBluetoothServer:
         self.logger.info("Initializing new image upload")
         self.message_frames = {}
 
-    def process_image(self, base64_data: str):
-        """Process and save the complete image"""
-        try:
-            self.logger.info("Starting image processing...")
-            
-            # Decode base64 image
-            image_data = base64.b64decode(base64_data)
-            self.logger.debug(f"Decoded image data length: {len(image_data)} bytes")
-            
-            # Create image from bytes
-            image = Image.open(io.BytesIO(image_data))
-            self.logger.debug(f"Created image object: {image.format} {image.size}x{image.mode}")
-            
-            # Generate unique filename
-            filename = f"image_{int(time.time())}.png"
-            filepath = os.path.join(self.images_directory, filename)
-            
-            # Save the image
-            image.save(filepath)
-            self.logger.info(f"Image saved successfully to: {filepath}")
-            
-        except Exception as e:
-            self.logger.error(f"Error processing image: {str(e)}")
-            self.logger.exception("Full image processing error:")
-            raise
-
     def read_config(self) -> List[int]:
         try:
             config = configparser.ConfigParser()
@@ -338,114 +312,145 @@ class PenroseBluetoothServer:
             self.logger.debug(f"Received data: {new_data[:100]}...")
 
             # Parse the command
-            try:
-                data = json.loads(new_data)
-                command = data.get('command')
+            data = json.loads(new_data)
+            command = data.get('command')
+            
+            # Handle regular commands directly
+            if command == 'update_config':
+                config = data.get('config')
+                if config:
+                    config_parser = configparser.ConfigParser()
+                    config_parser.read(self.config_file)
+                    
+                    if 'Settings' not in config_parser:
+                        config_parser.add_section('Settings')
+                    
+                    for key, value in config.items():
+                        if isinstance(value, list):
+                            if key in ['color1', 'color2']:
+                                config_parser.set('Settings', key, f"({', '.join(map(str, value))})")
+                            else:
+                                config_parser.set('Settings', key, ', '.join(map(str, value)))
+                        else:
+                            config_parser.set('Settings', key, str(value))
+                    
+                    with open(self.config_file, 'w') as configfile:
+                        config_parser.write(configfile)
+                    
+                    self.logger.info("Config updated through command channel")
+                    self.update_event.set()
+            
+            elif command == 'toggle_shader':
+                self.logger.info("Setting toggle_shader_event")
+                self.toggle_shader_event.set()
+            
+            elif command == 'randomize_colors':
+                self.logger.info("Setting randomize_colors_event")
+                self.randomize_colors_event.set()
+            
+            elif command == 'shutdown':
+                self.logger.info("Setting shutdown_event")
+                self.shutdown_event.set()
+            
+            elif command == 'init_image_upload':
+                self.init_image_upload()
+                self.logger.info("Image upload initialized")
+            
+            elif command == 'image_data':
+                message_id = data.get('messageId')
+                frame_index = data.get('frameIndex')
+                total_frames = data.get('totalFrames')
+                payload = data.get('payload')
+                is_last = data.get('isLast', False)
                 
-                # Handle regular commands directly
-                if command in ['update_config', 'toggle_shader', 'randomize_colors', 'shutdown']:
-                    if command == 'update_config':
-                        config = data.get('config')
-                        if config:
-                            config_parser = configparser.ConfigParser()
-                            config_parser.read(self.config_file)
-                            
-                            if 'Settings' not in config_parser:
-                                config_parser.add_section('Settings')
-                            
-                            for key, value in config.items():
-                                if isinstance(value, list):
-                                    if key in ['color1', 'color2']:
-                                        config_parser.set('Settings', key, f"({', '.join(map(str, value))})")
-                                    else:
-                                        config_parser.set('Settings', key, ', '.join(map(str, value)))
-                                else:
-                                    config_parser.set('Settings', key, str(value))
-                            
-                            with open(self.config_file, 'w') as configfile:
-                                config_parser.write(configfile)
-                            
-                            self.logger.info("Config updated through command channel")
-                            self.update_event.set()
-                    
-                    elif command == 'toggle_shader':
-                        self.logger.info("Setting toggle_shader_event")
-                        self.toggle_shader_event.set()
-                    
-                    elif command == 'randomize_colors':
-                        self.logger.info("Setting randomize_colors_event")
-                        self.randomize_colors_event.set()
-                    
-                    elif command == 'shutdown':
-                        self.logger.info("Setting shutdown_event")
-                        self.shutdown_event.set()
+                self.logger.info(f"Received frame {frame_index + 1}/{total_frames} for message {message_id}")
                 
-                    # Handle image-related commands
-                    elif command == 'init_image_upload':
-                        self.init_image_upload()
-                        self.logger.info("Image upload initialized")
+                if None in (message_id, frame_index, total_frames, payload):
+                    raise ValueError("Missing required image data fields")
+                
+                # Initialize frame storage for new message
+                if message_id not in self.message_frames:
+                    self.logger.info(f"Starting new image upload with ID: {message_id}")
+                    self.message_frames[message_id] = {
+                        'frames': {},
+                        'total_frames': total_frames,
+                        'received_frames': 0
+                    }
+                
+                # Store the frame if we haven't seen it before
+                message_data = self.message_frames[message_id]
+                if frame_index not in message_data['frames']:
+                    message_data['frames'][frame_index] = payload
+                    message_data['received_frames'] += 1
                     
-                    elif command == 'image_data':
-                        message_id = data.get('messageId')
-                        frame_index = data.get('frameIndex')
-                        total_frames = data.get('totalFrames')
-                        payload = data.get('payload')
-                        is_last = data.get('isLast', False)
+                    self.logger.info(
+                        f"Frame progress: {message_data['received_frames']}/{total_frames} "
+                        f"for message {message_id}"
+                    )
+                
+                if is_last:
+                    self.logger.info(f"Received last frame. Checking completion...")
+                    missing_frames = []
+                    for i in range(total_frames):
+                        if i not in message_data['frames']:
+                            missing_frames.append(i)
+                    
+                    if not missing_frames:
+                        self.logger.info("All frames received, processing image...")
+                        # Combine frames in order
+                        complete_data = ''
+                        for i in range(total_frames):
+                            complete_data += message_data['frames'][i]
                         
-                        if None in (message_id, frame_index, total_frames, payload):
-                            raise ValueError("Missing required image data fields")
-                        
-                        # Initialize frame storage for new message
-                        if message_id not in self.message_frames:
-                            self.logger.info(f"Starting new image upload with ID: {message_id}")
-                            self.message_frames[message_id] = {
-                                'frames': {},
-                                'total_frames': total_frames,
-                                'received_frames': 0
-                            }
-                        
-                        # Store the frame if we haven't seen it before
-                        message_data = self.message_frames[message_id]
-                        if frame_index not in message_data['frames']:
-                            message_data['frames'][frame_index] = payload
-                            message_data['received_frames'] += 1
+                        try:
+                            # Process the complete image
+                            self.process_image(complete_data)
                             
-                            self.logger.info(
-                                f"Frame progress: {message_data['received_frames']}/{total_frames} "
-                                f"for message {message_id}"
-                            )
-                        
-                        # Check if we've received all frames
-                        if len(message_data['frames']) == total_frames:
-                            self.logger.info(f"All {total_frames} frames received for message {message_id}")
-                            
-                            try:
-                                # Combine frames in order
-                                complete_data = ''
-                                for i in range(total_frames):
-                                    if i not in message_data['frames']:
-                                        raise ValueError(f"Missing frame {i}")
-                                    complete_data += message_data['frames'][i]
-                                
-                                # Process the complete image
-                                self.process_image(complete_data)
-                                
-                                # Cleanup
+                            # Cleanup
+                            del self.message_frames[message_id]
+                            self.logger.info("Image upload and processing completed successfully")
+                        except Exception as e:
+                            self.logger.error(f"Error processing complete message: {str(e)}")
+                            self.logger.exception("Full error:")
+                            # Cleanup on error
+                            if message_id in self.message_frames:
                                 del self.message_frames[message_id]
-                                self.logger.info("Image upload and processing completed successfully")
-                                
-                            except Exception as e:
-                                self.logger.error(f"Error processing complete message: {str(e)}")
-                                # Cleanup on error
-                                del self.message_frames[message_id]
-                                raise
+                            raise
+                    else:
+                        self.logger.warning(f"Missing frames: {missing_frames}")
+            
+            else:
+                self.logger.warning(f"Unknown command: {command}")
 
-            except Exception as e:
-                self.logger.error(f"Command error: {str(e)}")
-                self.logger.exception("Exception occurred while handling command")
         except Exception as e:
             self.logger.error(f"Command error: {str(e)}")
             self.logger.exception("Exception occurred while handling command")
+
+    def process_image(self, base64_data: str):
+        """Process and save the complete image"""
+        try:
+            self.logger.info("Starting image processing...")
+            
+            # Decode base64 image
+            image_data = base64.b64decode(base64_data)
+            self.logger.info(f"Decoded image data length: {len(image_data)} bytes")
+            
+            # Create image from bytes
+            image = Image.open(io.BytesIO(image_data))
+            self.logger.info(f"Created image object: {image.format} {image.size} {image.mode}")
+            
+            # Generate unique filename
+            filename = f"image_{int(time.time())}.png"
+            filepath = os.path.join(self.images_directory, filename)
+            
+            # Save the image
+            image.save(filepath)
+            self.logger.info(f"Image saved successfully to: {filepath}")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing image: {str(e)}")
+            self.logger.exception("Full image processing error:")
+            raise
 
 
     def start_server(self):
