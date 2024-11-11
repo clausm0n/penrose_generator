@@ -7,6 +7,7 @@ from PIL import Image
 import os
 import logging
 op = Operations()
+import scipy.spatial
 
 class Shader:
 
@@ -63,6 +64,34 @@ class Shader:
         self.last_relay_time = 0
         self.relay_duration = 5000  # Duration of a single relay wave
         self.tile_interpolation = {}  # To track interpolation state of tiles
+        self.spatial_index = None
+        self.centroid_array = None
+        self.tile_lookup = None
+
+    def build_spatial_index(self, tiles):
+        """Build spatial index for efficient neighbor lookups"""
+        centroids = []
+        tile_lookup = {}
+        
+        for i, tile in enumerate(tiles):
+            centroid = op.calculate_centroid(tile.vertices)
+            centroids.append([centroid.real, centroid.imag])
+            tile_lookup[i] = tile
+            
+        self.centroid_array = np.array(centroids)
+        self.spatial_index = scipy.spatial.cKDTree(self.centroid_array)
+        self.tile_lookup = tile_lookup
+
+    def get_nearby_tiles(self, center_pos, radius):
+        """Get tiles within radius using spatial index"""
+        if self.spatial_index is None:
+            return []
+            
+        indices = self.spatial_index.query_ball_point(
+            [center_pos.real, center_pos.imag], 
+            radius
+        )
+        return [self.tile_lookup[i] for i in indices]
 
     def reset_state(self):
         """Reset the shader state when tile map changes."""
@@ -83,89 +112,108 @@ class Shader:
         return (*new_color, 255)
 
     def shader_raindrop_ripple(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
-        current_time = glfw.get_time() * 1000
+        current_time = time_ms
         
-        # Initialize or reinitialize if needed
-        if not hasattr(self, 'tile_positions') or not self.tile_positions:
-            self.tile_positions = {t: op.calculate_centroid(t.vertices) for t in tiles}
+        # Initialize spatial index if needed
+        if self.spatial_index is None:
+            self.build_spatial_index(tiles)
             self.ripples = []
             self.last_raindrop_time = 0
         
-        # Create new raindrop every 3.5 seconds, if we're below the max ripples limit
+        # Create new raindrop every 3.5 seconds
         if current_time - self.last_raindrop_time > 3500 and len(self.ripples) < self.max_ripples:
             self.last_raindrop_time = current_time
-            new_raindrop = random.choice(tiles)
-            self.ripples.append((new_raindrop, 0, current_time))  # (center_tile, radius, start_time)
+            new_raindrop = random.choice(list(self.tile_lookup.values()))
+            self.ripples.append((new_raindrop, 0, current_time))
         
-        # Update and render ripples
+        # Update ripples
         new_ripples = []
+        tile_pos = op.calculate_centroid(tile.vertices)
+        base_color = np.array(color1, dtype=np.float32)
+        target_color = np.array(color2, dtype=np.float32)
+        color_delta = target_color - base_color
+        
+        total_influence = 0.0
+        
         for center_tile, radius, start_time in self.ripples:
-            time_elapsed = (current_time - start_time) / 1000  # Time elapsed in seconds
-            new_radius = 25 * (1 - np.exp(-time_elapsed / 5))  # Slower expansion
-            if new_radius < 100 and time_elapsed < 15:  # Keep ripples for 15 seconds max
+            time_elapsed = (current_time - start_time) / 1000
+            new_radius = 25 * (1 - np.exp(-time_elapsed / 5))
+            
+            if new_radius < 100 and time_elapsed < 15:
                 new_ripples.append((center_tile, new_radius, start_time))
+                
+                center_pos = op.calculate_centroid(center_tile.vertices)
+                distance = abs(tile_pos - center_pos)
+                
+                if distance <= new_radius:
+                    ripple_age = time_elapsed
+                    ripple_intensity = np.exp(-ripple_age / 3)
+                    
+                    if abs(distance - new_radius) < 5:
+                        edge_intensity = 1 - abs(distance - new_radius) / 5
+                        total_influence += edge_intensity * ripple_intensity
+                    elif distance < 5:
+                        total_influence += ripple_intensity
+                    else:
+                        color_intensity = (1 - distance / new_radius) * ripple_intensity
+                        total_influence += color_intensity * 0.5
         
         self.ripples = new_ripples
         
-        # If all ripples have faded, reset the last_raindrop_time to create a new one immediately
         if not self.ripples:
             self.last_raindrop_time = 0
+            return (*color1, 255)
         
-        # Determine tile color based on ripples
-        if tile not in self.tile_positions:
-            # If the tile is not in tile_positions, add it
-            self.tile_positions[tile] = op.calculate_centroid(tile.vertices)
+        # Calculate final color using vectorized operations
+        total_influence = min(1.0, total_influence)
+        final_color = base_color + color_delta * total_influence
+        final_color = np.clip(final_color, 0, 255).astype(np.int32)
         
-        tile_pos = self.tile_positions[tile]
-        tile_color = color1
-        
-        for center_tile, radius, start_time in self.ripples:
-            if center_tile not in self.tile_positions:
-                # If the center tile is not in tile_positions, skip this ripple
-                continue
-            center_pos = self.tile_positions[center_tile]
-            distance = abs(tile_pos - center_pos)
-            
-            if distance <= radius:
-                ripple_age = (current_time - start_time) / 1000  # Ripple age in seconds
-                ripple_intensity = np.exp(-ripple_age / 3)  # Intensity decreases over time
-                
-                if abs(distance - radius) < 5:  # Ripple edge
-                    edge_intensity = 1 - abs(distance - radius) / 5
-                    tile_color = self.blend_colors(tile_color, color2, edge_intensity * ripple_intensity)
-                elif distance < 5:  # Raindrop center
-                    tile_color = self.blend_colors(tile_color, color2, ripple_intensity)
-                else:
-                    # Gradual color change within the ripple
-                    color_intensity = (1 - distance / radius) * ripple_intensity
-                    tile_color = self.blend_colors(tile_color, color2, color_intensity * 0.5)
-        
-        return (*tile_color, 255)
+        return (*final_color, 255)
 
     def shader_color_wave(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
-        center = complex(width // 2, height // 2)
+        # Only update wave calculations every wave_update_interval ms
+        wave_time = (time_ms // self.wave_update_interval) * self.wave_update_interval
+        
+        if wave_time != self.last_wave_time:
+            self.last_wave_time = wave_time
+            self.wave_cache.clear()
+            
+            # Pre-calculate wave parameters
+            self.wave_params = {
+                'time_factor': (wave_time % 1000000) / 1000000,
+                'wave_direction': np.pi/4 + (np.pi/2) * np.sin((wave_time % 1000000) * np.pi / 1000000),
+                'center': complex(width // 2, height // 2)
+            }
+        
+        # Use cached value if available
+        cache_key = hash(tile)
+        if cache_key in self.wave_cache:
+            return self.wave_cache[cache_key]
+        
+        # Calculate wave effect
         centroid = op.calculate_centroid(tile.vertices)
-        tile_position = centroid - center
-
-        wave_speed = 0.0000002
-        wave_length = 1.0
-
-        base_direction = np.pi / 4
-        direction_change = np.pi / 2
-        tween_duration = 1000000
-        time_factor = (time_ms % tween_duration) / tween_duration
-        wave_direction = base_direction + direction_change * np.sin(time_factor * np.pi)
-
-        directional_influence = np.cos(np.angle(tile_position) - wave_direction) * abs(tile_position)
-        phase = wave_speed * time_ms - directional_influence / wave_length
-
+        tile_position = centroid - self.wave_params['center']
+        
+        # Vectorized calculations
+        directional_influence = np.cos(
+            np.angle(tile_position) - self.wave_params['wave_direction']
+        ) * abs(tile_position)
+        
+        phase = 0.0000002 * wave_time - directional_influence
         wave_intensity = (np.sin(phase) + 1) / 2
-
-        red = color1[0] * (1 - wave_intensity) + color2[0] * wave_intensity
-        green = color1[1] * (1 - wave_intensity) + color2[1] * wave_intensity
-        blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
-
-        return (int(red), int(green), int(blue), 255)
+        
+        # Vectorized color interpolation
+        color1_array = np.array(color1, dtype=np.float32)
+        color2_array = np.array(color2, dtype=np.float32)
+        final_color = np.rint(
+            color1_array * (1 - wave_intensity) + 
+            color2_array * wave_intensity
+        ).astype(np.int32)
+        
+        result = (*final_color, 255)
+        self.wave_cache[cache_key] = result
+        return result
 
     def shader_relay(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         current_time = time_ms
