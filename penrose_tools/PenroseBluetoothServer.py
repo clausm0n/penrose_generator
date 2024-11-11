@@ -203,11 +203,10 @@ class PenroseBluetoothServer:
             self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
 
-
     def handle_command(self, value: List[int]) -> bool:
         """Handle commands from Bluetooth"""
         try:
-            # If value is a dbus.Array of bytes, convert it to a list of integers
+            # Convert dbus.Array to list if necessary
             if isinstance(value, dbus.Array):
                 value = [int(byte) for byte in value]
                 self.logger.debug(f"Converted dbus.Array to list: {value}")
@@ -219,7 +218,7 @@ class PenroseBluetoothServer:
             command_data = json.loads(command)
             self.logger.info(f"Parsed command data: {command_data}")
 
-            # **Add this block to set the appropriate event**
+            # Set events based on command
             if command_data['command'] == 'toggle_shader':
                 self.logger.info("Setting toggle_shader_event")
                 self.toggle_shader_event.set()
@@ -231,12 +230,15 @@ class PenroseBluetoothServer:
                 self.shutdown_event.set()
             else:
                 self.logger.warning(f"Unknown command: {command_data['command']}")
-            return True
+
+            self.logger.debug("Command processed successfully")
+            return None
 
         except Exception as e:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
-            return False
+            return None
+
 
 
     def start_server(self):
