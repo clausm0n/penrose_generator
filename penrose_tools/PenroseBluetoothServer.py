@@ -199,10 +199,51 @@ class PenroseBluetoothServer:
             self.logger.error(f"Error processing complete message: {str(e)}")
             raise
 
-    def init_image_upload(self):
-        """Initialize a new image upload by clearing previous state"""
-        self.logger.info("Initializing new image upload")
-        self.message_frames = {}
+    def init_image_upload(self, message_id: str, total_size: int):
+        """Initialize a new image upload"""
+        self.logger.info(f"Initializing image upload for message {message_id}")
+        # Clear any existing data for this message ID
+        if message_id in self.message_frames:
+            del self.message_frames[message_id]
+
+    def check_and_process_message(self, message_id: str):
+        """Check if all frames are received and process the message"""
+        try:
+            message_data = self.message_frames[message_id]
+            total_frames = message_data['total_frames']
+            received_frames = message_data['received_frames']
+            
+            self.logger.info(f"Checking message completion: {received_frames}/{total_frames} frames")
+            
+            # Check for missing frames
+            missing_frames = []
+            for i in range(total_frames):
+                if i not in message_data['frames']:
+                    missing_frames.append(i)
+            
+            if missing_frames:
+                self.logger.warning(f"Missing frames for message {message_id}: {missing_frames}")
+                return
+            
+            # All frames received, combine and process
+            self.logger.info("All frames received, processing image...")
+            complete_data = ''
+            for i in range(total_frames):
+                complete_data += message_data['frames'][i]
+            
+            # Process the image
+            self.process_image(complete_data)
+            
+            # Cleanup
+            del self.message_frames[message_id]
+            self.logger.info("Image processing completed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing message: {str(e)}")
+            self.logger.exception("Full error:")
+            if message_id in self.message_frames:
+                del self.message_frames[message_id]
+            raise
 
     def read_config(self) -> List[int]:
         try:
