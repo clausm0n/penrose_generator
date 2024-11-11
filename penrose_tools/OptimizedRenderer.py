@@ -18,27 +18,30 @@ class OptimizedRenderer:
         self.visible_tiles_cache = set()
         
     def setup_shader(self):
-        # Vertex shader using OpenGL ES 2.0 / OpenGL 2.1 compatibility
+        # Modified vertex shader with proper scaling
         vertex_shader = """
-        #version 120  // OpenGL 2.1 compatible
+        #version 120
         
         attribute vec2 position;
         attribute vec4 color;
         uniform float time;
         uniform vec2 center;
         uniform float scale;
+        uniform vec2 screen_size;
         varying vec4 frag_color;
         
         void main() {
-            vec2 pos = (position - center) * scale;
-            gl_Position = vec4(pos, 0.0, 1.0);
+            // Convert to normalized device coordinates
+            vec2 pos = position;
+            vec2 normalized_pos = 2.0 * (pos / screen_size) - 1.0;
+            normalized_pos.y = -normalized_pos.y;  // Flip Y coordinate
+            gl_Position = vec4(normalized_pos, 0.0, 1.0);
             frag_color = color;
         }
         """
         
-        # Fragment shader using OpenGL ES 2.0 / OpenGL 2.1 compatibility
         fragment_shader = """
-        #version 120  // OpenGL 2.1 compatible
+        #version 120
         
         varying vec4 frag_color;
         
@@ -48,38 +51,37 @@ class OptimizedRenderer:
         """
         
         try:
-            # Compile shaders
             vertex = shaders.compileShader(vertex_shader, GL_VERTEX_SHADER)
             fragment = shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER)
-            
-            # Create program
             self.shader_program = shaders.compileProgram(vertex, fragment)
             
-            # Get attribute locations
+            # Get locations
             self.position_loc = glGetAttribLocation(self.shader_program, 'position')
             self.color_loc = glGetAttribLocation(self.shader_program, 'color')
-            
-            # Get uniform locations
             self.time_loc = glGetUniformLocation(self.shader_program, 'time')
             self.center_loc = glGetUniformLocation(self.shader_program, 'center')
             self.scale_loc = glGetUniformLocation(self.shader_program, 'scale')
+            self.screen_size_loc = glGetUniformLocation(self.shader_program, 'screen_size')
             
         except Exception as e:
             print(f"Shader compilation error: {e}")
             raise
         
-    def setup_buffers(self, tiles):
+    def setup_buffers(self, tiles, width, height, scale_value):
         vertices = []
         colors = []
         
+        # Calculate center for transformations
+        center = complex(width / 2, height / 2)
+        
         for tile in tiles:
-            # Convert complex vertices to pairs of floats
-            tile_verts = [(v.real, v.imag) for v in tile.vertices]
-            vertices.extend(tile_verts)
+            # Transform vertices to screen space
+            screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
+            vertices.extend(screen_verts)
             
             # Add colors for each vertex
-            tile_color = tile.color + (255,)  # Add alpha channel
-            colors.extend([tile_color] * len(tile_verts))
+            tile_color = tile.color + (255,)
+            colors.extend([tile_color] * len(screen_verts))
         
         # Convert to numpy arrays
         vertices_array = np.array(vertices, dtype=np.float32).flatten()
@@ -154,7 +156,6 @@ class OptimizedRenderer:
     def render_tiles(self, shaders, width, height, config_data):
         current_time = glfw.get_time() * 1000
         
-        # Create cache key
         cache_key = (
             tuple(config_data['gamma']),
             width,
@@ -171,16 +172,12 @@ class OptimizedRenderer:
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
             
-            # Convert tiles to screen space before spatial partitioning
-            center = complex(width // 2, height // 2)
-            scale = config_data['scale']
-            
             # Initialize shader program if not already done
             if self.shader_program is None:
                 self.setup_shader()
             
             self.update_spatial_grid(tiles, width, height)
-            self.setup_buffers(tiles)
+            self.setup_buffers(tiles, width, height, config_data['scale'])
         
         try:
             # Use shader program
@@ -189,7 +186,8 @@ class OptimizedRenderer:
             # Set uniforms
             glUniform1f(self.time_loc, current_time)
             glUniform2f(self.center_loc, width/2, height/2)
-            glUniform1f(self.scale_loc, 2.0/width)
+            glUniform1f(self.scale_loc, config_data['scale'])
+            glUniform2f(self.screen_size_loc, width, height)
             
             # Bind vertex buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
@@ -201,7 +199,7 @@ class OptimizedRenderer:
             glVertexAttribPointer(self.color_loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, None)
             glEnableVertexAttribArray(self.color_loc)
             
-            # Draw all visible tiles
+            # Draw using triangles
             glDrawArrays(GL_TRIANGLES, 0, self.num_vertices)
             
             # Clean up
