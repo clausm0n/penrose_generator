@@ -10,12 +10,7 @@ PORT = 8080
 CONFIG_FILE = 'config.ini'
 
 # Events for toggling various features
-update_event = threading.Event()
-toggle_shader_event = threading.Event()
-toggle_regions_event = threading.Event()
-toggle_gui_event = threading.Event()
-shutdown_event = threading.Event()  # Shutdown event
-randomize_colors_event = threading.Event()
+from .events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event
 
 class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     operations = Operations()
