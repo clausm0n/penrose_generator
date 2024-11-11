@@ -139,13 +139,16 @@ class PenroseBluetoothServer:
             self.logger.exception("Full traceback:")
             return [ord(c) for c in '{"error": "Failed to read config"}']
 
-    def write_config(self, value: bytes) -> None:
+    def write_config(self, value: list) -> None:
         """Handle configuration updates using Operations class"""
         try:
             self.logger.debug(f"Received config write: {value}")
 
+            # Convert list of bytes to bytes object
+            byte_array = bytes(value)
+
             # Decode the bytes to a UTF-8 string
-            json_str = value.decode('utf-8')
+            json_str = byte_array.decode('utf-8')
             self.logger.debug(f"Decoded config string: {json_str}")
 
             # Parse the JSON data
@@ -168,6 +171,7 @@ class PenroseBluetoothServer:
         except Exception as e:
             self.logger.error(f"Config write error: {e}")
             self.logger.exception("Exception occurred while writing config")
+
 
 
 
@@ -210,12 +214,15 @@ class PenroseBluetoothServer:
             raise
 
 
-    def handle_command(self, value: bytes, options: dict) -> None:
+    def handle_command(self, value: list, options: dict) -> None:
         try:
             self.logger.debug(f"handle_command called with value: {value} and options: {options}")
 
+            # Convert list of bytes to bytes object
+            byte_array = bytes(value)
+
             # Decode the bytes to a UTF-8 string
-            json_str = value.decode('utf-8')
+            json_str = byte_array.decode('utf-8')
             self.logger.info(f"Decoded command string: {json_str}")
 
             # Parse the JSON data
@@ -239,6 +246,7 @@ class PenroseBluetoothServer:
         except Exception as e:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
+
 
 
 
