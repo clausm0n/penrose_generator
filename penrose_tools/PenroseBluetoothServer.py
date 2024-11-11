@@ -226,9 +226,38 @@ class PenroseBluetoothServer:
             command_data = json.loads(json_str)
             self.logger.info(f"Parsed command data: {command_data}")
 
-            # Set the appropriate event based on the command
+            # Get the command
             command = command_data.get('command')
-            if command == 'toggle_shader':
+            
+            if command == 'update_config':
+                # Extract config from command data
+                config = command_data.get('config')
+                if config:
+                    # Update config file
+                    config_parser = configparser.ConfigParser()
+                    config_parser.read(self.config_file)
+                    
+                    if 'Settings' not in config_parser:
+                        config_parser.add_section('Settings')
+                    
+                    for key, value in config.items():
+                        if isinstance(value, list):
+                            if key in ['color1', 'color2']:
+                                config_parser.set('Settings', key, f"({', '.join(map(str, value))})")
+                            else:
+                                config_parser.set('Settings', key, ', '.join(map(str, value)))
+                        else:
+                            config_parser.set('Settings', key, str(value))
+                    
+                    with open(self.config_file, 'w') as configfile:
+                        config_parser.write(configfile)
+                    
+                    self.logger.info("Config updated through command channel")
+                    self.update_event.set()
+                else:
+                    self.logger.error("No config data in update_config command")
+                    
+            elif command == 'toggle_shader':
                 self.logger.info("Setting toggle_shader_event")
                 self.toggle_shader_event.set()
             elif command == 'randomize_colors':
