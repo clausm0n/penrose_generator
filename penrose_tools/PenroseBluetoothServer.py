@@ -263,6 +263,7 @@ class PenroseBluetoothServer:
             elif command == 'randomize_colors':
                 self.logger.info("Setting randomize_colors_event")
                 self.randomize_colors_event.set()
+                self.update_event.set()
             elif command == 'shutdown':
                 self.logger.info("Setting shutdown_event")
                 self.shutdown_event.set()
