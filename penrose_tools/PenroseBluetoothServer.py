@@ -203,10 +203,12 @@ class PenroseBluetoothServer:
         """Initialize a new image upload by clearing previous state"""
         self.logger.info("Initializing new image upload")
         self.message_frames = {}
-        self.message_buffer = ""
 
     def process_image(self, base64_data: str):
+        """Process and save the complete image"""
         try:
+            self.logger.info("Starting image processing")
+            
             # Decode base64 image
             image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data))
@@ -325,12 +327,12 @@ class PenroseBluetoothServer:
         try:
             self.logger.debug(f"handle_command called with value: {value} and options: {options}")
 
-            # Convert bytes to string and add to buffer
+            # Convert bytes to string
             byte_array = bytes(value)
             new_data = byte_array.decode('utf-8')
             self.logger.debug(f"Received data: {new_data[:100]}...")
 
-            # First try to parse as a complete command
+            # Parse the command
             try:
                 data = json.loads(new_data)
                 command = data.get('command')
@@ -360,8 +362,6 @@ class PenroseBluetoothServer:
                             
                             self.logger.info("Config updated through command channel")
                             self.update_event.set()
-                        else:
-                            self.logger.error("No config data in update_config command")
                     
                     elif command == 'toggle_shader':
                         self.logger.info("Setting toggle_shader_event")
@@ -374,59 +374,74 @@ class PenroseBluetoothServer:
                     elif command == 'shutdown':
                         self.logger.info("Setting shutdown_event")
                         self.shutdown_event.set()
-                    
-                    return  # Exit after handling regular command
                 
-                # Handle image-related commands through the buffer system
-                elif command in ['init_image_upload', 'image_data']:
-                    self.message_buffer += new_data + '\n'  # Add newline for message separation
-                    
-            except json.JSONDecodeError:
-                # If parsing fails, add to buffer (might be partial message)
-                self.message_buffer += new_data
+                # Handle image-related commands
+                elif command == 'init_image_upload':
+                    self.init_image_upload()
+                    self.logger.info("Image upload initialized")
                 
-            # Process any complete messages in buffer (for image data)
-            while '\n' in self.message_buffer:
-                message, self.message_buffer = self.message_buffer.split('\n', 1)
-                try:
-                    data = json.loads(message)
-                    command = data.get('command')
+                elif command == 'image_data':
+                    message_id = data.get('messageId')
+                    frame_index = data.get('frameIndex')
+                    total_frames = data.get('totalFrames')
+                    payload = data.get('payload')
+                    is_last = data.get('isLast', False)
                     
-                    if command == 'init_image_upload':
-                        self.init_image_upload()
-                    elif command == 'image_data':
-                        message_id = data.get('messageId')
-                        frame_index = data.get('frameIndex')
-                        total_frames = data.get('totalFrames')
-                        payload = data.get('payload')
-                        is_last = data.get('isLast', False)
+                    if None in (message_id, frame_index, total_frames, payload):
+                        raise ValueError("Missing required image data fields")
+                    
+                    # Initialize frame storage for new message
+                    if message_id not in self.message_frames:
+                        self.message_frames[message_id] = {
+                            'frames': {},
+                            'total_frames': total_frames,
+                            'received_frames': 0,
+                            'complete_data': ''
+                        }
+                    
+                    # Store the frame
+                    message_data = self.message_frames[message_id]
+                    if frame_index not in message_data['frames']:
+                        message_data['frames'][frame_index] = payload
+                        message_data['received_frames'] += 1
                         
-                        if message_id not in self.message_frames:
-                            self.message_frames[message_id] = {
-                                'command': command,
-                                'frames': {},
-                                'total_frames': total_frames,
-                                'received_frames': 0
-                            }
+                        self.logger.debug(
+                            f"Stored frame {frame_index + 1}/{total_frames} "
+                            f"for message {message_id} "
+                            f"({message_data['received_frames']} frames received)"
+                        )
+                    
+                    # Check if message is complete
+                    if message_data['received_frames'] == total_frames:
+                        self.logger.info(f"Received all {total_frames} frames for message {message_id}")
                         
-                        if frame_index not in self.message_frames[message_id]['frames']:
-                            self.message_frames[message_id]['frames'][frame_index] = payload
-                            self.message_frames[message_id]['received_frames'] += 1
+                        try:
+                            # Combine frames in order
+                            complete_data = ''
+                            for i in range(total_frames):
+                                if i not in message_data['frames']:
+                                    raise ValueError(f"Missing frame {i}")
+                                complete_data += message_data['frames'][i]
                             
-                            self.logger.debug(
-                                f"Stored frame {frame_index + 1}/{total_frames} "
-                                f"for message {message_id}"
-                            )
-                        
-                        if (is_last and 
-                            self.message_frames[message_id]['received_frames'] == total_frames):
-                            self.logger.info("All frames received, processing complete message")
-                            self.process_complete_message(message_id)
-                    
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"JSON decode error for message: {message[:100]}...")
-                    self.logger.error(f"Error details: {str(e)}")
-                    continue
+                            # Process the complete image
+                            self.process_image(complete_data)
+                            
+                            # Cleanup
+                            del self.message_frames[message_id]
+                            self.logger.info("Image processing completed successfully")
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error processing complete message: {str(e)}")
+                            # Cleanup on error
+                            del self.message_frames[message_id]
+                            raise
+                
+                else:
+                    self.logger.warning(f"Unknown command: {command}")
+
+            except json.JSONDecodeError as e:
+                self.logger.error(f"JSON decode error: {str(e)}")
+                raise
 
         except Exception as e:
             self.logger.error(f"Command error: {str(e)}")
