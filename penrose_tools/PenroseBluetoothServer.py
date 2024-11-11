@@ -215,19 +215,19 @@ class PenroseBluetoothServer:
             command_bytes = bytes(value)
             self.logger.debug(f"Command bytes: {command_bytes}")
             command = command_bytes.decode('utf-8')
-            self.logger.debug(f"Decoded command string: {command}")
+            self.logger.info(f"Decoded command string: {command}")
             command_data = json.loads(command)
-            self.logger.debug(f"Parsed command data: {command_data}")
+            self.logger.info(f"Parsed command data: {command_data}")
 
             # **Add this block to set the appropriate event**
             if command_data['command'] == 'toggle_shader':
-                self.logger.debug("Setting toggle_shader_event")
+                self.logger.info("Setting toggle_shader_event")
                 self.toggle_shader_event.set()
             elif command_data['command'] == 'randomize_colors':
-                self.logger.debug("Setting randomize_colors_event")
+                self.logger.info("Setting randomize_colors_event")
                 self.randomize_colors_event.set()
             elif command_data['command'] == 'shutdown':
-                self.logger.debug("Setting shutdown_event")
+                self.logger.info("Setting shutdown_event")
                 self.shutdown_event.set()
             else:
                 self.logger.warning(f"Unknown command: {command_data['command']}")
