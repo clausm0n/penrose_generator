@@ -58,24 +58,30 @@ def setup_projection(width, height):
 
 def update_toggles(shaders):
     global config_data, running
-    print("Updating toggles...", update_event.is_set(), toggle_shader_event.is_set(), toggle_regions_event.is_set(), toggle_gui_event.is_set(), randomize_colors_event.is_set())
+    logging.debug("Checking for events...")
+    logging.debug(f"Events Status - Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
     if randomize_colors_event.is_set():
+        logging.info("Randomize Colors Event Detected")
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
         randomize_colors_event.clear()
         op.update_config_file(CONFIG_PATH, **config_data)
-        print("Randomizing colors...")
+        logging.info("Colors randomized successfully.")
     if update_event.is_set():
+        logging.info("Update Event Detected")
         update_event.clear()
         config_data = op.read_config_file(CONFIG_PATH)
-        print("config_data updated...")
+        logging.info("Configuration updated successfully.")
     if toggle_shader_event.is_set():
+        logging.info("Toggle Shader Event Detected")
         toggle_shader_event.clear()
         shaders.next_shader()
+        logging.info("Shader toggled successfully.")
     if shutdown_event.is_set():
+        logging.info("Shutdown Event Detected")
         running = False
-        print("Exiting...")
+        logging.info("Exiting application.")
         return False
 
 def render_tiles(shaders, width, height):

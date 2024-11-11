@@ -5,6 +5,7 @@ from penrose_tools.Tile import Tile
 from penrose_tools.Operations import Operations
 from PIL import Image
 import os
+import logging
 op = Operations()
 
 class Shader:
@@ -24,6 +25,7 @@ class Shader:
         ]
 
     def next_shader(self):
+        logging.info(f"Switched to shader index: {self.current_shader_index}")
         self.shader_index = (self.shader_index + 1) % len(self.shaders)
         return self.shader_index
     
