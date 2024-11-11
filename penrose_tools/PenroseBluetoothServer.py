@@ -115,32 +115,29 @@ class PenroseBluetoothServer:
 
     def read_config(self) -> List[int]:
         try:
-            config_data = self.operations.read_config_file(self.config_file)
-            self.logger.debug(f"Read config data: {config_data}")
-            
+            config = configparser.ConfigParser()
+            config.read(self.config_file)
+            settings = dict(config['Settings'])
             formatted_settings = {
-                "size": config_data['size'],
-                "scale": config_data['scale'],
-                "gamma": config_data['gamma'],
-                "color1": config_data['color1'],
-                "color2": config_data['color2']
+                "size": int(settings.get('size', 0)),
+                "scale": int(settings.get('scale', 0)),
+                "gamma": [float(x.strip()) for x in settings.get('gamma', '').split(',')],
+                "color1": [int(x.strip()) for x in settings.get('color1', '').replace('(', '').replace(')', '').split(',')],
+                "color2": [int(x.strip()) for x in settings.get('color2', '').replace('(', '').replace(')', '').split(',')]
             }
-            
             json_str = json.dumps(formatted_settings)
             self.logger.debug(f"Formatted config JSON: {json_str}")
-            
             byte_array = [ord(c) for c in json_str]
             self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
-            
             return byte_array
-                
         except Exception as e:
             self.logger.error(f"Error reading config: {str(e)}")
             self.logger.exception("Full traceback:")
             return [ord(c) for c in '{"error": "Failed to read config"}']
 
+
     def write_config(self, value: list) -> None:
-        """Handle configuration updates using Operations class"""
+        """Handle configuration updates from Bluetooth client."""
         try:
             self.logger.debug(f"Received config write: {value}")
 
@@ -155,25 +152,25 @@ class PenroseBluetoothServer:
             data = json.loads(json_str)
             self.logger.debug(f"Parsed config data: {data}")
 
-            # Use Operations class to update config
-            self.operations.update_config_file(
-                self.config_file,
-                size=data.get('size'),
-                scale=data.get('scale'),
-                gamma=data.get('gamma'),
-                color1=data.get('color1'),
-                color2=data.get('color2')
-            )
-
+            # Update the config file directly, similar to HTTP server
+            config = configparser.ConfigParser()
+            config.read(self.config_file)
+            for key, value in data.items():
+                if isinstance(value, list):
+                    if key in ['color1', 'color2']:
+                        config.set('Settings', key, f"({', '.join(map(str, value))})")
+                    else:
+                        config.set('Settings', key, ', '.join(map(str, value)))
+                else:
+                    config.set('Settings', key, str(value))
+            with open(self.config_file, 'w') as configfile:
+                config.write(configfile)
             self.logger.debug("Config written successfully")
             self.update_event.set()
 
         except Exception as e:
             self.logger.error(f"Config write error: {e}")
             self.logger.exception("Exception occurred while writing config")
-
-
-
 
     def configure_adapter(self):
         """Configure the Bluetooth adapter"""
