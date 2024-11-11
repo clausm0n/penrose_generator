@@ -1,12 +1,16 @@
 [Unit]
 Description=Penrose Generator Service
 After=network.target graphical.target
+Wants=network.target graphical.target
 
 [Service]
 Type=simple
 User=modus
+Group=modus
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/modus/.Xauthority
+Environment=HOME=/home/modus
+WorkingDirectory=/home/modus/penrose_generator
 ExecStart=/home/modus/penrose_generator/start_penrose.sh
 Restart=always
 RestartSec=3
