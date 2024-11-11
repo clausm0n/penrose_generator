@@ -3,6 +3,9 @@ from OpenGL.GL import *
 from OpenGL.GL import shaders
 import ctypes
 import glfw
+from penrose_tools import Operations
+
+op = Operations()
 
 class OptimizedRenderer:
     def __init__(self):
