@@ -113,6 +113,10 @@ class PenroseBluetoothServer:
             'received_chunks': 0
         }
 
+        self.message_buffer = ""
+        self.current_message_id = None
+        self.message_frames = {}
+
         self.images_directory = "uploaded_images"
 
         if not os.path.exists(self.images_directory):
@@ -133,80 +137,81 @@ class PenroseBluetoothServer:
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
 
-    def init_image_upload(self, command_data: dict):
+    def process_frame(self, frame_json: str):
         try:
-            total_size = command_data.get('totalSize')
-            if total_size is None:
-                raise ValueError("Missing totalSize in init_image_upload")
-                
-            self.current_upload = {
-                'total_size': total_size,
-                'chunks': {},
-                'total_chunks': 0,
-                'received_chunks': 0
-            }
-            self.logger.info(f"Initialized image upload with total size: {total_size}")
-            
+            frame = json.loads(frame_json)
+            message_id = frame.get('messageId')
+            command = frame.get('command')
+            frame_index = frame.get('frameIndex')
+            total_frames = frame.get('totalFrames')
+            payload = frame.get('payload')
+            is_last = frame.get('isLast')
+
+            if not all([message_id, command, isinstance(frame_index, int), 
+                       isinstance(total_frames, int), isinstance(is_last, bool)]):
+                raise ValueError("Missing required frame fields")
+
+            # Initialize frame storage for new message
+            if message_id not in self.message_frames:
+                self.message_frames[message_id] = {
+                    'command': command,
+                    'frames': {},
+                    'total_frames': total_frames,
+                    'received_frames': 0
+                }
+
+            # Store the frame
+            if frame_index not in self.message_frames[message_id]['frames']:
+                self.message_frames[message_id]['frames'][frame_index] = payload
+                self.message_frames[message_id]['received_frames'] += 1
+
+            # Check if message is complete
+            if (is_last and 
+                self.message_frames[message_id]['received_frames'] == total_frames):
+                self.process_complete_message(message_id)
+
         except Exception as e:
-            self.logger.error(f"Error initializing image upload: {e}")
+            self.logger.error(f"Error processing frame: {str(e)}")
             raise
 
-    def handle_image_chunk(self, chunk_data: dict):
+    def process_complete_message(self, message_id: str):
         try:
-            chunk_index = chunk_data.get('chunkIndex')
-            total_chunks = chunk_data.get('totalChunks')
-            is_last = chunk_data.get('isLast')
-            data = chunk_data.get('data')
+            message_data = self.message_frames[message_id]
+            command = message_data['command']
+            frames = message_data['frames']
             
-            if None in (chunk_index, total_chunks, is_last, data):
-                raise ValueError("Missing required chunk data")
-            
-            self.logger.debug(f"Received chunk {chunk_index + 1}/{total_chunks}")
-            
-            # Store the chunk
-            self.current_upload['chunks'][chunk_index] = data
-            self.current_upload['received_chunks'] += 1
-            self.current_upload['total_chunks'] = total_chunks
-            
-            # If this is the last chunk, process the complete image
-            if is_last:
-                self.process_complete_image()
-                
-        except Exception as e:
-            self.logger.error(f"Error handling image chunk: {e}")
-            raise
-
-    def process_complete_image(self):
-        try:
-            # Combine all chunks
-            chunks = self.current_upload['chunks']
-            total_chunks = self.current_upload['total_chunks']
-            
+            # Combine all frames in order
             complete_data = ''
-            for i in range(total_chunks):
-                if i not in chunks:
-                    raise ValueError(f"Missing chunk {i}")
-                complete_data += chunks[i]
-            
-            # Process the complete image
-            self.process_image(complete_data)
-            
-            # Clear the upload data
-            self.current_upload = {
-                'total_size': 0,
-                'chunks': {},
-                'total_chunks': 0,
-                'received_chunks': 0
-            }
-            
+            for i in range(message_data['total_frames']):
+                if i not in frames:
+                    raise ValueError(f"Missing frame {i}")
+                complete_data += frames[i]
+
+            # Process based on command
+            if command == 'init_image_upload':
+                self.init_image_upload()
+            elif command == 'image_data':
+                self.process_image(complete_data)
+            else:
+                self.logger.warning(f"Unknown command: {command}")
+
+            # Cleanup
+            del self.message_frames[message_id]
+
         except Exception as e:
-            self.logger.error(f"Error processing complete image: {e}")
+            self.logger.error(f"Error processing complete message: {str(e)}")
             raise
 
-    def process_image(self, image_base64: str):
+    def init_image_upload(self):
+        self.logger.info("Initializing new image upload")
+        # Clear any previous upload state
+        self.message_frames = {}
+        self.message_buffer = ""
+
+    def process_image(self, base64_data: str):
         try:
             # Decode base64 image
-            image_data = base64.b64decode(image_base64)
+            image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data))
             
             # Generate unique filename
@@ -218,7 +223,7 @@ class PenroseBluetoothServer:
             self.logger.info(f"Image saved successfully: {filepath}")
             
         except Exception as e:
-            self.logger.error(f"Error processing image: {e}")
+            self.logger.error(f"Error processing image: {str(e)}")
             raise
 
     def read_config(self) -> List[int]:
@@ -325,11 +330,21 @@ class PenroseBluetoothServer:
 
             # Convert list of bytes to bytes object
             byte_array = bytes(value)
+            new_data = byte_array.decode('utf-8')
+            self.message_buffer += new_data
 
             # Decode the bytes to a UTF-8 string
             json_str = byte_array.decode('utf-8')
-            self.logger.info(f"Decoded command string: {json_str}")
-            self.logger.debug(f"Received command: {json_str[:100]}...")
+            while '\n' in self.message_buffer:
+                # Split on first newline
+                message, self.message_buffer = self.message_buffer.split('\n', 1)
+                try:
+                    self.process_frame(message)
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"JSON decode error for message: {message[:100]}...")
+                    self.logger.error(f"Error details: {str(e)}")
+                    continue
+
 
             # Parse the JSON data
             command_data = json.loads(json_str)
