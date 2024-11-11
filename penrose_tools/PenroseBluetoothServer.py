@@ -15,6 +15,11 @@ import logging
 from typing import List
 from .Operations import Operations
 from .events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event
+import base64
+from PIL import Image
+import io
+import os
+import time
 
 
 # Service and characteristic UUIDs
@@ -98,6 +103,13 @@ class PenroseBluetoothServer:
         self.peripheral = None
         self.logger = logging.getLogger('PenroseBLE')
         self.logger.setLevel(logging.DEBUG)
+
+        self.image_chunks = {}  # Store incoming image chunks
+        self.images_directory = "uploaded_images"
+
+        if not os.path.exists(self.images_directory):
+            os.makedirs(self.images_directory)
+
         
         # Add handler if none exists
         if not self.logger.handlers:
@@ -112,6 +124,61 @@ class PenroseBluetoothServer:
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
+
+    def handle_image_chunk(self, chunk_data: dict):
+        try:
+            chunk_index = chunk_data.get('chunk_index')
+            total_chunks = chunk_data.get('total_chunks')
+            is_last = chunk_data.get('is_last')
+            data = chunk_data.get('data')
+            
+            if None in (chunk_index, total_chunks, is_last, data):
+                raise ValueError("Missing required chunk data")
+            
+            # Store the chunk
+            if total_chunks not in self.image_chunks:
+                self.image_chunks[total_chunks] = {}
+            self.image_chunks[total_chunks][chunk_index] = data
+            
+            # If this is the last chunk, process the complete image
+            if is_last:
+                # Combine all chunks
+                complete_data = ''
+                for i in range(total_chunks):
+                    if i not in self.image_chunks[total_chunks]:
+                        raise ValueError(f"Missing chunk {i}")
+                    complete_data += self.image_chunks[total_chunks][i]
+                
+                # Clear the chunks from memory
+                del self.image_chunks[total_chunks]
+                
+                # Process the complete image
+                self.process_image(complete_data)
+                
+        except Exception as e:
+            self.logger.error(f"Error handling image chunk: {e}")
+            raise
+
+    def process_image(self, image_base64: str):
+        try:
+            # Decode base64 image
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            
+            # Generate unique filename
+            filename = f"image_{int(time.time())}.png"
+            filepath = os.path.join(self.images_directory, filename)
+            
+            # Save the image
+            image.save(filepath)
+            self.logger.info(f"Image saved successfully: {filepath}")
+            
+            # Here you can add additional processing if needed
+            # For example, analyzing the image to set colors in the Penrose pattern
+            
+        except Exception as e:
+            self.logger.error(f"Error processing image: {e}")
+            raise
 
     def read_config(self) -> List[int]:
         try:
@@ -228,6 +295,9 @@ class PenroseBluetoothServer:
 
             # Get the command
             command = command_data.get('command')
+
+            if command == 'image_chunk':
+                self.handle_image_chunk(command_data)
             
             if command == 'update_config':
                 # Extract config from command data

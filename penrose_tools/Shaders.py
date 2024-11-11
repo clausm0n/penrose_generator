@@ -269,7 +269,7 @@ class Shader:
             for i in range(3)
         )
 
-    def load_images_from_folder(self, folder_path='input'):
+    def load_images_from_folder(self, folder_path='uploaded_images'):
         self.image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         if not self.image_files:
             print(f"Error: No image files found in {folder_path}")
@@ -291,7 +291,7 @@ class Shader:
         self.image_data = []
         self.image_scales = []  # Store scaling info for each image
         for image_file in self.image_files:
-            image_path = os.path.join('input', image_file)
+            image_path = os.path.join('uploaded_images', image_file)
             with Image.open(image_path) as img:
                 img = img.convert('RGB')  # Ensure consistent color format
                 
