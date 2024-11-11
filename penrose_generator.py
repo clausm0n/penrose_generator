@@ -29,6 +29,9 @@ running = True
 width = 0
 height = 0
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('Penrose_Generator')
+
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
@@ -58,30 +61,30 @@ def setup_projection(width, height):
 
 def update_toggles(shaders):
     global config_data, running
-    logging.debug("Checking for events...")
-    logging.debug(f"Events Status - Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
+    logger.debug("Checking for events...")
+    logger.debug(f"Events Status - Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
     if randomize_colors_event.is_set():
-        logging.info("Randomize Colors Event Detected")
+        logger.info("Randomize Colors Event Detected")
         for i in range(3):
             config_data['color1'][i] = np.random.randint(0, 256)
             config_data['color2'][i] = np.random.randint(0, 256)
         randomize_colors_event.clear()
         op.update_config_file(CONFIG_PATH, **config_data)
-        logging.info("Colors randomized successfully.")
+        logger.info("Colors randomized successfully.")
     if update_event.is_set():
-        logging.info("Update Event Detected")
+        logger.info("Update Event Detected")
         update_event.clear()
         config_data = op.read_config_file(CONFIG_PATH)
-        logging.info("Configuration updated successfully.")
+        logger.info("Configuration updated successfully.")
     if toggle_shader_event.is_set():
-        logging.info("Toggle Shader Event Detected")
+        logger.info("Toggle Shader Event Detected")
         toggle_shader_event.clear()
         shaders.next_shader()
-        logging.info("Shader toggled successfully.")
+        logger.info("Shader toggled successfully.")
     if shutdown_event.is_set():
-        logging.info("Shutdown Event Detected")
+        logger.info("Shutdown Event Detected")
         running = False
-        logging.info("Exiting application.")
+        logger.info("Exiting application.")
         return False
 
 def render_tiles(shaders, width, height):
@@ -116,7 +119,7 @@ def render_tiles(shaders, width, height):
                 glVertex2f(vertex[0], vertex[1])
             glEnd()
         except Exception as e:
-            logging.error(f"Error rendering tile: {e}")
+            logger.error(f"Error rendering tile: {e}")
             shaders.reset_state()
             continue
 
@@ -176,7 +179,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        logging.info("Starting the penrose generator script.")
+        logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
         shaders = Shader()
         last_time = glfw.get_time()
@@ -187,12 +190,12 @@ def main():
                                         randomize_colors_event, shutdown_event),
                                 daemon=True)
             server_thread.start()
-            logging.info("Bluetooth server started.")
+            logger.info("Bluetooth server started.")
         else:
             # HTTP server
             server_thread = Thread(target=run_server, daemon=True)
             server_thread.start()
-            logging.info("HTTP server started.")
+            logger.info("HTTP server started.")
 
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
@@ -211,12 +214,12 @@ def main():
             last_time = glfw.get_time()
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
         raise
     finally:
         glfw.terminate()
         shutdown_event.set()
-        logging.info("Application has been terminated.")
+        logger.info("Application has been terminated.")
 
 
 if __name__ == '__main__':
