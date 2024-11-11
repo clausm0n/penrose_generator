@@ -25,8 +25,8 @@ class Shader:
         ]
 
     def next_shader(self):
-        logging.info(f"Switched to shader index: {self.current_shader_index}")
         self.shader_index = (self.shader_index + 1) % len(self.shaders)
+        logging.info(f"Switched to shader index: {self.current_shader_index}")
         return self.shader_index
     
     def current_shader(self):
