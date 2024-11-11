@@ -329,53 +329,15 @@ class PenroseBluetoothServer:
             byte_array = bytes(value)
             new_data = byte_array.decode('utf-8')
             self.logger.debug(f"Received data: {new_data[:100]}...")
-            
-            self.message_buffer += new_data
+
+            # First try to parse as a complete command
+            try:
+                data = json.loads(new_data)
+                command = data.get('command')
                 
-            # Process any complete messages in buffer
-            while '\n' in self.message_buffer:
-                # Split on first newline
-                message, self.message_buffer = self.message_buffer.split('\n', 1)
-                try:
-                    data = json.loads(message)
-                    command = data.get('command')
-                    
-                    if command == 'init_image_upload':
-                        self.init_image_upload()
-                    elif command == 'image_data':
-                        # Store frame in message frames
-                        message_id = data.get('messageId')
-                        frame_index = data.get('frameIndex')
-                        total_frames = data.get('totalFrames')
-                        payload = data.get('payload')
-                        is_last = data.get('isLast', False)
-                        
-                        # Initialize frame storage for new message
-                        if message_id not in self.message_frames:
-                            self.message_frames[message_id] = {
-                                'command': command,
-                                'frames': {},
-                                'total_frames': total_frames,
-                                'received_frames': 0
-                            }
-                        
-                        # Store the frame
-                        if frame_index not in self.message_frames[message_id]['frames']:
-                            self.message_frames[message_id]['frames'][frame_index] = payload
-                            self.message_frames[message_id]['received_frames'] += 1
-                            
-                            self.logger.debug(
-                                f"Stored frame {frame_index + 1}/{total_frames} "
-                                f"for message {message_id}"
-                            )
-                        
-                        # Check if message is complete
-                        if (is_last and 
-                            self.message_frames[message_id]['received_frames'] == total_frames):
-                            self.logger.info("All frames received, processing complete message")
-                            self.process_complete_message(message_id)
-                    
-                    elif command == 'update_config':
+                # Handle regular commands directly
+                if command in ['update_config', 'toggle_shader', 'randomize_colors', 'shutdown']:
+                    if command == 'update_config':
                         config = data.get('config')
                         if config:
                             config_parser = configparser.ConfigParser()
@@ -400,19 +362,67 @@ class PenroseBluetoothServer:
                             self.update_event.set()
                         else:
                             self.logger.error("No config data in update_config command")
-                            
+                    
                     elif command == 'toggle_shader':
                         self.logger.info("Setting toggle_shader_event")
                         self.toggle_shader_event.set()
+                    
                     elif command == 'randomize_colors':
                         self.logger.info("Setting randomize_colors_event")
                         self.randomize_colors_event.set()
+                    
                     elif command == 'shutdown':
                         self.logger.info("Setting shutdown_event")
                         self.shutdown_event.set()
-                    else:
-                        self.logger.warning(f"Unknown command: {command}")
+                    
+                    return  # Exit after handling regular command
+                
+                # Handle image-related commands through the buffer system
+                elif command in ['init_image_upload', 'image_data']:
+                    self.message_buffer += new_data + '\n'  # Add newline for message separation
+                    
+            except json.JSONDecodeError:
+                # If parsing fails, add to buffer (might be partial message)
+                self.message_buffer += new_data
+                
+            # Process any complete messages in buffer (for image data)
+            while '\n' in self.message_buffer:
+                message, self.message_buffer = self.message_buffer.split('\n', 1)
+                try:
+                    data = json.loads(message)
+                    command = data.get('command')
+                    
+                    if command == 'init_image_upload':
+                        self.init_image_upload()
+                    elif command == 'image_data':
+                        message_id = data.get('messageId')
+                        frame_index = data.get('frameIndex')
+                        total_frames = data.get('totalFrames')
+                        payload = data.get('payload')
+                        is_last = data.get('isLast', False)
                         
+                        if message_id not in self.message_frames:
+                            self.message_frames[message_id] = {
+                                'command': command,
+                                'frames': {},
+                                'total_frames': total_frames,
+                                'received_frames': 0
+                            }
+                        
+                        if frame_index not in self.message_frames[message_id]['frames']:
+                            self.message_frames[message_id]['frames'][frame_index] = payload
+                            self.message_frames[message_id]['received_frames'] += 1
+                            
+                            self.logger.debug(
+                                f"Stored frame {frame_index + 1}/{total_frames} "
+                                f"for message {message_id}"
+                            )
+                        
+                        if (is_last and 
+                            self.message_frames[message_id]['received_frames'] == total_frames):
+                            self.logger.info("All frames received, processing complete message")
+                            self.process_complete_message(message_id)
+                    
                 except json.JSONDecodeError as e:
                     self.logger.error(f"JSON decode error for message: {message[:100]}...")
                     self.logger.error(f"Error details: {str(e)}")
