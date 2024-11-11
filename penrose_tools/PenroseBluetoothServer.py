@@ -218,13 +218,25 @@ class PenroseBluetoothServer:
             self.logger.debug(f"Decoded command string: {command}")
             command_data = json.loads(command)
             self.logger.debug(f"Parsed command data: {command_data}")
-            
-            # Rest of the code remains the same
+
+            # **Add this block to set the appropriate event**
+            if command_data['command'] == 'toggle_shader':
+                self.logger.debug("Setting toggle_shader_event")
+                self.toggle_shader_event.set()
+            elif command_data['command'] == 'randomize_colors':
+                self.logger.debug("Setting randomize_colors_event")
+                self.randomize_colors_event.set()
+            elif command_data['command'] == 'shutdown':
+                self.logger.debug("Setting shutdown_event")
+                self.shutdown_event.set()
+            else:
+                self.logger.warning(f"Unknown command: {command_data['command']}")
+            return True
+
         except Exception as e:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
             return False
-
 
 
     def start_server(self):
