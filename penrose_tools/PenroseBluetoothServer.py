@@ -24,6 +24,17 @@ COMMAND_CHAR = '12345002-1234-1234-1234-123456789abc'
 AGENT_INTERFACE = 'org.bluez.Agent1'
 AGENT_MANAGER_INTERFACE = 'org.bluez.AgentManager1'
 AGENT_PATH = "/org/bluez/AutoAgent"
+CONFIG_FILE = 'config.ini'
+
+config = configparser.ConfigParser()
+config.read(CONFIG_FILE)
+
+update_event = threading.Event()
+toggle_shader_event = threading.Event()
+toggle_regions_event = threading.Event()
+toggle_gui_event = threading.Event()
+shutdown_event = threading.Event()  # Shutdown event
+randomize_colors_event = threading.Event()
 
 class AutoAcceptAgent(dbus.service.Object):
     """
@@ -84,11 +95,8 @@ class AutoAcceptAgent(dbus.service.Object):
         return
 
 class PenroseBluetoothServer:
-    def __init__(self, config_file: str, update_event: threading.Event, 
-                 toggle_shader_event: threading.Event, 
-                 randomize_colors_event: threading.Event,
-                 shutdown_event: threading.Event):
-        self.config_file = config_file
+    def __init__(self):
+        self.config_file = config
         self.update_event = update_event
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
