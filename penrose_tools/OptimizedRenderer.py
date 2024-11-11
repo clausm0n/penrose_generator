@@ -11,18 +11,12 @@ class OptimizedRenderer:
     def __init__(self):
         self.vbo = None
         self.color_vbo = None
-        self.ebo = None  # Element buffer for indices
         self.shader_program = None
-        self.spatial_grid = {}
-        self.grid_size = 100
         self.tile_cache = {}
-        self.visible_tiles_cache = set()
-        self.indices = []
-        self.vertices_per_tile = 0
-        self.tile_vertex_counts = {}
         self.tile_to_vertices = {}
         
     def setup_shader(self):
+        # Simpler vertex shader without matrix multiplication
         vertex_shader = """
         #version 120
         attribute vec2 position;
@@ -30,8 +24,8 @@ class OptimizedRenderer:
         varying vec4 frag_color;
         
         void main() {
-            gl_Position = gl_ModelViewProjectionMatrix * vec4(position, 0.0, 1.0);
-            frag_color = color / 255.0;  // Normalize color values
+            gl_Position = vec4(position, 0.0, 1.0);
+            frag_color = color;
         }
         """
         
@@ -55,45 +49,40 @@ class OptimizedRenderer:
         except Exception as e:
             print(f"Shader compilation error: {e}")
             raise
-        
+
     def setup_buffers(self, tiles, width, height, scale_value):
         vertices = []
         colors = []
-        indices = []
         
         center = complex(width / 2, height / 2)
-        vertex_count = 0
-        
-        self.tile_vertex_counts.clear()
         self.tile_to_vertices.clear()
         
+        # Transform coordinates to OpenGL space (-1 to 1)
+        def transform_to_gl_space(x, y):
+            return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
+        
         for tile in tiles:
-            # Transform vertices to screen space
-            screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
+            # Store starting vertex index for this tile
             start_idx = len(vertices) // 2
             
-            # Add vertices
+            # Get screen space vertices
+            screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
+            
+            # Transform to GL space and store vertices
             for x, y in screen_verts:
-                vertices.extend([x, y])
+                gl_x, gl_y = transform_to_gl_space(x, y)
+                vertices.extend([gl_x, gl_y])
             
-            # Store the vertex range for this tile
-            num_verts = len(screen_verts)
-            self.tile_to_vertices[tile] = (start_idx, start_idx + num_verts)
+            # Store vertex range for this tile
+            self.tile_to_vertices[tile] = (start_idx, len(vertices) // 2)
             
-            # Create triangle fan indices for polygon
-            for i in range(1, num_verts - 1):
-                indices.extend([vertex_count, vertex_count + i, vertex_count + i + 1])
-            
-            # Add base colors (will be updated later)
-            colors.extend([0, 0, 0, 255] * num_verts)  # Initialize with transparent black
-            
-            self.tile_vertex_counts[tile] = num_verts
-            vertex_count += num_verts
+            # Add initial colors
+            base_color = [0, 0, 0, 1.0]  # Initial black with full alpha
+            colors.extend(base_color * len(screen_verts))
         
         # Convert to numpy arrays
         self.vertices_array = np.array(vertices, dtype=np.float32)
-        self.colors_array = np.array(colors, dtype=np.uint8)
-        self.indices_array = np.array(indices, dtype=np.uint32)
+        self.colors_array = np.array(colors, dtype=np.float32)
         
         # Create and bind vertex buffer
         if self.vbo is None:
@@ -106,35 +95,29 @@ class OptimizedRenderer:
             self.color_vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
         glBufferData(GL_ARRAY_BUFFER, self.colors_array.nbytes, self.colors_array, GL_DYNAMIC_DRAW)
-        
-        # Create and bind element buffer
-        if self.ebo is None:
-            self.ebo = glGenBuffers(1)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
-        
-        self.num_indices = len(indices)
     
     def update_colors(self, tiles, shader_func, current_time, width, height, color1, color2, scale_value):
         """Update color buffer with shader effects"""
-        colors = np.zeros(len(self.colors_array), dtype=np.uint8)
+        colors = []
         
         for tile in tiles:
-            # Get shader color for this tile
+            # Get shader color
             modified_color = shader_func(tile, current_time, tiles, color1, color2, width, height, scale_value)
             
-            # Get vertex range for this tile
-            start_idx, end_idx = self.tile_to_vertices[tile]
-            vertex_count = end_idx - start_idx
+            # Convert color from 0-255 to 0-1 range
+            normalized_color = [c / 255.0 for c in modified_color]
             
-            # Fill color array for all vertices of this tile
-            for i in range(vertex_count):
-                base_idx = (start_idx + i) * 4  # 4 components per vertex
-                colors[base_idx:base_idx + 4] = modified_color
+            # Get number of vertices for this tile
+            start_idx, end_idx = self.tile_to_vertices[tile]
+            num_verts = end_idx - start_idx
+            
+            # Add color for each vertex of the tile
+            colors.extend(normalized_color * num_verts)
         
-        # Update GPU buffer
+        # Update color buffer
+        colors_array = np.array(colors, dtype=np.float32)
         glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
-        glBufferSubData(GL_ARRAY_BUFFER, 0, colors.nbytes, colors)
+        glBufferData(GL_ARRAY_BUFFER, colors_array.nbytes, colors_array, GL_DYNAMIC_DRAW)
     
     def render_tiles(self, shaders, width, height, config_data):
         current_time = glfw.get_time() * 1000
@@ -148,7 +131,7 @@ class OptimizedRenderer:
             tuple(config_data["color2"])
         )
         
-        # Check if we need to regenerate tiles
+        # Regenerate tiles if needed
         if cache_key not in self.tile_cache:
             self.tile_cache.clear()
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
@@ -163,13 +146,6 @@ class OptimizedRenderer:
         try:
             # Use shader program
             glUseProgram(self.shader_program)
-            
-            # Update projection matrix
-            glMatrixMode(GL_PROJECTION)
-            glLoadIdentity()
-            glOrtho(0, width, height, 0, -1, 1)
-            glMatrixMode(GL_MODELVIEW)
-            glLoadIdentity()
             
             # Update colors based on current shader effect
             self.update_colors(
@@ -187,18 +163,21 @@ class OptimizedRenderer:
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
-            # Bind buffers and set attributes
+            # Bind vertex buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
             glVertexAttribPointer(self.position_loc, 2, GL_FLOAT, GL_FALSE, 0, None)
             glEnableVertexAttribArray(self.position_loc)
             
+            # Bind color buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
-            glVertexAttribPointer(self.color_loc, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, None)
+            glVertexAttribPointer(self.color_loc, 4, GL_FLOAT, GL_FALSE, 0, None)
             glEnableVertexAttribArray(self.color_loc)
             
-            # Draw elements
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-            glDrawElements(GL_TRIANGLES, self.num_indices, GL_UNSIGNED_INT, None)
+            # Draw tiles
+            for tile in self.tile_cache[cache_key]:
+                start_idx, end_idx = self.tile_to_vertices[tile]
+                num_vertices = end_idx - start_idx
+                glDrawArrays(GL_TRIANGLE_FAN, start_idx, num_vertices)
             
             # Cleanup
             glDisableVertexAttribArray(self.position_loc)
