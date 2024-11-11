@@ -130,18 +130,18 @@ def setup_window(fullscreen=False):
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
+    # Request OpenGL 2.1 context
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+    
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()
     
     if fullscreen:
-        # Get the video mode of the primary monitor
         video_mode = glfw.get_video_mode(primary_monitor)
         width, height = video_mode.size.width, video_mode.size.height
-        
-        # Create a fullscreen window
         window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
     else:
-        # Set the window size to 720p for windowed mode
         width, height = 1280, 720
         window = glfw.create_window(width, height, "Penrose Tiling", None, None)
 
@@ -150,16 +150,23 @@ def setup_window(fullscreen=False):
         raise Exception("GLFW window can't be created")
     
     glfw.make_context_current(window)
-    setup_projection(width, height)
-
-    # Show the mouse cursor in windowed mode, hide it in fullscreen
-    glfw.set_input_mode(window, glfw.CURSOR, 
-                        glfw.CURSOR_HIDDEN if fullscreen else glfw.CURSOR_NORMAL)
-
-    # Set up basic OpenGL configuration
+    
+    # Print OpenGL version for debugging
+    print(f"OpenGL Version: {glGetString(GL_VERSION).decode()}")
+    print(f"GLSL Version: {glGetString(GL_SHADING_LANGUAGE_VERSION).decode()}")
+    
+    # Basic OpenGL setup
     glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-    glClearColor(0, 0, 0, 1)  # Set clear color to black
+    glClearColor(0, 0, 0, 1)
+    
+    # Setup viewport and projection
+    glViewport(0, 0, width, height)
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    glOrtho(0, width, height, 0, -1, 1)
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
 
     return window
 
