@@ -207,11 +207,15 @@ class PenroseBluetoothServer:
     def process_image(self, base64_data: str):
         """Process and save the complete image"""
         try:
-            self.logger.info("Starting image processing")
+            self.logger.info("Starting image processing...")
             
             # Decode base64 image
             image_data = base64.b64decode(base64_data)
+            self.logger.debug(f"Decoded image data length: {len(image_data)} bytes")
+            
+            # Create image from bytes
             image = Image.open(io.BytesIO(image_data))
+            self.logger.debug(f"Created image object: {image.format} {image.size}x{image.mode}")
             
             # Generate unique filename
             filename = f"image_{int(time.time())}.png"
@@ -219,10 +223,11 @@ class PenroseBluetoothServer:
             
             # Save the image
             image.save(filepath)
-            self.logger.info(f"Image saved successfully: {filepath}")
+            self.logger.info(f"Image saved successfully to: {filepath}")
             
         except Exception as e:
             self.logger.error(f"Error processing image: {str(e)}")
+            self.logger.exception("Full image processing error:")
             raise
 
     def read_config(self) -> List[int]:
@@ -438,6 +443,10 @@ class PenroseBluetoothServer:
             except Exception as e:
                 self.logger.error(f"Command error: {str(e)}")
                 self.logger.exception("Exception occurred while handling command")
+        except Exception as e:
+            self.logger.error(f"Command error: {str(e)}")
+            self.logger.exception("Exception occurred while handling command")
+
 
     def start_server(self):
         """Initialize and start the Bluetooth server"""
