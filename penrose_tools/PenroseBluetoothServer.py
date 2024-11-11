@@ -298,14 +298,10 @@ class PenroseBluetoothServer:
         # Start mainloop for DBus
         threading.Thread(target=self.mainloop.run, daemon=True).start()
 
-def run_bluetooth_server(config_file: str,
-                        update_event: threading.Event,
-                        toggle_shader_event: threading.Event,
-                        randomize_colors_event: threading.Event,
-                        shutdown_event: threading.Event):
+def run_bluetooth_server():
     """Main function to run the Bluetooth server"""
     server = PenroseBluetoothServer(
-        config_file,
+        config,
         update_event,
         toggle_shader_event,
         randomize_colors_event,
