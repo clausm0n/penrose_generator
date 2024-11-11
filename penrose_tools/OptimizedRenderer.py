@@ -99,6 +99,58 @@ class OptimizedRenderer:
         
         self.num_vertices = len(vertices)
     
+    def update_spatial_grid(self, tiles, width, height):
+        """Updates the spatial partitioning grid with the current tiles."""
+        self.spatial_grid.clear()
+        grid_size = self.grid_size
+        
+        # Calculate grid dimensions
+        num_cols = (width + grid_size - 1) // grid_size
+        num_rows = (height + grid_size - 1) // grid_size
+        
+        for tile in tiles:
+            # Get tile bounds
+            vertices = [op.to_canvas([v], 1, complex(0, 0))[0] for v in tile.vertices]
+            x_coords = [v[0] for v in vertices]
+            y_coords = [v[1] for v in vertices]
+            
+            min_x, max_x = min(x_coords), max(x_coords)
+            min_y, max_y = min(y_coords), max(y_coords)
+            
+            # Calculate grid cells this tile intersects with
+            start_cell_x = max(0, int(min_x / grid_size))
+            end_cell_x = min(num_cols - 1, int(max_x / grid_size))
+            start_cell_y = max(0, int(min_y / grid_size))
+            end_cell_y = min(num_rows - 1, int(max_y / grid_size))
+            
+            # Add tile to all intersecting grid cells
+            for cell_x in range(start_cell_x, end_cell_x + 1):
+                for cell_y in range(start_cell_y, end_cell_y + 1):
+                    cell_key = (cell_x, cell_y)
+                    if cell_key not in self.spatial_grid:
+                        self.spatial_grid[cell_key] = set()
+                    self.spatial_grid[cell_key].add(tile)
+    
+    def get_visible_tiles(self, width, height):
+        """Returns set of tiles that are potentially visible in the viewport."""
+        visible_tiles = set()
+        grid_size = self.grid_size
+        
+        # Calculate visible grid range
+        start_cell_x = 0
+        end_cell_x = (width + grid_size - 1) // grid_size
+        start_cell_y = 0
+        end_cell_y = (height + grid_size - 1) // grid_size
+        
+        # Collect tiles from visible cells
+        for cell_x in range(start_cell_x, end_cell_x):
+            for cell_y in range(start_cell_y, end_cell_y):
+                cell_key = (cell_x, cell_y)
+                if cell_key in self.spatial_grid:
+                    visible_tiles.update(self.spatial_grid[cell_key])
+        
+        return visible_tiles
+    
     def render_tiles(self, shaders, width, height, config_data):
         current_time = glfw.get_time() * 1000
         
@@ -118,14 +170,17 @@ class OptimizedRenderer:
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
-            self.update_spatial_grid(tiles, width, height)
-            self.setup_buffers(tiles)
+            
+            # Convert tiles to screen space before spatial partitioning
+            center = complex(width // 2, height // 2)
+            scale = config_data['scale']
             
             # Initialize shader program if not already done
             if self.shader_program is None:
                 self.setup_shader()
-        
-        visible_tiles = self.get_visible_tiles(width, height)
+            
+            self.update_spatial_grid(tiles, width, height)
+            self.setup_buffers(tiles)
         
         try:
             # Use shader program
