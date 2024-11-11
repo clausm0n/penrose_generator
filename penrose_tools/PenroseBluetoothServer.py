@@ -241,6 +241,7 @@ class PenroseBluetoothServer:
             self.logger.exception("Exception occurred while handling command")
 
 
+
     def start_server(self):
         """Initialize and start the Bluetooth server"""
         # Setup auto-pairing agent
@@ -279,6 +280,7 @@ class PenroseBluetoothServer:
             notifying=False,
             write_callback=self.handle_command,
         )
+
 
 
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
