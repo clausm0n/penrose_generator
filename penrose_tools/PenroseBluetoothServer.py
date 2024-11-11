@@ -105,6 +105,14 @@ class PenroseBluetoothServer:
         self.logger.setLevel(logging.DEBUG)
 
         self.image_chunks = {}  # Store incoming image chunks
+
+        self.current_upload = {
+            'total_size': 0,
+            'chunks': {},
+            'total_chunks': 0,
+            'received_chunks': 0
+        }
+
         self.images_directory = "uploaded_images"
 
         if not os.path.exists(self.images_directory):
@@ -125,38 +133,74 @@ class PenroseBluetoothServer:
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
 
+    def init_image_upload(self, command_data: dict):
+        try:
+            total_size = command_data.get('totalSize')
+            if total_size is None:
+                raise ValueError("Missing totalSize in init_image_upload")
+                
+            self.current_upload = {
+                'total_size': total_size,
+                'chunks': {},
+                'total_chunks': 0,
+                'received_chunks': 0
+            }
+            self.logger.info(f"Initialized image upload with total size: {total_size}")
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing image upload: {e}")
+            raise
+
     def handle_image_chunk(self, chunk_data: dict):
         try:
-            chunk_index = chunk_data.get('chunk_index')
-            total_chunks = chunk_data.get('total_chunks')
-            is_last = chunk_data.get('is_last')
+            chunk_index = chunk_data.get('chunkIndex')
+            total_chunks = chunk_data.get('totalChunks')
+            is_last = chunk_data.get('isLast')
             data = chunk_data.get('data')
             
             if None in (chunk_index, total_chunks, is_last, data):
                 raise ValueError("Missing required chunk data")
             
+            self.logger.debug(f"Received chunk {chunk_index + 1}/{total_chunks}")
+            
             # Store the chunk
-            if total_chunks not in self.image_chunks:
-                self.image_chunks[total_chunks] = {}
-            self.image_chunks[total_chunks][chunk_index] = data
+            self.current_upload['chunks'][chunk_index] = data
+            self.current_upload['received_chunks'] += 1
+            self.current_upload['total_chunks'] = total_chunks
             
             # If this is the last chunk, process the complete image
             if is_last:
-                # Combine all chunks
-                complete_data = ''
-                for i in range(total_chunks):
-                    if i not in self.image_chunks[total_chunks]:
-                        raise ValueError(f"Missing chunk {i}")
-                    complete_data += self.image_chunks[total_chunks][i]
-                
-                # Clear the chunks from memory
-                del self.image_chunks[total_chunks]
-                
-                # Process the complete image
-                self.process_image(complete_data)
+                self.process_complete_image()
                 
         except Exception as e:
             self.logger.error(f"Error handling image chunk: {e}")
+            raise
+
+    def process_complete_image(self):
+        try:
+            # Combine all chunks
+            chunks = self.current_upload['chunks']
+            total_chunks = self.current_upload['total_chunks']
+            
+            complete_data = ''
+            for i in range(total_chunks):
+                if i not in chunks:
+                    raise ValueError(f"Missing chunk {i}")
+                complete_data += chunks[i]
+            
+            # Process the complete image
+            self.process_image(complete_data)
+            
+            # Clear the upload data
+            self.current_upload = {
+                'total_size': 0,
+                'chunks': {},
+                'total_chunks': 0,
+                'received_chunks': 0
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error processing complete image: {e}")
             raise
 
     def process_image(self, image_base64: str):
@@ -172,9 +216,6 @@ class PenroseBluetoothServer:
             # Save the image
             image.save(filepath)
             self.logger.info(f"Image saved successfully: {filepath}")
-            
-            # Here you can add additional processing if needed
-            # For example, analyzing the image to set colors in the Penrose pattern
             
         except Exception as e:
             self.logger.error(f"Error processing image: {e}")
@@ -288,6 +329,7 @@ class PenroseBluetoothServer:
             # Decode the bytes to a UTF-8 string
             json_str = byte_array.decode('utf-8')
             self.logger.info(f"Decoded command string: {json_str}")
+            self.logger.debug(f"Received command: {json_str[:100]}...")
 
             # Parse the JSON data
             command_data = json.loads(json_str)
@@ -296,7 +338,9 @@ class PenroseBluetoothServer:
             # Get the command
             command = command_data.get('command')
 
-            if command == 'image_chunk':
+            if command == 'init_image_upload':
+                self.init_image_upload(command_data)
+            elif command == 'image_chunk':
                 self.handle_image_chunk(command_data)
             
             if command == 'update_config':
