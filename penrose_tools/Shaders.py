@@ -124,7 +124,7 @@ class Shader:
         # Initialize positions only once
         if not self.tile_centroids:
             for t in tiles:
-                self.calculate_centroid(t)
+                op.calculate_centroid(t.vertices)
         
         # Create ripples with numpy arrays for faster calculations
         if len(self.ripples) < self.max_ripples and current_time - self.last_raindrop_time > 3500:
@@ -133,7 +133,7 @@ class Shader:
             self.ripples.append((new_raindrop, 0, current_time))
         
         # Get tile position from cache
-        tile_pos = op.calculate_centroid(tile)
+        tile_pos = op.calculate_centroid(tile.vertices)
         
         # Pre-calculate base colors as arrays
         base_color = np.array(color1, dtype=np.float32)
@@ -154,7 +154,7 @@ class Shader:
                 new_ripples.append((center_tile, new_radius, start_time))
                 
                 # Fast distance calculation
-                center_pos = op.calculate_centroid(center_tile)
+                center_pos = op.calculate_centroid(center_tile.vertices)
                 distance = abs(tile_pos - center_pos)
                 
                 if distance <= new_radius:
@@ -189,7 +189,7 @@ class Shader:
             self.last_wave_time = time_bucket
         
         # Get or calculate tile position
-        centroid = op.calculate_centroid(tile)
+        centroid = op.calculate_centroid(tile.vertices)
         center = complex(width // 2, height // 2)
         tile_position = centroid - center
         
