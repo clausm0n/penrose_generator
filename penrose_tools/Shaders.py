@@ -231,8 +231,12 @@ class Shader:
         return (*final_color, 255)
 
     def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
-        # Create a cache key that includes the current colors
-        cache_key = (tile, color1, color2)
+        # Convert color lists to immutable tuples for hashing
+        color1_tuple = tuple(color1)
+        color2_tuple = tuple(color2)
+        
+        # Create a cache key using immutable types
+        cache_key = (tile, color1_tuple, color2_tuple)
         
         if cache_key not in self.cached_neighbors:
             kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
@@ -242,17 +246,17 @@ class Shader:
             if tile.is_kite and op.is_valid_star_kite(tile):
                 extended_star = op.find_star(tile, tiles)
                 if len(extended_star) == 5:
-                    color = self.invert_color(self.blend_colors(color1, color2, 0.3))
+                    color = self.invert_color(self.blend_colors(color1_tuple, color2_tuple, 0.3))
                 else:
-                    color = self.blend_colors(color1, color2, blend_factor)
+                    color = self.blend_colors(color1_tuple, color2_tuple, blend_factor)
             elif not tile.is_kite and op.is_valid_starburst_dart(tile):
                 extended_starburst = op.find_starburst(tile, tiles)
                 if len(extended_starburst) == 10:
-                    color = self.invert_color(self.blend_colors(color1, color2, 0.7))
+                    color = self.invert_color(self.blend_colors(color1_tuple, color2_tuple, 0.7))
                 else:
-                    color = self.blend_colors(color1, color2, blend_factor)
+                    color = self.blend_colors(color1_tuple, color2_tuple, blend_factor)
             else:
-                color = self.blend_colors(color1, color2, blend_factor)
+                color = self.blend_colors(color1_tuple, color2_tuple, blend_factor)
 
             self.cached_neighbors[cache_key] = color
         else:
