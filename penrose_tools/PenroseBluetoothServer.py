@@ -1,4 +1,4 @@
-# penrose_tools/PenroseBluetoothServer.py
+#/penrose_tools/PenroseBluetoothServer.py
 
 from bluezero import adapter
 from bluezero import peripheral
@@ -15,6 +15,7 @@ import logging
 from typing import List
 from .Operations import Operations
 from .events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event
+
 
 # Service and characteristic UUIDs
 PENROSE_SERVICE = '12345000-1234-1234-1234-123456789abc'
@@ -112,10 +113,10 @@ class PenroseBluetoothServer:
         self.bus = dbus.SystemBus()
         self.mainloop = GLib.MainLoop()
 
-    def read_config(self) -> bytes:
+    def read_config(self) -> List[int]:
         try:
             config_data = self.operations.read_config_file(self.config_file)
-            self.logger.debug(f"Read config data: {config_data}")
+            # self.logger.debug(f"Read config data: {config_data}")
             
             formatted_settings = {
                 "size": config_data['size'],
@@ -126,17 +127,17 @@ class PenroseBluetoothServer:
             }
             
             json_str = json.dumps(formatted_settings)
-            self.logger.debug(f"Formatted config JSON: {json_str}")
+            # self.logger.debug(f"Formatted config JSON: {json_str}")
             
-            byte_array = json_str.encode('utf-8')
-            self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
+            byte_array = [ord(c) for c in json_str]
+            # self.logger.debug(f"Converted to byte array length: {len(byte_array)}")
             
             return byte_array
                 
         except Exception as e:
             self.logger.error(f"Error reading config: {str(e)}")
             self.logger.exception("Full traceback:")
-            return '{"error": "Failed to read config"}'.encode('utf-8')
+            return [ord(c) for c in '{"error": "Failed to read config"}']
 
     def write_config(self, value: bytes) -> None:
         """Handle configuration updates using Operations class"""
@@ -167,6 +168,8 @@ class PenroseBluetoothServer:
         except Exception as e:
             self.logger.error(f"Config write error: {e}")
             self.logger.exception("Exception occurred while writing config")
+
+
 
     def configure_adapter(self):
         """Configure the Bluetooth adapter"""
@@ -206,6 +209,7 @@ class PenroseBluetoothServer:
             self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
 
+
     def handle_command(self, value: bytes) -> None:
         """Handle commands from Bluetooth"""
         try:
@@ -237,6 +241,8 @@ class PenroseBluetoothServer:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
 
+
+
     def start_server(self):
         """Initialize and start the Bluetooth server"""
         # Setup auto-pairing agent
@@ -254,7 +260,6 @@ class PenroseBluetoothServer:
                                   uuid=PENROSE_SERVICE,
                                   primary=True)
 
-        # Add CONFIG_CHAR characteristic
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=1,
@@ -267,7 +272,6 @@ class PenroseBluetoothServer:
             notify_callback=None,
         )
         
-        # Add COMMAND_CHAR characteristic
         self.peripheral.add_characteristic(
             srv_id=1,
             chr_id=2,
@@ -278,6 +282,7 @@ class PenroseBluetoothServer:
             write_callback=self.handle_command,
         )
 
+
         self.logger.debug(f"Setting up CONFIG_CHAR with UUID: {CONFIG_CHAR}")
         self.logger.debug(f"Setting up COMMAND_CHAR with UUID: {COMMAND_CHAR}")
 
@@ -287,3 +292,24 @@ class PenroseBluetoothServer:
         
         # Start mainloop for DBus
         threading.Thread(target=self.mainloop.run, daemon=True).start()
+
+def run_bluetooth_server(config_file: str,
+                        update_event: threading.Event,
+                        toggle_shader_event: threading.Event,
+                        randomize_colors_event: threading.Event,
+                        shutdown_event: threading.Event):
+    """Main function to run the Bluetooth server"""
+    server = PenroseBluetoothServer(
+        config_file,
+        update_event,
+        toggle_shader_event,
+        randomize_colors_event,
+        shutdown_event
+    )
+    
+    server.start_server()
+    
+    # Wait for shutdown event
+    shutdown_event.wait()
+    server.logger.info("Bluetooth server shutting down...")
+    server.mainloop.quit()
