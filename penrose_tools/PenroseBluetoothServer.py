@@ -24,16 +24,6 @@ COMMAND_CHAR = '12345002-1234-1234-1234-123456789abc'
 AGENT_INTERFACE = 'org.bluez.Agent1'
 AGENT_MANAGER_INTERFACE = 'org.bluez.AgentManager1'
 AGENT_PATH = "/org/bluez/AutoAgent"
-CONFIG_FILE = 'config.ini'
-
-config = configparser.ConfigParser()
-
-update_event = threading.Event()
-toggle_shader_event = threading.Event()
-toggle_regions_event = threading.Event()
-toggle_gui_event = threading.Event()
-shutdown_event = threading.Event()  # Shutdown event
-randomize_colors_event = threading.Event()
 
 class AutoAcceptAgent(dbus.service.Object):
     """
@@ -94,8 +84,11 @@ class AutoAcceptAgent(dbus.service.Object):
         return
 
 class PenroseBluetoothServer:
-    def __init__(self):
-        self.config_file = config
+    def __init__(self, config_file: str, update_event: threading.Event, 
+                 toggle_shader_event: threading.Event, 
+                 randomize_colors_event: threading.Event,
+                 shutdown_event: threading.Event):
+        self.config_file = config_file
         self.update_event = update_event
         self.toggle_shader_event = toggle_shader_event
         self.randomize_colors_event = randomize_colors_event
@@ -120,8 +113,7 @@ class PenroseBluetoothServer:
 
     def read_config(self) -> List[int]:
         try:
-            config.read(CONFIG_FILE)
-            config_data = dict(config['Settings'])
+            config_data = self.operations.read_config_file(self.config_file)
             # self.logger.debug(f"Read config data: {config_data}")
             
             formatted_settings = {
@@ -211,10 +203,11 @@ class PenroseBluetoothServer:
             self.logger.error(f"Failed to setup Bluetooth agent: {e}")
             raise
 
+
     def handle_command(self, value: List[int]) -> bool:
         """Handle commands from Bluetooth"""
         try:
-            # Convert dbus.Array to list if necessary
+            # If value is a dbus.Array of bytes, convert it to a list of integers
             if isinstance(value, dbus.Array):
                 value = [int(byte) for byte in value]
                 self.logger.debug(f"Converted dbus.Array to list: {value}")
@@ -226,7 +219,7 @@ class PenroseBluetoothServer:
             command_data = json.loads(command)
             self.logger.info(f"Parsed command data: {command_data}")
 
-            # Set events based on command
+            # **Add this block to set the appropriate event**
             if command_data['command'] == 'toggle_shader':
                 self.logger.info("Setting toggle_shader_event")
                 self.toggle_shader_event.set()
@@ -238,15 +231,12 @@ class PenroseBluetoothServer:
                 self.shutdown_event.set()
             else:
                 self.logger.warning(f"Unknown command: {command_data['command']}")
-
-            self.logger.debug("Command processed successfully")
-            return None
+            return True
 
         except Exception as e:
             self.logger.error(f"Command error: {e}")
             self.logger.exception("Exception occurred while handling command")
-            return None
-
+            return False
 
 
     def start_server(self):
@@ -298,9 +288,19 @@ class PenroseBluetoothServer:
         # Start mainloop for DBus
         threading.Thread(target=self.mainloop.run, daemon=True).start()
 
-def run_bluetooth_server():
+def run_bluetooth_server(config_file: str,
+                        update_event: threading.Event,
+                        toggle_shader_event: threading.Event,
+                        randomize_colors_event: threading.Event,
+                        shutdown_event: threading.Event):
     """Main function to run the Bluetooth server"""
-    server = PenroseBluetoothServer()
+    server = PenroseBluetoothServer(
+        config_file,
+        update_event,
+        toggle_shader_event,
+        randomize_colors_event,
+        shutdown_event
+    )
     
     server.start_server()
     
