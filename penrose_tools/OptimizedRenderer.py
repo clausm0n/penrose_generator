@@ -11,6 +11,7 @@ class OptimizedRenderer:
     def __init__(self):
         self.vbo = None
         self.color_vbo = None
+        self.ebo = None
         self.shader_program = None
         self.tile_cache = {}
         self.tile_to_vertices = {}
@@ -162,7 +163,7 @@ class OptimizedRenderer:
             glEnableVertexAttribArray(self.position_loc)
             glVertexAttribPointer(self.position_loc, 2, GL_FLOAT, GL_FALSE, 0, None)
 
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vbo)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
 
             # Draw all tiles with one call
             glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
