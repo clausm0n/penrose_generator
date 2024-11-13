@@ -7,37 +7,89 @@ import logging
 
 class ShaderManager:
     def __init__(self, shaders_folder='Shaders'):
-        # Get the directory where the script is located
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.shaders_folder = os.path.join(script_dir, shaders_folder)
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.shaders_folder = os.path.join(self.script_dir, shaders_folder)
         self.shader_programs = []
         self.shader_names = []
         self.current_shader_index = 0
         self.logger = logging.getLogger('ShaderManager')
+        
+        # Create shaders directory if it doesn't exist
+        os.makedirs(self.shaders_folder, exist_ok=True)
+        
+        # Ensure shader files exist
+        self.create_default_shaders()
         self.load_shaders()
+        
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully. Exiting application.")
             sys.exit(1)
 
+    def create_default_shaders(self):
+        """Create default shader files if they don't exist."""
+        shader_pairs = {
+            'no_effect.vert': VERTEX_SHADER_SOURCE,
+            'no_effect.frag': FRAGMENT_SHADER_SOURCE,
+            # Add other shader pairs here
+        }
+        
+        for filename, content in shader_pairs.items():
+            filepath = os.path.join(self.shaders_folder, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                self.logger.info(f"Created default shader file: {filename}")
+
+    def compile_shader_program(self, vertex_path, fragment_path):
+        """Compile shader program with detailed error checking."""
+        try:
+            with open(vertex_path, 'r') as f:
+                vertex_src = f.read()
+                
+            with open(fragment_path, 'r') as f:
+                fragment_src = f.read()
+                
+            # Compile vertex shader with error checking
+            vertex_shader = shaders.compileShader(vertex_src, GL_VERTEX_SHADER)
+            vertex_log = glGetShaderInfoLog(vertex_shader)
+            if vertex_log:
+                self.logger.warning(f"Vertex shader compile log: {vertex_log}")
+                
+            # Compile fragment shader with error checking
+            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
+            fragment_log = glGetShaderInfoLog(fragment_shader)
+            if fragment_log:
+                self.logger.warning(f"Fragment shader compile log: {fragment_log}")
+                
+            # Link program with error checking
+            program = shaders.compileProgram(vertex_shader, fragment_shader)
+            program_log = glGetProgramInfoLog(program)
+            if program_log:
+                self.logger.warning(f"Shader program link log: {program_log}")
+                
+            return program
+            
+        except Exception as e:
+            self.logger.error(f"Error compiling shader program: {e}")
+            raise
+
     def load_shaders(self):
+        """Load all shader pairs from the shaders directory."""
+        self.shader_programs.clear()
+        self.shader_names.clear()
+        
         # List of shader file pairs
-        shader_files = [
+        shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
-            # ('shift_effect.vert', 'shift_effect.frag'),
-            # ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
-            # ('color_wave.vert', 'color_wave.frag'),
-            # ('region_blend.vert', 'region_blend.frag'),
-            # ('pixelation_slideshow.vert', 'pixelation_slideshow.frag'),
-            # Add other shader file pairs here
+            # Add other shader pairs here
         ]
 
-        for vert_file, frag_file in shader_files:
+        for vert_file, frag_file in shader_pairs:
             shader_name = vert_file.replace('.vert', '')
             vert_path = os.path.join(self.shaders_folder, vert_file)
             frag_path = os.path.join(self.shaders_folder, frag_file)
-            self.logger.debug(f"Attempting to load shader: {shader_name}")
-            self.logger.debug(f"Vertex shader path: {vert_path}")
-            self.logger.debug(f"Fragment shader path: {frag_path}")
+            
+            self.logger.info(f"Loading shader: {shader_name}")
             try:
                 program = self.compile_shader_program(vert_path, frag_path)
                 self.shader_programs.append(program)
@@ -46,52 +98,38 @@ class ShaderManager:
             except Exception as e:
                 self.logger.error(f"Error loading shader {shader_name}: {e}")
 
-    def compile_shader_program(self, vertex_path, fragment_path):
-        if not os.path.isfile(vertex_path):
-            raise FileNotFoundError(f"Vertex shader file not found: {vertex_path}")
-        if not os.path.isfile(fragment_path):
-            raise FileNotFoundError(f"Fragment shader file not found: {fragment_path}")
+# Define shader sources as constants
+VERTEX_SHADER_SOURCE = """#version 120
 
-        with open(vertex_path, 'r') as f:
-            vertex_src = f.read()
-        with open(fragment_path, 'r') as f:
-            fragment_src = f.read()
+attribute vec2 position;
+attribute float tile_type;
+attribute vec2 centroid;
+attribute vec2 tile_center;
 
-        try:
-            vertex_shader = shaders.compileShader(vertex_src, GL_VERTEX_SHADER)
-        except shaders.ShaderCompilationError as e:
-            self.logger.error(f"Vertex shader compilation error in {vertex_path}: {e}")
-            raise
+varying float v_tile_type;
+varying vec2 v_centroid;
+varying vec2 v_position;
 
-        try:
-            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
-        except shaders.ShaderCompilationError as e:
-            self.logger.error(f"Fragment shader compilation error in {fragment_path}: {e}")
-            raise
+void main() {
+    v_tile_type = tile_type;
+    v_centroid = centroid;
+    v_position = position;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+"""
 
-        try:
-            program = shaders.compileProgram(vertex_shader, fragment_shader)
-        except shaders.ShaderCompilationError as e:
-            self.logger.error(f"Shader program linking error for {vertex_path} and {fragment_path}: {e}")
-            raise
+FRAGMENT_SHADER_SOURCE = """#version 120
 
-        return program
+varying float v_tile_type;
+varying vec2 v_centroid;
+varying vec2 v_position;
 
+uniform vec3 color1;
+uniform vec3 color2;
+uniform float time;
 
-    def next_shader(self):
-        if not self.shader_programs:
-            self.logger.error("No shaders loaded to switch to.")
-            return self.current_shader_index
-        self.current_shader_index = (self.current_shader_index + 1) % len(self.shader_programs)
-        self.logger.info(f"Switched to shader index: {self.current_shader_index} ({self.shader_names[self.current_shader_index]})")
-        return self.current_shader_index
-
-    def current_shader_program(self):
-        if not self.shader_programs:
-            self.logger.error("No shaders loaded. Cannot retrieve current shader program.")
-            raise IndexError("No shader programs available.")
-        return self.shader_programs[self.current_shader_index]
-
-    def reset_state(self):
-        # Implement if needed
-        pass
+void main() {
+    vec3 tile_color = v_tile_type > 0.5 ? color1 : color2;
+    gl_FragColor = vec4(tile_color, 1.0);
+}
+"""
