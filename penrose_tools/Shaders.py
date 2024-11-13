@@ -1,8 +1,8 @@
 import glfw
 import random
 import numpy as np
-from penrose_tools.Tile import Tile
-from penrose_tools.Operations import Operations
+from .Tile import Tile
+from .Operations import Operations
 from PIL import Image
 import os
 import logging
