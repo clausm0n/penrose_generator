@@ -95,6 +95,7 @@ class OptimizedRenderer:
         # Get uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
+        self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
@@ -123,8 +124,13 @@ class OptimizedRenderer:
         # Set uniforms
         color1 = np.array(config_data["color1"]) / 255.0
         color2 = np.array(config_data["color2"]) / 255.0
+        current_time = glfw.get_time()  # Get current time
+        
         glUniform3f(self.uniform_locations['color1'], *color1)
         glUniform3f(self.uniform_locations['color2'], *color2)
+        if 'time' in self.uniform_locations:
+            glUniform1f(self.uniform_locations['time'], current_time)
+
 
         # Enable blending
         glEnable(GL_BLEND)

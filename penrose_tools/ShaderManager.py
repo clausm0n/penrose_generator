@@ -189,7 +189,7 @@ class ShaderManager:
         
         shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
-            # Add more shader pairs here as needed
+            ('shift_effect.vert', 'shift_effect.frag'),
         ]
 
         for vert_file, frag_file in shader_pairs:
