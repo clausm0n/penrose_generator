@@ -14,33 +14,15 @@ class ShaderManager:
         self.current_shader_index = 0
         self.logger = logging.getLogger('ShaderManager')
         
-        # Create shaders directory if it doesn't exist
-        os.makedirs(self.shaders_folder, exist_ok=True)
-        
         # Configure logging for more detailed output
         self.logger.setLevel(logging.DEBUG)
         
-        # Ensure shader files exist
-        self.create_default_shaders()
+        # Load shaders
         self.load_shaders()
         
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully. Exiting application.")
             sys.exit(1)
-
-    def create_default_shaders(self):
-        """Create default shader files if they don't exist."""
-        shader_pairs = {
-            'no_effect.vert': VERTEX_SHADER_SOURCE,
-            'no_effect.frag': FRAGMENT_SHADER_SOURCE,
-        }
-        
-        for filename, content in shader_pairs.items():
-            filepath = os.path.join(self.shaders_folder, filename)
-            if not os.path.exists(filepath):
-                with open(filepath, 'w') as f:
-                    f.write(content)
-                self.logger.info(f"Created default shader file: {filename}")
 
     def compile_shader(self, source, shader_type):
         """Compile a shader with detailed error checking."""
@@ -49,8 +31,8 @@ class ShaderManager:
             status = glGetShaderiv(shader, GL_COMPILE_STATUS)
             if not status:
                 log = glGetShaderInfoLog(shader)
-                self.logger.error(f"Shader compilation error: {log.decode('utf-8')}")
-                raise RuntimeError(f"Shader compilation failed: {log.decode('utf-8')}")
+                self.logger.error(f"Shader compilation error: {log}")
+                raise RuntimeError(f"Shader compilation failed: {log}")
             return shader
         except Exception as e:
             self.logger.error(f"Error compiling shader: {str(e)}")
@@ -81,15 +63,15 @@ class ShaderManager:
             glLinkProgram(program)
             if not glGetProgramiv(program, GL_LINK_STATUS):
                 log = glGetProgramInfoLog(program)
-                self.logger.error(f"Program linking error: {log.decode('utf-8')}")
-                raise RuntimeError(f"Program linking failed: {log.decode('utf-8')}")
+                self.logger.error(f"Program linking error: {log}")
+                raise RuntimeError(f"Program linking failed: {log}")
             
             # Validate program
             glValidateProgram(program)
             if not glGetProgramiv(program, GL_VALIDATE_STATUS):
                 log = glGetProgramInfoLog(program)
-                self.logger.error(f"Program validation error: {log.decode('utf-8')}")
-                raise RuntimeError(f"Program validation failed: {log.decode('utf-8')}")
+                self.logger.error(f"Program validation error: {log}")
+                raise RuntimeError(f"Program validation failed: {log}")
             
             # Clean up
             glDeleteShader(vertex_shader)
@@ -108,6 +90,7 @@ class ShaderManager:
         
         shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
+            # Add other shader pairs here as needed
         ]
 
         for vert_file, frag_file in shader_pairs:
@@ -134,49 +117,3 @@ class ShaderManager:
         if not self.shader_programs:
             raise IndexError("No shader programs available")
         return self.shader_programs[self.current_shader_index]
-
-# Define shader sources as constants
-VERTEX_SHADER_SOURCE = """#version 120
-
-// Attributes
-attribute vec2 position;
-attribute float tile_type;
-attribute vec2 centroid;
-attribute vec2 tile_center;
-
-// Varyings
-varying float v_tile_type;
-varying vec2 v_centroid;
-varying vec2 v_position;
-
-void main() {
-    // Pass values to fragment shader
-    v_tile_type = tile_type;
-    v_centroid = centroid;
-    v_position = position;
-    
-    // Set vertex position
-    gl_Position = vec4(position, 0.0, 1.0);
-}
-"""
-
-FRAGMENT_SHADER_SOURCE = """#version 120
-
-// Varyings from vertex shader
-varying float v_tile_type;
-varying vec2 v_centroid;
-varying vec2 v_position;
-
-// Uniforms
-uniform vec3 color1;
-uniform vec3 color2;
-uniform float time;
-
-void main() {
-    // Select color based on tile type
-    vec3 tile_color = v_tile_type > 0.5 ? color1 : color2;
-    
-    // Output final color
-    gl_FragColor = vec4(tile_color, 1.0);
-}
-"""
