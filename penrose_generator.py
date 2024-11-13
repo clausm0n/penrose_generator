@@ -171,28 +171,20 @@ def setup_window(fullscreen=False):
     return window
 
 def main():
-    global width, height, config_data
+    global width, height, config_data, renderer
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
     args = parser.parse_args()
 
-    def signal_handler(sig, frame):
-        global running
-        print('Shutting down application...')
-        running = False
-        shutdown_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     try:
         logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
-        shaders = Shader()
-        last_time = glfw.get_time()
-
+        
+        # Initialize renderer after OpenGL context is created
+        renderer = OptimizedRenderer()
+        
         if args.bluetooth:
             server_thread = Thread(target=run_bluetooth_server, 
                                 args=(CONFIG_PATH, update_event, toggle_shader_event,
@@ -201,24 +193,21 @@ def main():
             server_thread.start()
             logger.info("Bluetooth server started.")
         else:
-            # HTTP server
             server_thread = Thread(target=run_server, daemon=True)
             server_thread.start()
             logger.info("HTTP server started.")
 
+        last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
             glClear(GL_COLOR_BUFFER_BIT)
 
-            # Check if any relevant event is set
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
-                update_toggles(shaders)
+                update_toggles(renderer.shader_manager)
 
-            renderer.render_tiles(shaders, width, height)
-            # render_tiles(shaders, width, height)
+            renderer.render_tiles(width, height, config_data)
             glfw.swap_buffers(window)
 
-            # Frame rate control
             while glfw.get_time() < last_time + 1.0 / 60.0:
                 pass
             last_time = glfw.get_time()

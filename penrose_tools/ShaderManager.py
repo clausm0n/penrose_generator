@@ -45,8 +45,10 @@ class ShaderManager:
                 self.logger.error(f"Error log: {log.decode() if isinstance(log, bytes) else log}")
                 glDeleteShader(shader)
                 raise RuntimeError(f"{name} shader compilation failed: {log}")
-                
+            
+            self.logger.debug(f"{name} shader compiled successfully")
             return shader
+            
         except Exception as e:
             self.logger.error(f"Error compiling {name} shader: {str(e)}")
             raise
@@ -64,15 +66,9 @@ class ShaderManager:
             with open(fragment_path, 'r') as f:
                 fragment_src = f.read()
 
-            # Validate shader compatibility before compiling
+            # Validate shader compatibility
             if not self.validate_shader_compatibility(vertex_src, fragment_src):
                 raise RuntimeError("Shader validation failed: incompatible varying variables")
-
-            self.logger.debug("Compiling vertex shader...")
-            vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
-            
-            self.logger.debug("Compiling fragment shader...")
-            fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
 
             self.logger.debug("Compiling vertex shader...")
             vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
@@ -105,44 +101,29 @@ class ShaderManager:
             self.logger.debug("Linking shader program...")
             glLinkProgram(program)
             
-            # Check linking status
+            # Get linking status
             link_status = glGetProgramiv(program, GL_LINK_STATUS)
+            link_log = glGetProgramInfoLog(program)
+            if link_log:
+                self.logger.debug(f"Link log: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
+            
             if not link_status:
-                log = glGetProgramInfoLog(program)
-                log_str = log.decode() if isinstance(log, bytes) else str(log)
-                self.logger.error("Shader program linking failed:")
-                self.logger.error(f"Link log: {log_str}")
-                raise RuntimeError(f"Shader program linking failed: {log_str}")
+                raise RuntimeError("Shader program linking failed")
 
             # Only validate after successful linking
             self.logger.debug("Validating shader program...")
             glValidateProgram(program)
             validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
-            if not validate_status:
-                log = glGetProgramInfoLog(program)
-                log_str = log.decode() if isinstance(log, bytes) else str(log)
-                self.logger.error("Shader program validation failed:")
-                self.logger.error(f"Validation log: {log_str}")
-                raise RuntimeError(f"Shader program validation failed: {log_str}")
-
-            # Log active attributes and uniforms
-            num_attributes = glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)
-            num_uniforms = glGetProgramiv(program, GL_ACTIVE_UNIFORMS)
+            validate_log = glGetProgramInfoLog(program)
+            if validate_log:
+                self.logger.debug(f"Validation log: {validate_log.decode() if isinstance(validate_log, bytes) else validate_log}")
             
-            self.logger.debug(f"Active attributes ({num_attributes}):")
-            for i in range(num_attributes):
-                name, size, type = glGetActiveAttrib(program, i)
-                location = glGetAttribLocation(program, name)
-                self.logger.debug(f"  {name.decode() if isinstance(name, bytes) else name}: "
-                                f"location={location}, size={size}, type={type}")
+            if not validate_status:
+                raise RuntimeError("Shader program validation failed")
 
-            self.logger.debug(f"Active uniforms ({num_uniforms}):")
-            for i in range(num_uniforms):
-                name, size, type = glGetActiveUniform(program, i)
-                location = glGetUniformLocation(program, name)
-                self.logger.debug(f"  {name.decode() if isinstance(name, bytes) else name}: "
-                                f"location={location}, size={size}, type={type}")
-
+            # Log program info
+            self.log_program_info(program)
+            
             return program
             
         except Exception as e:
@@ -162,12 +143,35 @@ class ShaderManager:
             if fragment_shader:
                 glDeleteShader(fragment_shader)
 
+    def log_program_info(self, program):
+        """Log information about the shader program's attributes and uniforms."""
+        try:
+            # Log active attributes
+            num_attributes = glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)
+            self.logger.debug(f"Active attributes ({num_attributes}):")
+            for i in range(num_attributes):
+                name, size, type = glGetActiveAttrib(program, i)
+                name = name.decode() if isinstance(name, bytes) else name
+                location = glGetAttribLocation(program, name)
+                self.logger.debug(f"  {name}: location={location}, size={size}, type={type}")
+
+            # Log active uniforms
+            num_uniforms = glGetProgramiv(program, GL_ACTIVE_UNIFORMS)
+            self.logger.debug(f"Active uniforms ({num_uniforms}):")
+            for i in range(num_uniforms):
+                name, size, type = glGetActiveUniform(program, i)
+                name = name.decode() if isinstance(name, bytes) else name
+                location = glGetUniformLocation(program, name)
+                self.logger.debug(f"  {name}: location={location}, size={size}, type={type}")
+        except Exception as e:
+            self.logger.error(f"Error logging program info: {str(e)}")
+
     def validate_shader_compatibility(self, vertex_src, fragment_src):
         """Validate that vertex and fragment shaders have matching varying variables."""
         def extract_varyings(src):
             varyings = {}
             for line in src.split('\n'):
-                if 'varying' in line:
+                if 'varying' in line and not line.strip().startswith('//'):
                     parts = line.split()
                     if len(parts) >= 3:
                         var_type = parts[1]
