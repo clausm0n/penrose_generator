@@ -5,6 +5,7 @@ from OpenGL.GL import *
 from OpenGL.GL import shaders
 import logging
 import glfw
+import numpy as np 
 
 
 class ShaderManager:
