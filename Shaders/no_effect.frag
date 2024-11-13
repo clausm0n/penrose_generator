@@ -1,17 +1,15 @@
 // no_effect.frag
-#version 330 core
+#version 120
 
-in float v_tile_type;
-in vec2 v_centroid;
-in vec2 v_tile_center;
+varying float v_tile_type;
+varying vec2 v_centroid;
+varying vec2 v_tile_center;
 
 uniform vec3 color1;
 uniform vec3 color2;
 
-out vec4 frag_color;
-
 void main()
 {
     vec3 base_color = mix(color2, color1, v_tile_type);
-    frag_color = vec4(base_color, 1.0);
+    gl_FragColor = vec4(base_color, 1.0);
 }

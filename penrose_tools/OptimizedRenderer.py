@@ -90,16 +90,14 @@ class OptimizedRenderer:
         # Get attribute and uniform locations based on the current shader
         # Common attributes
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
+        self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
+        self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'centroid')
+        self.attribute_locations['tile_center'] = glGetAttribLocation(shader_program, 'tile_center')
+
+        # Uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
         self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
-
-        # Other attributes and uniforms depending on shader
-        possible_attributes = ['tile_type', 'centroid', 'tile_center', 'blend_factor', 'star_flag']
-        for attr in possible_attributes:
-            loc = glGetAttribLocation(shader_program, attr)
-            if loc != -1:
-                self.attribute_locations[attr] = loc
 
         # Uniforms for ripple effect
         possible_uniforms = ['ripple_centers', 'ripple_start_times']
