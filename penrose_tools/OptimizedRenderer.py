@@ -1,4 +1,4 @@
-# OptimizedRenderer.py
+# penrose_tools/OptimizedRenderer.py
 import numpy as np
 from OpenGL.GL import *
 from OpenGL.GL import shaders
