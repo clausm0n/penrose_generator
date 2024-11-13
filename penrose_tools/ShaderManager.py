@@ -4,9 +4,15 @@ import sys
 from OpenGL.GL import *
 from OpenGL.GL import shaders
 import logging
+import glfw
 
 class ShaderManager:
     def __init__(self, shaders_folder='Shaders'):
+        """Initialize the shader manager after OpenGL context is created."""
+        # Verify we have a valid OpenGL context
+        if not glfw.get_current_context():
+            raise RuntimeError("ShaderManager requires an active OpenGL context")
+            
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.shaders_folder = os.path.join(self.script_dir, shaders_folder)
         self.shader_programs = []
@@ -14,7 +20,7 @@ class ShaderManager:
         self.current_shader_index = 0
         self.logger = logging.getLogger('ShaderManager')
         
-        # Configure logging for more detailed output
+        # Configure logging
         self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         handler.setLevel(logging.DEBUG)
@@ -22,15 +28,15 @@ class ShaderManager:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
         
-        # Check OpenGL context
+        # Check OpenGL context capabilities
         self.check_opengl_context()
         
         # Load shaders
         self.load_shaders()
         
         if not self.shader_programs:
-            self.logger.critical("No shaders were loaded successfully. Exiting application.")
-            sys.exit(1)
+            self.logger.critical("No shaders were loaded successfully.")
+            raise RuntimeError("Failed to load any shader programs")
 
     def compile_shader(self, source, shader_type, name):
         """Compile a shader with detailed error checking."""
@@ -69,14 +75,10 @@ class ShaderManager:
             with open(fragment_path, 'r') as f:
                 fragment_src = f.read()
 
-            self.logger.debug(f"Vertex shader source:\n{vertex_src}")
-            self.logger.debug(f"Fragment shader source:\n{fragment_src}")
-
-            # Check if we can create a program before proceeding
+            # Create program
             program = glCreateProgram()
-            if not program or program == 0:
+            if not program:
                 gl_error = glGetError()
-                self.logger.error(f"Failed to create shader program. GL Error: {gl_error}")
                 raise RuntimeError(f"Failed to create shader program. GL Error: {gl_error}")
 
             # Validate shader compatibility
@@ -84,53 +86,35 @@ class ShaderManager:
                 raise RuntimeError("Shader validation failed: incompatible varying variables")
 
             # Compile shaders
-            self.logger.debug("Compiling vertex shader...")
             vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
-            
-            self.logger.debug("Compiling fragment shader...")
             fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
 
-            # Attach shaders
+            # Attach and link
             glAttachShader(program, vertex_shader)
             glAttachShader(program, fragment_shader)
 
-            # Bind attribute locations before linking
-            self.logger.debug("Binding attribute locations...")
+            # Bind attribute locations
             attributes = {
                 0: "position",
                 1: "tile_type"
             }
-            
             for location, name in attributes.items():
                 glBindAttribLocation(program, location, name)
-                self.logger.debug(f"Bound attribute {name} to location {location}")
             
-            # Link program
-            self.logger.debug("Linking shader program...")
             glLinkProgram(program)
             
-            # Get linking status
+            # Check linking status
             link_status = glGetProgramiv(program, GL_LINK_STATUS)
-            link_log = glGetProgramInfoLog(program)
-            
-            if link_log:
-                self.logger.debug(f"Link log: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
-            
             if not link_status:
-                program_log = glGetProgramInfoLog(program)
-                self.logger.error("Program linking failed:")
-                self.logger.error(f"Vertex shader: {vertex_path}")
-                self.logger.error(f"Fragment shader: {fragment_path}")
-                self.logger.error(f"Program log: {program_log.decode() if isinstance(program_log, bytes) else program_log}")
-                raise RuntimeError(f"Shader program linking failed: {program_log}")
+                log = glGetProgramInfoLog(program)
+                raise RuntimeError(f"Shader program linking failed: {log}")
 
-            # Try binding the program to check if it's valid
-            try:
-                glUseProgram(program)
-                glUseProgram(0)
-            except Exception as e:
-                self.logger.error(f"Error using shader program: {e}")
-                raise
+            # Validate program
+            glValidateProgram(program)
+            validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
+            if not validate_status:
+                log = glGetProgramInfoLog(program)
+                raise RuntimeError(f"Shader program validation failed: {log}")
 
             return program
             
@@ -144,33 +128,11 @@ class ShaderManager:
                 glDeleteProgram(program)
             raise
         finally:
+            # Clean up shaders (they're no longer needed after linking)
             if vertex_shader:
                 glDeleteShader(vertex_shader)
             if fragment_shader:
                 glDeleteShader(fragment_shader)
-
-    def log_program_info(self, program):
-        """Log information about the shader program's attributes and uniforms."""
-        try:
-            # Log active attributes
-            num_attributes = glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)
-            self.logger.debug(f"Active attributes ({num_attributes}):")
-            for i in range(num_attributes):
-                name, size, type = glGetActiveAttrib(program, i)
-                name = name.decode() if isinstance(name, bytes) else name
-                location = glGetAttribLocation(program, name)
-                self.logger.debug(f"  {name}: location={location}, size={size}, type={type}")
-
-            # Log active uniforms
-            num_uniforms = glGetProgramiv(program, GL_ACTIVE_UNIFORMS)
-            self.logger.debug(f"Active uniforms ({num_uniforms}):")
-            for i in range(num_uniforms):
-                name, size, type = glGetActiveUniform(program, i)
-                name = name.decode() if isinstance(name, bytes) else name
-                location = glGetUniformLocation(program, name)
-                self.logger.debug(f"  {name}: location={location}, size={size}, type={type}")
-        except Exception as e:
-            self.logger.error(f"Error logging program info: {str(e)}")
 
     def validate_shader_compatibility(self, vertex_src, fragment_src):
         """Validate that vertex and fragment shaders have matching varying variables."""
@@ -188,10 +150,6 @@ class ShaderManager:
         vertex_varyings = extract_varyings(vertex_src)
         fragment_varyings = extract_varyings(fragment_src)
 
-        # Check if varyings match
-        self.logger.debug("Vertex shader varyings: " + str(vertex_varyings))
-        self.logger.debug("Fragment shader varyings: " + str(fragment_varyings))
-
         if vertex_varyings != fragment_varyings:
             self.logger.error("Mismatched varying variables between shaders:")
             self.logger.error(f"Vertex: {vertex_varyings}")
@@ -199,25 +157,26 @@ class ShaderManager:
             return False
 
         return True
-    
+
     def check_opengl_context(self):
         """Check OpenGL context and capabilities."""
         try:
-            vendor = glGetString(GL_VENDOR).decode()
-            renderer = glGetString(GL_RENDERER).decode()
-            version = glGetString(GL_VERSION).decode()
-            glsl_version = glGetString(GL_SHADING_LANGUAGE_VERSION).decode()
+            vendor = glGetString(GL_VENDOR)
+            renderer = glGetString(GL_RENDERER)
+            version = glGetString(GL_VERSION)
+            glsl_version = glGetString(GL_SHADING_LANGUAGE_VERSION)
+            
+            if not all([vendor, renderer, version, glsl_version]):
+                raise RuntimeError("Unable to get OpenGL context information")
             
             self.logger.info("OpenGL Context Information:")
-            self.logger.info(f"Vendor: {vendor}")
-            self.logger.info(f"Renderer: {renderer}")
-            self.logger.info(f"OpenGL Version: {version}")
-            self.logger.info(f"GLSL Version: {glsl_version}")
+            self.logger.info(f"Vendor: {vendor.decode()}")
+            self.logger.info(f"Renderer: {renderer.decode()}")
+            self.logger.info(f"OpenGL Version: {version.decode()}")
+            self.logger.info(f"GLSL Version: {glsl_version.decode()}")
             
-            # Check for shader support
             if not glCreateShader:
-                self.logger.error("This OpenGL context does not support shaders!")
-                raise RuntimeError("Shader support not available")
+                raise RuntimeError("This OpenGL context does not support shaders!")
                 
         except Exception as e:
             self.logger.error(f"Error checking OpenGL context: {e}")
@@ -230,6 +189,7 @@ class ShaderManager:
         
         shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
+            # Add more shader pairs here as needed
         ]
 
         for vert_file, frag_file in shader_pairs:
@@ -237,8 +197,11 @@ class ShaderManager:
             vert_path = os.path.join(self.shaders_folder, vert_file)
             frag_path = os.path.join(self.shaders_folder, frag_file)
             
-            self.logger.info(f"Loading shader pair: {vert_file} and {frag_file}")
             try:
+                if not os.path.exists(vert_path) or not os.path.exists(frag_path):
+                    self.logger.error(f"Shader files not found: {vert_file} or {frag_file}")
+                    continue
+                    
                 program = self.compile_shader_program(vert_path, frag_path)
                 self.shader_programs.append(program)
                 self.shader_names.append(shader_name)
@@ -247,12 +210,21 @@ class ShaderManager:
                 self.logger.error(f"Error loading shader {shader_name}: {e}")
 
     def next_shader(self):
+        """Switch to the next available shader program."""
         if not self.shader_programs:
             return self.current_shader_index
         self.current_shader_index = (self.current_shader_index + 1) % len(self.shader_programs)
         return self.current_shader_index
 
     def current_shader_program(self):
+        """Get the currently active shader program."""
         if not self.shader_programs:
             raise IndexError("No shader programs available")
         return self.shader_programs[self.current_shader_index]
+
+    def __del__(self):
+        """Clean up shader programs when the manager is destroyed."""
+        if glfw.get_current_context():
+            for program in self.shader_programs:
+                if program:
+                    glDeleteProgram(program)

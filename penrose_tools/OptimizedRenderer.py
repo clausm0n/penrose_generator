@@ -11,27 +11,37 @@ op = Operations()
 
 class OptimizedRenderer:
     def __init__(self):
+        """Initialize the renderer after OpenGL context is created."""
         self.vbo = None
         self.ebo = None
         self.tile_cache = {}
-        self.shader_manager = ShaderManager()
         self.attribute_locations = {}
         self.uniform_locations = {}
         self.logger = logging.getLogger('OptimizedRenderer')
+        
+        # Verify we have a valid OpenGL context before creating shader manager
+        if not glfw.get_current_context():
+            raise RuntimeError("OptimizedRenderer requires an active OpenGL context")
+            
+        self.shader_manager = ShaderManager()
 
     def transform_to_gl_space(self, x, y, width, height):
+        """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
 
     def setup_buffers(self, tiles, width, height, scale_value):
+        """Set up vertex and element buffers for rendering."""
         vertices = []
         indices = []
         offset = 0
         center = complex(width / 2, height / 2)
 
+        # Process each tile
         for tile in tiles:
             # Get screen space vertices
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
-            transformed_verts = [self.transform_to_gl_space(x, y, width, height) for x, y in screen_verts]
+            transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
+                               for x, y in screen_verts]
 
             # Calculate tile type
             tile_type = 1.0 if tile.is_kite else 0.0
@@ -62,15 +72,18 @@ class OptimizedRenderer:
         if self.vbo is None:
             self.vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, self.vertices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, 
+                    self.vertices_array, GL_STATIC_DRAW)
 
         # Create and bind element buffer
         if self.ebo is None:
             self.ebo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, 
+                    self.indices_array, GL_STATIC_DRAW)
 
     def get_shader_locations(self):
+        """Get locations of shader attributes and uniforms."""
         shader_program = self.shader_manager.current_shader_program()
         self.attribute_locations.clear()
         self.uniform_locations.clear()
@@ -84,6 +97,8 @@ class OptimizedRenderer:
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
 
     def render_tiles(self, width, height, config_data):
+        """Render the Penrose tiling."""
+        # Create cache key based on current configuration
         cache_key = (
             tuple(config_data['gamma']),
             width,
@@ -123,7 +138,8 @@ class OptimizedRenderer:
         if 'position' in self.attribute_locations:
             loc = self.attribute_locations['position']
             glEnableVertexAttribArray(loc)
-            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
+                                ctypes.c_void_p(0))
 
         # Tile Type attribute
         if 'tile_type' in self.attribute_locations:
@@ -140,3 +156,11 @@ class OptimizedRenderer:
         for loc in self.attribute_locations.values():
             glDisableVertexAttribArray(loc)
         glUseProgram(0)
+
+    def __del__(self):
+        """Clean up OpenGL resources."""
+        if glfw.get_current_context():
+            if self.vbo is not None:
+                glDeleteBuffers(1, [self.vbo])
+            if self.ebo is not None:
+                glDeleteBuffers(1, [self.ebo])

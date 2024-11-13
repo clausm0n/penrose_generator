@@ -1,17 +1,17 @@
+# penrose_generator.py
 import os
 import numpy as np
 import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Effects,OptimizedRenderer, run_server, run_bluetooth_server
+from penrose_tools import Operations, Tile, Effects, OptimizedRenderer, run_server, run_bluetooth_server
 import logging
 import configparser
 import signal
 import argparse
 import asyncio
 from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event
-
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -28,8 +28,6 @@ gui_visible = False
 running = True
 width = 0
 height = 0
-
-renderer = OptimizedRenderer()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -49,45 +47,8 @@ def initialize_config(path):
             config.write(configfile)
     return op.read_config_file(path)
 
-
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
-
-def setup_projection(width, height):
-    glMatrixMode(GL_PROJECTION)
-    glLoadIdentity()
-    glOrtho(0, width, height, 0, -1, 1)
-    glMatrixMode(GL_MODELVIEW)
-    glLoadIdentity()
-
-
-def update_toggles(shaders):
-    global config_data, running
-    logger.debug("Checking for events...")
-    logger.debug(f"Events Status - Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
-    if randomize_colors_event.is_set():
-        logger.info("Randomize Colors Event Detected")
-        for i in range(3):
-            config_data['color1'][i] = np.random.randint(0, 256)
-            config_data['color2'][i] = np.random.randint(0, 256)
-        randomize_colors_event.clear()
-        op.update_config_file(CONFIG_PATH, **config_data)
-        logger.info("Colors randomized successfully.")
-    if update_event.is_set():
-        logger.info("Update Event Detected")
-        update_event.clear()
-        config_data = op.read_config_file(CONFIG_PATH)
-        logger.info("Configuration updated successfully.")
-    if toggle_shader_event.is_set():
-        logger.info("Toggle Shader Event Detected")
-        toggle_shader_event.clear()
-        shaders.next_shader()
-        logger.info("Shader toggled successfully.")
-    if shutdown_event.is_set():
-        logger.info("Shutdown Event Detected")
-        running = False
-        logger.info("Exiting application.")
-        return False
 
 def setup_window(fullscreen=False):
     global width, height
@@ -114,28 +75,33 @@ def setup_window(fullscreen=False):
         raise Exception("GLFW window can't be created")
     
     glfw.make_context_current(window)
-    
-    # Print OpenGL version for debugging
-    print(f"OpenGL Version: {glGetString(GL_VERSION).decode()}")
-    print(f"GLSL Version: {glGetString(GL_SHADING_LANGUAGE_VERSION).decode()}")
-    
-    # Basic OpenGL setup
-    glEnable(GL_BLEND)
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-    glClearColor(0, 0, 0, 1)
-    
-    # Setup viewport and projection
-    glViewport(0, 0, width, height)
-    glMatrixMode(GL_PROJECTION)
-    glLoadIdentity()
-    glOrtho(0, width, height, 0, -1, 1)
-    glMatrixMode(GL_MODELVIEW)
-    glLoadIdentity()
-
     return window
 
+def update_toggles(shaders):
+    global config_data, running
+    logger.debug("Checking for events...")
+    if randomize_colors_event.is_set():
+        logger.info("Randomize Colors Event Detected")
+        for i in range(3):
+            config_data['color1'][i] = np.random.randint(0, 256)
+            config_data['color2'][i] = np.random.randint(0, 256)
+        randomize_colors_event.clear()
+        op.update_config_file(CONFIG_PATH, **config_data)
+    if update_event.is_set():
+        logger.info("Update Event Detected")
+        update_event.clear()
+        config_data = op.read_config_file(CONFIG_PATH)
+    if toggle_shader_event.is_set():
+        logger.info("Toggle Shader Event Detected")
+        toggle_shader_event.clear()
+        shaders.next_shader()
+    if shutdown_event.is_set():
+        logger.info("Shutdown Event Detected")
+        running = False
+        return False
+
 def main():
-    global width, height, config_data, renderer
+    global width, height, config_data
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
@@ -146,20 +112,32 @@ def main():
         logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
         
+        # Initialize OpenGL settings after context creation
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glClearColor(0, 0, 0, 1)
+        
+        # Setup viewport and projection
+        glViewport(0, 0, width, height)
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(0, width, height, 0, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
         # Initialize renderer after OpenGL context is created
         renderer = OptimizedRenderer()
         
         if args.bluetooth:
             server_thread = Thread(target=run_bluetooth_server, 
                                 args=(CONFIG_PATH, update_event, toggle_shader_event,
-                                        randomize_colors_event, shutdown_event),
+                                     randomize_colors_event, shutdown_event),
                                 daemon=True)
-            server_thread.start()
-            logger.info("Bluetooth server started.")
         else:
             server_thread = Thread(target=run_server, daemon=True)
-            server_thread.start()
-            logger.info("HTTP server started.")
+        
+        server_thread.start()
+        logger.info(f"{'Bluetooth' if args.bluetooth else 'HTTP'} server started.")
 
         last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:
@@ -183,7 +161,6 @@ def main():
         glfw.terminate()
         shutdown_event.set()
         logger.info("Application has been terminated.")
-
 
 if __name__ == '__main__':
     main()
