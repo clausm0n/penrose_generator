@@ -42,7 +42,7 @@ class ShaderManager:
                 log = glGetShaderInfoLog(shader)
                 self.logger.error(f"{name} shader compilation failed:")
                 self.logger.error(f"Shader source:\n{source}")
-                self.logger.error(f"Error log:\n{log}")
+                self.logger.error(f"Error log: {log.decode() if isinstance(log, bytes) else log}")
                 glDeleteShader(shader)
                 raise RuntimeError(f"{name} shader compilation failed: {log}")
                 
@@ -70,18 +70,28 @@ class ShaderManager:
             self.logger.debug("Compiling fragment shader...")
             fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
             
-            # Create and link program
+            # Create program
             self.logger.debug("Creating shader program...")
             program = glCreateProgram()
+
+            # Attach shaders
             glAttachShader(program, vertex_shader)
             glAttachShader(program, fragment_shader)
-            
+
             # Bind attribute locations before linking
-            glBindAttribLocation(program, 0, "position")
-            glBindAttribLocation(program, 1, "tile_type")
-            glBindAttribLocation(program, 2, "centroid")
-            glBindAttribLocation(program, 3, "tile_center")
+            self.logger.debug("Binding attribute locations...")
+            attributes = {
+                0: "position",
+                1: "tile_type",
+                2: "centroid",
+                3: "tile_center"
+            }
             
+            for location, name in attributes.items():
+                glBindAttribLocation(program, location, name)
+                self.logger.debug(f"Bound attribute {name} to location {location}")
+            
+            # Link program
             self.logger.debug("Linking shader program...")
             glLinkProgram(program)
             
@@ -89,24 +99,40 @@ class ShaderManager:
             link_status = glGetProgramiv(program, GL_LINK_STATUS)
             if not link_status:
                 log = glGetProgramInfoLog(program)
+                log_str = log.decode() if isinstance(log, bytes) else str(log)
                 self.logger.error("Shader program linking failed:")
-                self.logger.error(f"Link log:\n{log}")
-                raise RuntimeError(f"Shader program linking failed: {log}")
-            
+                self.logger.error(f"Link log: {log_str}")
+                raise RuntimeError(f"Shader program linking failed: {log_str}")
+
+            # Only validate after successful linking
             self.logger.debug("Validating shader program...")
             glValidateProgram(program)
             validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
             if not validate_status:
                 log = glGetProgramInfoLog(program)
+                log_str = log.decode() if isinstance(log, bytes) else str(log)
                 self.logger.error("Shader program validation failed:")
-                self.logger.error(f"Validation log:\n{log}")
-                raise RuntimeError(f"Shader program validation failed: {log}")
+                self.logger.error(f"Validation log: {log_str}")
+                raise RuntimeError(f"Shader program validation failed: {log_str}")
+
+            # Log active attributes and uniforms
+            num_attributes = glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)
+            num_uniforms = glGetProgramiv(program, GL_ACTIVE_UNIFORMS)
             
-            # Log program info
-            self.logger.debug("Shader program created successfully")
-            self.logger.debug(f"Active attributes: {glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)}")
-            self.logger.debug(f"Active uniforms: {glGetProgramiv(program, GL_ACTIVE_UNIFORMS)}")
-            
+            self.logger.debug(f"Active attributes ({num_attributes}):")
+            for i in range(num_attributes):
+                name, size, type = glGetActiveAttrib(program, i)
+                location = glGetAttribLocation(program, name)
+                self.logger.debug(f"  {name.decode() if isinstance(name, bytes) else name}: "
+                                f"location={location}, size={size}, type={type}")
+
+            self.logger.debug(f"Active uniforms ({num_uniforms}):")
+            for i in range(num_uniforms):
+                name, size, type = glGetActiveUniform(program, i)
+                location = glGetUniformLocation(program, name)
+                self.logger.debug(f"  {name.decode() if isinstance(name, bytes) else name}: "
+                                f"location={location}, size={size}, type={type}")
+
             return program
             
         except Exception as e:
