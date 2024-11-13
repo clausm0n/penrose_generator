@@ -40,33 +40,38 @@ class AutoAcceptAgent(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
         self.logger = logging.getLogger('PenroseBLE.Agent')
+        self.trusted_devices = set()
         
-    @dbus.service.method(AGENT_INTERFACE,
-                        in_signature="os", out_signature="")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
-        """Always authorize the service"""
-        self.logger.info(f"Authorizing service {uuid} for device {device}")
+        """Always authorize the service for trusted devices"""
+        device_path = str(device)
+        if device_path in self.trusted_devices:
+            self.logger.info(f"Auto-authorizing service {uuid} for trusted device {device}")
+            return
+        self.trusted_devices.add(device_path)
         return
 
-    @dbus.service.method(AGENT_INTERFACE,
-                        in_signature="o", out_signature="")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="")
     def RequestAuthorization(self, device):
-        """Always authorize the device"""
-        self.logger.info(f"Authorizing device {device}")
+        """Auto-authorize trusted devices"""
+        device_path = str(device)
+        if device_path not in self.trusted_devices:
+            self.trusted_devices.add(device_path)
         return
 
-    @dbus.service.method(AGENT_INTERFACE,
-                        in_signature="ou", out_signature="")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
     def DisplayPasskey(self, device, passkey):
-        """Display the passkey (in this case, just log it)"""
-        self.logger.info(f"Passkey: {passkey}")
+        """Just log the passkey"""
+        self.logger.info(f"Passkey for {device}: {passkey}")
         return
 
-    @dbus.service.method(AGENT_INTERFACE,
-                        in_signature="ou", out_signature="")
+    @dbus.service.method(AGENT_INTERFACE, in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
-        """Automatically confirm pairing"""
-        self.logger.info(f"Auto-accepting pairing request with passkey: {passkey}")
+        """Auto-confirm pairing"""
+        device_path = str(device)
+        self.trusted_devices.add(device_path)
+        self.logger.info(f"Auto-confirming pairing with passkey: {passkey}")
         return
 
     @dbus.service.method(AGENT_INTERFACE,
