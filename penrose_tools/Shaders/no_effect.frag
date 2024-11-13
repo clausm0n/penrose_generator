@@ -1,9 +1,9 @@
-#version 120  // Using GLSL 120 for compatibility with OpenGL 2.1
+#version 120
 
-// Varying variables received from vertex shader
+// Varying variables received from vertex shader (must match vertex shader)
+varying vec2 v_position;
 varying float v_tile_type;
 varying vec2 v_centroid;
-varying vec2 v_position;
 
 // Uniform variables
 uniform vec3 color1;

@@ -64,6 +64,16 @@ class ShaderManager:
             with open(fragment_path, 'r') as f:
                 fragment_src = f.read()
 
+            # Validate shader compatibility before compiling
+            if not self.validate_shader_compatibility(vertex_src, fragment_src):
+                raise RuntimeError("Shader validation failed: incompatible varying variables")
+
+            self.logger.debug("Compiling vertex shader...")
+            vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
+            
+            self.logger.debug("Compiling fragment shader...")
+            fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
+
             self.logger.debug("Compiling vertex shader...")
             vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
             
@@ -151,6 +161,34 @@ class ShaderManager:
                 glDeleteShader(vertex_shader)
             if fragment_shader:
                 glDeleteShader(fragment_shader)
+
+    def validate_shader_compatibility(self, vertex_src, fragment_src):
+        """Validate that vertex and fragment shaders have matching varying variables."""
+        def extract_varyings(src):
+            varyings = {}
+            for line in src.split('\n'):
+                if 'varying' in line:
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        var_type = parts[1]
+                        var_name = parts[2].rstrip(';')
+                        varyings[var_name] = var_type
+            return varyings
+
+        vertex_varyings = extract_varyings(vertex_src)
+        fragment_varyings = extract_varyings(fragment_src)
+
+        # Check if varyings match
+        self.logger.debug("Vertex shader varyings: " + str(vertex_varyings))
+        self.logger.debug("Fragment shader varyings: " + str(fragment_varyings))
+
+        if vertex_varyings != fragment_varyings:
+            self.logger.error("Mismatched varying variables between shaders:")
+            self.logger.error(f"Vertex: {vertex_varyings}")
+            self.logger.error(f"Fragment: {fragment_varyings}")
+            return False
+
+        return True
 
     def load_shaders(self):
         """Load all shader pairs from the shaders directory."""
