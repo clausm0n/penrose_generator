@@ -89,18 +89,15 @@ class ShaderManager:
             vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
             fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
 
-            # Attach and link
+            # Attach shaders
             glAttachShader(program, vertex_shader)
             glAttachShader(program, fragment_shader)
 
-            # Bind attribute locations
-            attributes = {
-                0: "position",
-                1: "tile_type"
-            }
-            for location, name in attributes.items():
-                glBindAttribLocation(program, location, name)
+            # Bind attribute locations before linking
+            glBindAttribLocation(program, 0, "position")
+            glBindAttribLocation(program, 1, "tile_type")
             
+            # Link program
             glLinkProgram(program)
             
             # Check linking status
@@ -128,7 +125,6 @@ class ShaderManager:
                 glDeleteProgram(program)
             raise
         finally:
-            # Clean up shaders (they're no longer needed after linking)
             if vertex_shader:
                 glDeleteShader(vertex_shader)
             if fragment_shader:
