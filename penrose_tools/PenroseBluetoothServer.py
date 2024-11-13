@@ -23,9 +23,9 @@ import time
 
 
 # Service and characteristic UUIDs
-PENROSE_SERVICE = '12345000-1234-1234-1234-123456789abc'
-CONFIG_CHAR = '12345001-1234-1234-1234-123456789abc'
-COMMAND_CHAR = '12345002-1234-1234-1234-123456789abc'
+PENROSE_SERVICE = '71A30000-0000-4000-B000-00805F9B34FB'
+CONFIG_CHAR = '71A30000-0001-4000-B000-00805F9B34FB'
+COMMAND_CHAR = '71A30000-0002-4000-B000-00805F9B34FB'
 
 # Additional Bluetooth constants
 AGENT_INTERFACE = 'org.bluez.Agent1'
@@ -118,6 +118,7 @@ class PenroseBluetoothServer:
         self.message_frames = {}
 
         self.images_directory = "uploaded_images"
+        self.config_characteristic = None
 
         if not os.path.exists(self.images_directory):
             os.makedirs(self.images_directory)
@@ -380,14 +381,16 @@ class PenroseBluetoothServer:
                     
                     self.logger.info("Config updated through command channel")
                     self.update_event.set()
+                    self.notify_config_change()
             
             elif command == 'toggle_shader':
                 self.logger.info("Setting toggle_shader_event")
                 self.toggle_shader_event.set()
             
             elif command == 'randomize_colors':
-                self.logger.info("Setting randomize_colors_event")
+                self.logger.info("Handling randomize_colors command")
                 self.randomize_colors_event.set()
+                self.notify_config_change()
             
             elif command == 'shutdown':
                 self.logger.info("Setting shutdown_event")
@@ -544,6 +547,17 @@ class PenroseBluetoothServer:
         
         # Start mainloop for DBus
         threading.Thread(target=self.mainloop.run, daemon=True).start()
+
+    def notify_config_change(self):
+            """Notify connected clients about configuration changes"""
+            if self.config_characteristic and self.config_characteristic.notifying:
+                try:
+                    new_config = self.read_config()
+                    self.config_characteristic.set_value(new_config)
+                    self.logger.info("Notified clients of config change")
+                except Exception as e:
+                    self.logger.error(f"Failed to notify config change: {e}")
+
 
 def run_bluetooth_server(config_file: str,
                         update_event: threading.Event,
