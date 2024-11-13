@@ -1,57 +1,28 @@
+# OptimizedRenderer.py
 import numpy as np
 from OpenGL.GL import *
 from OpenGL.GL import shaders
 import ctypes
 import glfw
-from penrose_tools import Operations
+from penrose_tools import Operations, ShaderManager
+import logging
 
 op = Operations()
 
 class OptimizedRenderer:
     def __init__(self):
         self.vbo = None
-        self.color_vbo = None
         self.ebo = None
-        self.shader_program = None
         self.tile_cache = {}
-        self.tile_to_vertices = {}
-        
-    def setup_shader(self):
-        vertex_shader = """
-        #version 120
-        attribute vec2 position;
-        void main() {
-            gl_Position = vec4(position, 0.0, 1.0);
-        }
-        """
+        self.shader_manager = ShaderManager()  # Initialize ShaderManager
+        self.attribute_locations = {}
+        self.uniform_locations = {}
+        self.logger = logging.getLogger('OptimizedRenderer')
+        self.ripples = []  # For ripple effects
+        self.last_raindrop_time = 0
 
-        fragment_shader = """
-        #version 120
-        uniform vec3 color1;
-        uniform vec3 color2;
-        uniform float time;
-        void main() {
-            // Example color computation (you can adjust this to match your shader logic)
-            float factor = sin(time * 0.001 + gl_FragCoord.x * 0.01) * 0.5 + 0.5;
-            vec3 color = mix(color1, color2, factor);
-            gl_FragColor = vec4(color, 1.0);
-        }
-        """
-
-        try:
-            vertex = shaders.compileShader(vertex_shader, GL_VERTEX_SHADER)
-            fragment = shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER)
-            self.shader_program = shaders.compileProgram(vertex, fragment)
-
-            self.position_loc = glGetAttribLocation(self.shader_program, 'position')
-            self.color1_loc = glGetUniformLocation(self.shader_program, 'color1')
-            self.color2_loc = glGetUniformLocation(self.shader_program, 'color2')
-            self.time_loc = glGetUniformLocation(self.shader_program, 'time')
-
-        except Exception as e:
-            print(f"Shader compilation error: {e}")
-            raise
-
+    def transform_to_gl_space(self, x, y, width, height):
+        return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
 
     def setup_buffers(self, tiles, width, height, scale_value):
         vertices = []
@@ -59,18 +30,29 @@ class OptimizedRenderer:
         offset = 0  # To keep track of the index offset
         center = complex(width / 2, height / 2)
 
-        # Transform coordinates to OpenGL space (-1 to 1)
-        def transform_to_gl_space(x, y):
-            return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
-
         for tile in tiles:
             # Get screen space vertices
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
-            transformed_verts = [transform_to_gl_space(x, y) for x, y in screen_verts]
+            transformed_verts = [self.transform_to_gl_space(x, y, width, height) for x, y in screen_verts]
 
-            # Add vertices to the list
+            # Calculate attributes needed by shaders
+            tile_type = 1.0 if tile.is_kite else 0.0
+            centroid_x = sum([v[0] for v in transformed_verts]) / len(transformed_verts)
+            centroid_y = sum([v[1] for v in transformed_verts]) / len(transformed_verts)
+
+            # For raindrop ripple effect, store tile center positions
+            tile_center_x = centroid_x
+            tile_center_y = centroid_y
+
+            # Add vertices and attributes
             for vert in transformed_verts:
-                vertices.extend(vert)
+                vertices.extend([
+                    vert[0], vert[1],       # position
+                    tile_type,              # tile_type
+                    centroid_x, centroid_y,  # centroid
+                    tile_center_x, tile_center_y  # tile_center
+                    # Add other attributes as needed
+                ])
 
             # Create indices for this tile
             num_verts = len(transformed_verts)
@@ -99,33 +81,34 @@ class OptimizedRenderer:
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
 
-    
-    def update_colors(self, tiles, shader_func, current_time, width, height, color1, color2, scale_value):
-        """Update color buffer with shader effects"""
-        colors = []
-        
-        for tile in tiles:
-            # Get shader color
-            modified_color = shader_func(tile, current_time, tiles, color1, color2, width, height, scale_value)
-            
-            # Convert color from 0-255 to 0-1 range
-            normalized_color = [c / 255.0 for c in modified_color]
-            
-            # Get number of vertices for this tile
-            start_idx, end_idx = self.tile_to_vertices[tile]
-            num_verts = end_idx - start_idx
-            
-            # Add color for each vertex of the tile
-            colors.extend(normalized_color * num_verts)
-        
-        # Update color buffer
-        colors_array = np.array(colors, dtype=np.float32)
-        glBindBuffer(GL_ARRAY_BUFFER, self.color_vbo)
-        glBufferData(GL_ARRAY_BUFFER, colors_array.nbytes, colors_array, GL_DYNAMIC_DRAW)
-    
-    def render_tiles(self, shaders, width, height, config_data):
-        current_time = glfw.get_time() * 1000
+    def get_shader_locations(self):
+        shader_program = self.shader_manager.current_shader_program()
+        self.attribute_locations.clear()
+        self.uniform_locations.clear()
 
+        # Get attribute and uniform locations based on the current shader
+        # Common attributes
+        self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
+        self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
+        self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
+        self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
+
+        # Other attributes and uniforms depending on shader
+        possible_attributes = ['tile_type', 'centroid', 'tile_center', 'blend_factor', 'star_flag']
+        for attr in possible_attributes:
+            loc = glGetAttribLocation(shader_program, attr)
+            if loc != -1:
+                self.attribute_locations[attr] = loc
+
+        # Uniforms for ripple effect
+        possible_uniforms = ['ripple_centers', 'ripple_start_times']
+        for uniform in possible_uniforms:
+            loc = glGetUniformLocation(shader_program, uniform)
+            if loc != -1:
+                self.uniform_locations[uniform] = loc
+
+    def render_tiles(self, width, height, config_data):
+        current_time = glfw.get_time() * 1000
         cache_key = (
             tuple(config_data['gamma']),
             width,
@@ -140,38 +123,101 @@ class OptimizedRenderer:
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
 
-            if self.shader_program is None:
-                self.setup_shader()
-
             self.setup_buffers(tiles, width, height, config_data['scale'])
+            self.get_shader_locations()
 
-        try:
-            # Use shader program
-            glUseProgram(self.shader_program)
+        # Use current shader program
+        shader_program = self.shader_manager.current_shader_program()
+        glUseProgram(shader_program)
 
-            # Pass uniforms to shader
-            glUniform3f(self.color1_loc, *(np.array(config_data["color1"]) / 255.0))
-            glUniform3f(self.color2_loc, *(np.array(config_data["color2"]) / 255.0))
-            glUniform1f(self.time_loc, current_time)
+        # Set uniforms
+        color1 = np.array(config_data["color1"]) / 255.0
+        color2 = np.array(config_data["color2"]) / 255.0
+        glUniform3f(self.uniform_locations['color1'], *color1)
+        glUniform3f(self.uniform_locations['color2'], *color2)
+        glUniform1f(self.uniform_locations['time'], current_time)
 
-            # Enable blending
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        # Handle ripple effect uniforms if present
+        if 'ripple_centers' in self.uniform_locations:
+            MAX_RIPPLES = 5
+            # Update ripple data
+            if not hasattr(self, 'ripples'):
+                self.ripples = []
+                self.last_raindrop_time = 0
 
-            # Bind vertex array and buffers
-            glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-            glEnableVertexAttribArray(self.position_loc)
-            glVertexAttribPointer(self.position_loc, 2, GL_FLOAT, GL_FALSE, 0, None)
+            # Create new raindrop every 3.5 seconds, if we're below the max ripples limit
+            if current_time - self.last_raindrop_time > 3500 and len(self.ripples) < MAX_RIPPLES:
+                self.last_raindrop_time = current_time
+                # Choose a random tile center
+                tiles = self.tile_cache[cache_key]
+                random_tile = np.random.choice(list(tiles))
+                centroid = op.calculate_centroid(random_tile.vertices)
+                # Transform to GL space
+                center_x, center_y = self.transform_to_gl_space(centroid.real, centroid.imag, width, height)
+                self.ripples.append({'center': (center_x, center_y), 'start_time': current_time})
 
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+            # Remove old ripples
+            self.ripples = [r for r in self.ripples if (current_time - r['start_time']) < 15000]
 
-            # Draw all tiles with one call
-            glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+            # Prepare data arrays
+            ripple_centers = np.zeros((MAX_RIPPLES, 2), dtype=np.float32)
+            ripple_start_times = np.zeros(MAX_RIPPLES, dtype=np.float32)
 
-            # Cleanup
-            glDisableVertexAttribArray(self.position_loc)
-            glUseProgram(0)
+            for i, ripple in enumerate(self.ripples):
+                if i >= MAX_RIPPLES:
+                    break
+                ripple_centers[i] = ripple['center']
+                ripple_start_times[i] = ripple['start_time']
 
-        except GLError as e:
-            print(f"OpenGL error during rendering: {e}")
-            raise
+            # Pass to shader
+            loc_centers = self.uniform_locations['ripple_centers']
+            loc_times = self.uniform_locations['ripple_start_times']
+            glUniform2fv(loc_centers, MAX_RIPPLES, ripple_centers.flatten())
+            glUniform1fv(loc_times, MAX_RIPPLES, ripple_start_times)
+
+        # Enable blending
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        # Bind buffers and set attribute pointers
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        stride = 7 * ctypes.sizeof(GLfloat)  # Adjust stride based on number of attributes
+
+        offset = 0
+
+        # Position
+        if 'position' in self.attribute_locations:
+            loc = self.attribute_locations['position']
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
+            offset += 2 * ctypes.sizeof(GLfloat)
+
+        # Tile Type
+        if 'tile_type' in self.attribute_locations:
+            loc = self.attribute_locations['tile_type']
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
+            offset += 1 * ctypes.sizeof(GLfloat)
+
+        # Centroid
+        if 'centroid' in self.attribute_locations:
+            loc = self.attribute_locations['centroid']
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
+            offset += 2 * ctypes.sizeof(GLfloat)
+
+        # Tile Center
+        if 'tile_center' in self.attribute_locations:
+            loc = self.attribute_locations['tile_center']
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset))
+            offset += 2 * ctypes.sizeof(GLfloat)
+
+        # Draw elements
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+
+        # Cleanup
+        for loc in self.attribute_locations.values():
+            glDisableVertexAttribArray(loc)
+        glUseProgram(0)
