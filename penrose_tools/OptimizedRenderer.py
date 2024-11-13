@@ -41,16 +41,22 @@ class OptimizedRenderer:
             # Get screen space vertices
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
             transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
-                               for x, y in screen_verts]
+                            for x, y in screen_verts]
 
             # Calculate tile type
             tile_type = 1.0 if tile.is_kite else 0.0
+            
+            # Calculate centroid in screen space
+            centroid = sum(tile.vertices) / len(tile.vertices)
+            screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
+            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
 
             # Add vertices and attributes
             for vert in transformed_verts:
                 vertices.extend([
-                    vert[0], vert[1],  # position
-                    tile_type          # tile_type
+                    vert[0], vert[1],      # position
+                    tile_type,             # tile_type
+                    gl_centroid[0], gl_centroid[1]  # centroid
                 ])
 
             # Create indices for this tile
@@ -91,11 +97,13 @@ class OptimizedRenderer:
         # Get attribute locations
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
+        self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'centroid')
 
         # Get uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
         self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
+
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
@@ -138,7 +146,7 @@ class OptimizedRenderer:
 
         # Bind buffers and set attribute pointers
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        stride = 3 * ctypes.sizeof(GLfloat)  # position (2) + tile_type (1)
+        stride = 5 * ctypes.sizeof(GLfloat)  # position (2) + tile_type (1) + centroid (2)
 
         # Position attribute
         if 'position' in self.attribute_locations:
@@ -153,6 +161,13 @@ class OptimizedRenderer:
             glEnableVertexAttribArray(loc)
             glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
                                 ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
+
+        # Centroid attribute
+        if 'centroid' in self.attribute_locations:
+            loc = self.attribute_locations['centroid']
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
+                                ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
         # Draw elements
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
