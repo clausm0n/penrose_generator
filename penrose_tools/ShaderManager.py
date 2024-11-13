@@ -23,11 +23,11 @@ class ShaderManager:
         # List of shader file pairs
         shader_files = [
             ('no_effect.vert', 'no_effect.frag'),
-            ('shift_effect.vert', 'shift_effect.frag'),
-            ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
-            ('color_wave.vert', 'color_wave.frag'),
-            ('region_blend.vert', 'region_blend.frag'),
-            ('pixelation_slideshow.vert', 'pixelation_slideshow.frag'),
+            # ('shift_effect.vert', 'shift_effect.frag'),
+            # ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
+            # ('color_wave.vert', 'color_wave.frag'),
+            # ('region_blend.vert', 'region_blend.frag'),
+            # ('pixelation_slideshow.vert', 'pixelation_slideshow.frag'),
             # Add other shader file pairs here
         ]
 
