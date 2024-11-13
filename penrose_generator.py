@@ -214,7 +214,7 @@ def main():
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(shaders)
 
-            render_tiles(shaders, width, height, config_data)
+            render_tiles(shaders, width, height)
             # render_tiles(shaders, width, height)
             glfw.swap_buffers(window)
 
