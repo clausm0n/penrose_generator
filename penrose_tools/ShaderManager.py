@@ -6,6 +6,7 @@ from OpenGL.GL import shaders
 import logging
 import glfw
 
+
 class ShaderManager:
     def __init__(self, shaders_folder='Shaders'):
         """Initialize the shader manager after OpenGL context is created."""
@@ -37,7 +38,7 @@ class ShaderManager:
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully.")
             raise RuntimeError("Failed to load any shader programs")
-
+        
     def compile_shader(self, source, shader_type, name):
         """Compile a shader with detailed error checking."""
         try:
@@ -179,52 +180,60 @@ class ShaderManager:
             raise
 
     def load_shaders(self):
-        """Load all shader pairs from the shaders directory."""
-        self.shader_programs.clear()
-        self.shader_names.clear()
-        
-        shader_pairs = [
-            ('no_effect.vert', 'no_effect.frag'),
-            ('shift_effect.vert', 'shift_effect.frag'),
-            ('color_wave.vert', 'color_wave.frag'),
-            ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
-        ]
-
-        for vert_file, frag_file in shader_pairs:
-            shader_name = vert_file.replace('.vert', '')
-            vert_path = os.path.join(self.shaders_folder, vert_file)
-            frag_path = os.path.join(self.shaders_folder, frag_file)
+            """Load all shader pairs from the shaders directory."""
+            self.shader_programs.clear()
+            self.shader_names.clear()
             
-            try:
-                if not os.path.exists(vert_path) or not os.path.exists(frag_path):
-                    self.logger.error(f"Shader files not found: {vert_file} or {frag_file}")
-                    continue
+            shader_pairs = [
+                ('no_effect.vert', 'no_effect.frag'),
+                ('shift_effect.vert', 'shift_effect.frag'),
+                ('color_wave.vert', 'color_wave.frag'),
+                ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
+            ]
+
+            for vert_file, frag_file in shader_pairs:
+                shader_name = vert_file.replace('.vert', '')
+                vert_path = os.path.join(self.shaders_folder, vert_file)
+                frag_path = os.path.join(self.shaders_folder, frag_file)
+                
+                try:
+                    if not os.path.exists(vert_path) or not os.path.exists(frag_path):
+                        self.logger.error(f"Shader files not found: {vert_file} or {frag_file}")
+                        continue
+                        
+                    program = self.compile_shader_program(vert_path, frag_path)
+                    self.shader_programs.append(program)
+                    self.shader_names.append(shader_name)
                     
-                program = self.compile_shader_program(vert_path, frag_path)
-                self.shader_programs.append(program)
-                self.shader_names.append(shader_name)
-                
-                # Set up uniforms for specific shaders
-                glUseProgram(program)
-                
-                # Common uniforms
-                glUniform1i(glGetUniformLocation(program, "time"), 0)
-                
-                # Special uniforms for ripple shader
-                if shader_name == 'raindrop_ripple':
-                    glUniform1i(glGetUniformLocation(program, "activeRipples"), 0)
-                    ripple_centers_loc = glGetUniformLocation(program, "rippleCenters")
-                    ripple_states_loc = glGetUniformLocation(program, "rippleStates")
-                    if ripple_centers_loc != -1:
-                        glUniform2fv(ripple_centers_loc, 3, np.zeros(6))
-                    if ripple_states_loc != -1:
-                        glUniform1fv(ripple_states_loc, 6, np.zeros(6))
-                
-                glUseProgram(0)
-                self.logger.info(f"Successfully loaded shader: {shader_name}")
-                
-            except Exception as e:
-                self.logger.error(f"Error loading shader {shader_name}: {e}")
+                    # Set up uniforms for specific shaders
+                    glUseProgram(program)
+                    
+                    # Only try to set uniforms that exist in the shader
+                    time_loc = glGetUniformLocation(program, "time")
+                    if time_loc != -1:
+                        glUniform1f(time_loc, 0.0)
+                    
+                    # Special uniforms for ripple shader
+                    if shader_name == 'raindrop_ripple':
+                        active_ripples_loc = glGetUniformLocation(program, "activeRipples")
+                        if active_ripples_loc != -1:
+                            glUniform1i(active_ripples_loc, 0)
+                        
+                        ripple_centers_loc = glGetUniformLocation(program, "rippleCenters")
+                        if ripple_centers_loc != -1:
+                            centers = np.zeros(6, dtype=np.float32)  # 3 ripples * 2 coordinates
+                            glUniform2fv(ripple_centers_loc, 3, centers)
+                        
+                        ripple_states_loc = glGetUniformLocation(program, "rippleStates")
+                        if ripple_states_loc != -1:
+                            states = np.zeros(6, dtype=np.float32)  # 3 ripples * 2 values (age, radius)
+                            glUniform1fv(ripple_states_loc, 6, states)
+                    
+                    glUseProgram(0)
+                    self.logger.info(f"Successfully loaded shader: {shader_name}")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error loading shader {shader_name}: {e}")
 
 
     def next_shader(self):
@@ -262,14 +271,18 @@ class ShaderManager:
         if shader_name == 'raindrop_ripple' and ripple_data:
             active_ripples, centers, states = ripple_data
             
-            glUniform1i(glGetUniformLocation(program, "activeRipples"), active_ripples)
+            active_ripples_loc = glGetUniformLocation(program, "activeRipples")
+            if active_ripples_loc != -1:
+                glUniform1i(active_ripples_loc, active_ripples)
             
             centers_loc = glGetUniformLocation(program, "rippleCenters")
-            if centers_loc != -1:
-                glUniform2fv(centers_loc, len(centers), np.array(centers).flatten())
+            if centers_loc != -1 and centers is not None:
+                centers_array = np.array(centers, dtype=np.float32).flatten()
+                glUniform2fv(centers_loc, len(centers), centers_array)
                 
             states_loc = glGetUniformLocation(program, "rippleStates")
-            if states_loc != -1:
-                glUniform1fv(states_loc, len(states), np.array(states).flatten())
+            if states_loc != -1 and states is not None:
+                states_array = np.array(states, dtype=np.float32).flatten()
+                glUniform1fv(states_loc, len(states), states_array)
         
         glUseProgram(0)
