@@ -16,6 +16,11 @@ class ShaderManager:
         
         # Configure logging for more detailed output
         self.logger.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
         
         # Load shaders
         self.load_shaders()
@@ -24,22 +29,34 @@ class ShaderManager:
             self.logger.critical("No shaders were loaded successfully. Exiting application.")
             sys.exit(1)
 
-    def compile_shader(self, source, shader_type):
+    def compile_shader(self, source, shader_type, name):
         """Compile a shader with detailed error checking."""
         try:
-            shader = shaders.compileShader(source, shader_type)
-            status = glGetShaderiv(shader, GL_COMPILE_STATUS)
-            if not status:
+            shader = glCreateShader(shader_type)
+            glShaderSource(shader, source)
+            glCompileShader(shader)
+            
+            # Check compilation status
+            result = glGetShaderiv(shader, GL_COMPILE_STATUS)
+            if not result:
                 log = glGetShaderInfoLog(shader)
-                self.logger.error(f"Shader compilation error: {log}")
-                raise RuntimeError(f"Shader compilation failed: {log}")
+                self.logger.error(f"{name} shader compilation failed:")
+                self.logger.error(f"Shader source:\n{source}")
+                self.logger.error(f"Error log:\n{log}")
+                glDeleteShader(shader)
+                raise RuntimeError(f"{name} shader compilation failed: {log}")
+                
             return shader
         except Exception as e:
-            self.logger.error(f"Error compiling shader: {str(e)}")
+            self.logger.error(f"Error compiling {name} shader: {str(e)}")
             raise
 
     def compile_shader_program(self, vertex_path, fragment_path):
         """Compile shader program with detailed error checking."""
+        vertex_shader = None
+        fragment_shader = None
+        program = None
+        
         try:
             # Read shader sources
             with open(vertex_path, 'r') as f:
@@ -47,41 +64,67 @@ class ShaderManager:
             with open(fragment_path, 'r') as f:
                 fragment_src = f.read()
 
-            self.logger.debug(f"Vertex shader source:\n{vertex_src}")
-            self.logger.debug(f"Fragment shader source:\n{fragment_src}")
+            self.logger.debug("Compiling vertex shader...")
+            vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
             
-            # Compile shaders
-            vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER)
-            fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER)
+            self.logger.debug("Compiling fragment shader...")
+            fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
             
-            # Create program
+            # Create and link program
+            self.logger.debug("Creating shader program...")
             program = glCreateProgram()
             glAttachShader(program, vertex_shader)
             glAttachShader(program, fragment_shader)
             
-            # Link program
+            # Bind attribute locations before linking
+            glBindAttribLocation(program, 0, "position")
+            glBindAttribLocation(program, 1, "tile_type")
+            glBindAttribLocation(program, 2, "centroid")
+            glBindAttribLocation(program, 3, "tile_center")
+            
+            self.logger.debug("Linking shader program...")
             glLinkProgram(program)
-            if not glGetProgramiv(program, GL_LINK_STATUS):
-                log = glGetProgramInfoLog(program)
-                self.logger.error(f"Program linking error: {log}")
-                raise RuntimeError(f"Program linking failed: {log}")
             
-            # Validate program
+            # Check linking status
+            link_status = glGetProgramiv(program, GL_LINK_STATUS)
+            if not link_status:
+                log = glGetProgramInfoLog(program)
+                self.logger.error("Shader program linking failed:")
+                self.logger.error(f"Link log:\n{log}")
+                raise RuntimeError(f"Shader program linking failed: {log}")
+            
+            self.logger.debug("Validating shader program...")
             glValidateProgram(program)
-            if not glGetProgramiv(program, GL_VALIDATE_STATUS):
+            validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
+            if not validate_status:
                 log = glGetProgramInfoLog(program)
-                self.logger.error(f"Program validation error: {log}")
-                raise RuntimeError(f"Program validation failed: {log}")
+                self.logger.error("Shader program validation failed:")
+                self.logger.error(f"Validation log:\n{log}")
+                raise RuntimeError(f"Shader program validation failed: {log}")
             
-            # Clean up
-            glDeleteShader(vertex_shader)
-            glDeleteShader(fragment_shader)
+            # Log program info
+            self.logger.debug("Shader program created successfully")
+            self.logger.debug(f"Active attributes: {glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES)}")
+            self.logger.debug(f"Active uniforms: {glGetProgramiv(program, GL_ACTIVE_UNIFORMS)}")
             
             return program
             
         except Exception as e:
-            self.logger.error(f"Error compiling shader program: {str(e)}")
+            self.logger.error(f"Error creating shader program: {str(e)}")
+            # Clean up
+            if vertex_shader:
+                glDeleteShader(vertex_shader)
+            if fragment_shader:
+                glDeleteShader(fragment_shader)
+            if program:
+                glDeleteProgram(program)
             raise
+        finally:
+            # Clean up shaders (they're no longer needed after linking)
+            if vertex_shader:
+                glDeleteShader(vertex_shader)
+            if fragment_shader:
+                glDeleteShader(fragment_shader)
 
     def load_shaders(self):
         """Load all shader pairs from the shaders directory."""
@@ -90,7 +133,6 @@ class ShaderManager:
         
         shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
-            # Add other shader pairs here as needed
         ]
 
         for vert_file, frag_file in shader_pairs:
@@ -98,7 +140,7 @@ class ShaderManager:
             vert_path = os.path.join(self.shaders_folder, vert_file)
             frag_path = os.path.join(self.shaders_folder, frag_file)
             
-            self.logger.info(f"Loading shader: {shader_name}")
+            self.logger.info(f"Loading shader pair: {vert_file} and {frag_file}")
             try:
                 program = self.compile_shader_program(vert_path, frag_path)
                 self.shader_programs.append(program)
