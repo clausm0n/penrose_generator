@@ -4,7 +4,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Shader,OptimizedRenderer, run_server, run_bluetooth_server
+from penrose_tools import Operations, Tile, Effects,OptimizedRenderer, run_server, run_bluetooth_server
 import logging
 import configparser
 import signal
@@ -29,7 +29,7 @@ running = True
 width = 0
 height = 0
 
-# renderer = OptimizedRenderer()
+renderer = OptimizedRenderer()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -214,7 +214,7 @@ def main():
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(shaders)
 
-            render_tiles(shaders, width, height)
+            renderer.render_tiles(shaders, width, height)
             # render_tiles(shaders, width, height)
             glfw.swap_buffers(window)
 
