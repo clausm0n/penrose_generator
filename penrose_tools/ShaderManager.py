@@ -66,10 +66,14 @@ class ShaderManager:
             with open(fragment_path, 'r') as f:
                 fragment_src = f.read()
 
+            self.logger.debug(f"Vertex shader source:\n{vertex_src}")
+            self.logger.debug(f"Fragment shader source:\n{fragment_src}")
+
             # Validate shader compatibility
             if not self.validate_shader_compatibility(vertex_src, fragment_src):
                 raise RuntimeError("Shader validation failed: incompatible varying variables")
 
+            # Compile shaders
             self.logger.debug("Compiling vertex shader...")
             vertex_shader = self.compile_shader(vertex_src, GL_VERTEX_SHADER, "Vertex")
             
@@ -79,6 +83,8 @@ class ShaderManager:
             # Create program
             self.logger.debug("Creating shader program...")
             program = glCreateProgram()
+            if not program:
+                raise RuntimeError("Failed to create shader program")
 
             # Attach shaders
             glAttachShader(program, vertex_shader)
@@ -88,9 +94,7 @@ class ShaderManager:
             self.logger.debug("Binding attribute locations...")
             attributes = {
                 0: "position",
-                1: "tile_type",
-                2: "centroid",
-                3: "tile_center"
+                1: "tile_type"
             }
             
             for location, name in attributes.items():
@@ -104,33 +108,30 @@ class ShaderManager:
             # Get linking status
             link_status = glGetProgramiv(program, GL_LINK_STATUS)
             link_log = glGetProgramInfoLog(program)
+            
             if link_log:
                 self.logger.debug(f"Link log: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
             
             if not link_status:
-                link_log = glGetProgramInfoLog(program)
-                self.logger.error(f"Program linking failed: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
-                raise RuntimeError(f"Shader program linking failed: {link_log}")
+                program_log = glGetProgramInfoLog(program)
+                self.logger.error("Program linking failed:")
+                self.logger.error(f"Vertex shader: {vertex_path}")
+                self.logger.error(f"Fragment shader: {fragment_path}")
+                self.logger.error(f"Program log: {program_log.decode() if isinstance(program_log, bytes) else program_log}")
+                raise RuntimeError(f"Shader program linking failed: {program_log}")
 
-            # Only validate after successful linking
-            self.logger.debug("Validating shader program...")
-            glValidateProgram(program)
-            validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
-            validate_log = glGetProgramInfoLog(program)
-            if validate_log:
-                self.logger.debug(f"Validation log: {validate_log.decode() if isinstance(validate_log, bytes) else validate_log}")
-            
-            if not validate_status:
-                raise RuntimeError("Shader program validation failed")
+            # Try binding the program to check if it's valid
+            try:
+                glUseProgram(program)
+                glUseProgram(0)
+            except Exception as e:
+                self.logger.error(f"Error using shader program: {e}")
+                raise
 
-            # Log program info
-            self.log_program_info(program)
-            
             return program
             
         except Exception as e:
             self.logger.error(f"Error creating shader program: {str(e)}")
-            # Clean up
             if vertex_shader:
                 glDeleteShader(vertex_shader)
             if fragment_shader:
@@ -139,7 +140,6 @@ class ShaderManager:
                 glDeleteProgram(program)
             raise
         finally:
-            # Clean up shaders (they're no longer needed after linking)
             if vertex_shader:
                 glDeleteShader(vertex_shader)
             if fragment_shader:
