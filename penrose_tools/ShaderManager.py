@@ -108,7 +108,9 @@ class ShaderManager:
                 self.logger.debug(f"Link log: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
             
             if not link_status:
-                raise RuntimeError("Shader program linking failed")
+                link_log = glGetProgramInfoLog(program)
+                self.logger.error(f"Program linking failed: {link_log.decode() if isinstance(link_log, bytes) else link_log}")
+                raise RuntimeError(f"Shader program linking failed: {link_log}")
 
             # Only validate after successful linking
             self.logger.debug("Validating shader program...")
