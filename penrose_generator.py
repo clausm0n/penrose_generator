@@ -29,7 +29,7 @@ running = True
 width = 0
 height = 0
 
-renderer = OptimizedRenderer()
+# renderer = OptimizedRenderer()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
