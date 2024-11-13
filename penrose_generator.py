@@ -1,17 +1,17 @@
-# python_generator.py
 import os
 import numpy as np
 import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, OptimizedRenderer, run_server, run_bluetooth_server
+from penrose_tools import Operations, Tile, Shader,OptimizedRenderer, run_server, run_bluetooth_server
 import logging
 import configparser
 import signal
 import argparse
 import asyncio
 from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event
+
 
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
@@ -49,6 +49,7 @@ def initialize_config(path):
             config.write(configfile)
     return op.read_config_file(path)
 
+
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
 
@@ -59,7 +60,8 @@ def setup_projection(width, height):
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
 
-def update_toggles(renderer):
+
+def update_toggles(shaders):
     global config_data, running
     logger.debug("Checking for events...")
     logger.debug(f"Events Status - Update: {update_event.is_set()}, Toggle Shader: {toggle_shader_event.is_set()}, Randomize Colors: {randomize_colors_event.is_set()}")
@@ -79,14 +81,49 @@ def update_toggles(renderer):
     if toggle_shader_event.is_set():
         logger.info("Toggle Shader Event Detected")
         toggle_shader_event.clear()
-        renderer.shader_manager.next_shader()
-        renderer.get_shader_locations()  # Update attribute and uniform locations
+        shaders.next_shader()
         logger.info("Shader toggled successfully.")
     if shutdown_event.is_set():
         logger.info("Shutdown Event Detected")
         running = False
         logger.info("Exiting application.")
         return False
+
+def render_tiles(shaders, width, height):
+    global config_data, tiles_cache
+    current_time = glfw.get_time() * 1000  # Convert to milliseconds
+
+    gamma_values = config_data['gamma']
+    scale_value = config_data['scale']
+    color1 = tuple(config_data["color1"])
+    color2 = tuple(config_data["color2"])
+    config_key = (tuple(gamma_values), width, height, scale_value, color1, color2)
+    
+    if config_key not in tiles_cache:
+        tiles_cache.clear()
+        print("Cache cleared")
+        print("Rendering tiles...", gamma_values, scale_value, color1, color2)
+        tiles_objects = op.tiling(gamma_values, width, height, scale_value)
+        op.calculate_neighbors(tiles_objects)
+        tiles_cache[config_key] = tiles_objects
+
+    visible_tiles = tiles_cache[config_key]
+    center = complex(width // 2, height // 2)
+    shader_func = shaders.current_shader()
+
+    for tile in visible_tiles:
+        try:
+            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height,scale_value)
+            vertices = op.to_canvas(tile.vertices, scale_value, center,3)
+            glBegin(GL_POLYGON)
+            glColor4ub(*modified_color)
+            for vertex in vertices:
+                glVertex2f(vertex[0], vertex[1])
+            glEnd()
+        except Exception as e:
+            logger.error(f"Error rendering tile: {e}")
+            shaders.reset_state()
+            continue
 
 def setup_window(fullscreen=False):
     global width, height
@@ -153,6 +190,7 @@ def main():
     try:
         logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
+        shaders = Shader()
         last_time = glfw.get_time()
 
         if args.bluetooth:
@@ -174,9 +212,10 @@ def main():
 
             # Check if any relevant event is set
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
-                update_toggles(renderer)
+                update_toggles(shaders)
 
-            renderer.render_tiles(width, height, config_data)
+            render_tiles(shaders, width, height)
+            # render_tiles(shaders, width, height)
             glfw.swap_buffers(window)
 
             # Frame rate control
@@ -191,6 +230,7 @@ def main():
         glfw.terminate()
         shutdown_event.set()
         logger.info("Application has been terminated.")
+
 
 if __name__ == '__main__':
     main()
