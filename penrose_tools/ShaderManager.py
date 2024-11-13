@@ -189,7 +189,9 @@ class ShaderManager:
         
         shader_pairs = [
             ('no_effect.vert', 'no_effect.frag'),
-            # Add more shader pairs here as needed
+            ('shift_effect.vert', 'shift_effect.frag'),
+            ('color_wave.vert', 'color_wave.frag'),
+            ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
         ]
 
         for vert_file, frag_file in shader_pairs:
@@ -205,9 +207,29 @@ class ShaderManager:
                 program = self.compile_shader_program(vert_path, frag_path)
                 self.shader_programs.append(program)
                 self.shader_names.append(shader_name)
+                
+                # Set up uniforms for specific shaders
+                glUseProgram(program)
+                
+                # Common uniforms
+                glUniform1i(glGetUniformLocation(program, "time"), 0)
+                
+                # Special uniforms for ripple shader
+                if shader_name == 'raindrop_ripple':
+                    glUniform1i(glGetUniformLocation(program, "activeRipples"), 0)
+                    ripple_centers_loc = glGetUniformLocation(program, "rippleCenters")
+                    ripple_states_loc = glGetUniformLocation(program, "rippleStates")
+                    if ripple_centers_loc != -1:
+                        glUniform2fv(ripple_centers_loc, 3, np.zeros(6))
+                    if ripple_states_loc != -1:
+                        glUniform1fv(ripple_states_loc, 6, np.zeros(6))
+                
+                glUseProgram(0)
                 self.logger.info(f"Successfully loaded shader: {shader_name}")
+                
             except Exception as e:
                 self.logger.error(f"Error loading shader {shader_name}: {e}")
+
 
     def next_shader(self):
         """Switch to the next available shader program."""
@@ -228,3 +250,30 @@ class ShaderManager:
             for program in self.shader_programs:
                 if program:
                     glDeleteProgram(program)
+    
+    def update_shader_uniforms(self, current_time, ripple_data=None):
+        """Update time-dependent uniforms for the current shader."""
+        program = self.current_shader_program()
+        glUseProgram(program)
+        
+        # Update common time uniform
+        time_loc = glGetUniformLocation(program, "time")
+        if time_loc != -1:
+            glUniform1f(time_loc, current_time)
+        
+        # Update ripple shader specific uniforms
+        shader_name = self.shader_names[self.current_shader_index]
+        if shader_name == 'raindrop_ripple' and ripple_data:
+            active_ripples, centers, states = ripple_data
+            
+            glUniform1i(glGetUniformLocation(program, "activeRipples"), active_ripples)
+            
+            centers_loc = glGetUniformLocation(program, "rippleCenters")
+            if centers_loc != -1:
+                glUniform2fv(centers_loc, len(centers), np.array(centers).flatten())
+                
+            states_loc = glGetUniformLocation(program, "rippleStates")
+            if states_loc != -1:
+                glUniform1fv(states_loc, len(states), np.array(states).flatten())
+        
+        glUseProgram(0)

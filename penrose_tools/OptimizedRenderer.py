@@ -98,6 +98,9 @@ class OptimizedRenderer:
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
+
+        current_time = glfw.get_time() * 1000  # Get current time in milliseconds
+
         # Create cache key based on current configuration
         cache_key = (
             tuple(config_data['gamma']),
@@ -133,6 +136,14 @@ class OptimizedRenderer:
         # Bind buffers and set attribute pointers
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
         stride = 3 * ctypes.sizeof(GLfloat)  # position (2) + tile_type (1)
+
+        # Update shader uniforms
+        ripple_data = None
+        if self.shader_manager.shader_names[self.shader_manager.current_shader_index] == 'raindrop_ripple':
+            # Prepare ripple data (active_ripples, centers, states)
+            ripple_data = self.prepare_ripple_data()
+        
+        self.shader_manager.update_shader_uniforms(current_time, ripple_data)
 
         # Position attribute
         if 'position' in self.attribute_locations:

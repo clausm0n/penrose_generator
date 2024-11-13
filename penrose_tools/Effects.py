@@ -22,7 +22,6 @@ class Effects:
             self.shader_raindrop_ripple,
             self.shader_color_wave,
             self.shader_region_blend
-            # self.shader_relay
         ]
 
     def next_shader(self):
@@ -60,9 +59,6 @@ class Effects:
         self.transition_duration = 5000  # 5 seconds for transition
         self.time_between_transitions = 10000  # 10 seconds between transitions
         self.is_transitioning = False
-        self.relay_waves = []
-        self.last_relay_time = 0
-        self.relay_duration = 5000  # Duration of a single relay wave
         self.tile_interpolation = {}  # To track interpolation state of tiles
 
     def reset_state(self):
@@ -167,69 +163,6 @@ class Effects:
         blue = color1[2] * (1 - wave_intensity) + color2[2] * wave_intensity
 
         return (int(red), int(green), int(blue), 255)
-
-    def shader_relay(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
-        current_time = time_ms
-
-        # Initialize or reinitialize if needed
-        if not hasattr(self, 'tile_positions') or not self.tile_positions:
-            self.tile_positions = {t: op.calculate_centroid(t.vertices) for t in tiles}
-            self.relay_waves = []
-            self.last_relay_time = 0
-            self.tile_interpolation = {}
-
-        # Create new relay wave every 5 seconds
-        if current_time - self.last_relay_time > 5000:
-            self.last_relay_time = current_time
-            star_tiles = [t for t in tiles if op.is_valid_star_kite(t) or op.is_valid_starburst_dart(t)]
-            if star_tiles:
-                new_center = random.choice(star_tiles)
-                self.relay_waves.append((new_center, 0, current_time, 1))  # (center_tile, radius, start_time, direction)
-
-        # Update and render waves
-        new_waves = []
-        for center_tile, radius, start_time, direction in self.relay_waves:
-            time_elapsed = (current_time - start_time) / 1000  # Time elapsed in seconds
-            new_radius = 50 * (1 - np.exp(-time_elapsed / 2))  # Expansion rate
-            if new_radius < 200 and time_elapsed < self.relay_duration / 1000:
-                new_waves.append((center_tile, new_radius, start_time, direction))
-            
-            # Check for collisions with other stars/starbursts
-            for other_tile in tiles:
-                if (op.is_valid_star_kite(other_tile) or op.is_valid_starburst_dart(other_tile)) and other_tile != center_tile:
-                    other_pos = self.tile_positions[other_tile]
-                    center_pos = self.tile_positions[center_tile]
-                    distance = abs(other_pos - center_pos)
-                    if abs(distance - new_radius) < 5 and new_radius > 0:  # If wave hits another star/starburst and radius is positive
-                        new_waves.append((other_tile, 0, current_time, -direction))  # Start a new wave in opposite direction
-
-        self.relay_waves = new_waves
-
-        # Determine tile color based on waves
-        base_color = color1 if tile.is_kite else color2
-        tile_pos = self.tile_positions[tile]
-        interpolation_factor = 0
-
-        for center_tile, radius, start_time, direction in self.relay_waves:
-            center_pos = self.tile_positions[center_tile]
-            distance = abs(tile_pos - center_pos)
-            
-            if distance <= radius and radius > 0:  # Ensure radius is positive
-                wave_progress = distance / radius
-                wave_intensity = 1 - wave_progress
-                interpolation_factor += direction * wave_intensity
-
-        # Clamp interpolation factor between -1 and 1
-        interpolation_factor = max(-1, min(1, interpolation_factor))
-
-        # Interpolate color
-        if interpolation_factor > 0:
-            inverted_color = self.invert_color(base_color)
-            final_color = self.blend_colors(base_color, inverted_color, interpolation_factor)
-        else:
-            final_color = self.blend_colors(base_color, base_color, -interpolation_factor)
-
-        return (*final_color, 255)
 
     def shader_region_blend(self, tile, time_ms, tiles, color1, color2, width, height, scale_value):
         # Convert color lists to immutable tuples for hashing
