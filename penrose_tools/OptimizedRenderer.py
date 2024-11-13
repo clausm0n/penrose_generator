@@ -4,7 +4,8 @@ from OpenGL.GL import *
 from OpenGL.GL import shaders
 import ctypes
 import glfw
-from penrose_tools import Operations, ShaderManager
+from .Operations import Operations
+from .ShaderManager import ShaderManager
 import logging
 
 op = Operations()
