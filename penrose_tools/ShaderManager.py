@@ -22,6 +22,9 @@ class ShaderManager:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
         
+        # Check OpenGL context
+        self.check_opengl_context()
+        
         # Load shaders
         self.load_shaders()
         
@@ -69,6 +72,13 @@ class ShaderManager:
             self.logger.debug(f"Vertex shader source:\n{vertex_src}")
             self.logger.debug(f"Fragment shader source:\n{fragment_src}")
 
+            # Check if we can create a program before proceeding
+            program = glCreateProgram()
+            if not program or program == 0:
+                gl_error = glGetError()
+                self.logger.error(f"Failed to create shader program. GL Error: {gl_error}")
+                raise RuntimeError(f"Failed to create shader program. GL Error: {gl_error}")
+
             # Validate shader compatibility
             if not self.validate_shader_compatibility(vertex_src, fragment_src):
                 raise RuntimeError("Shader validation failed: incompatible varying variables")
@@ -79,12 +89,6 @@ class ShaderManager:
             
             self.logger.debug("Compiling fragment shader...")
             fragment_shader = self.compile_shader(fragment_src, GL_FRAGMENT_SHADER, "Fragment")
-            
-            # Create program
-            self.logger.debug("Creating shader program...")
-            program = glCreateProgram()
-            if not program:
-                raise RuntimeError("Failed to create shader program")
 
             # Attach shaders
             glAttachShader(program, vertex_shader)
@@ -195,6 +199,29 @@ class ShaderManager:
             return False
 
         return True
+    
+    def check_opengl_context(self):
+        """Check OpenGL context and capabilities."""
+        try:
+            vendor = glGetString(GL_VENDOR).decode()
+            renderer = glGetString(GL_RENDERER).decode()
+            version = glGetString(GL_VERSION).decode()
+            glsl_version = glGetString(GL_SHADING_LANGUAGE_VERSION).decode()
+            
+            self.logger.info("OpenGL Context Information:")
+            self.logger.info(f"Vendor: {vendor}")
+            self.logger.info(f"Renderer: {renderer}")
+            self.logger.info(f"OpenGL Version: {version}")
+            self.logger.info(f"GLSL Version: {glsl_version}")
+            
+            # Check for shader support
+            if not glCreateShader:
+                self.logger.error("This OpenGL context does not support shaders!")
+                raise RuntimeError("Shader support not available")
+                
+        except Exception as e:
+            self.logger.error(f"Error checking OpenGL context: {e}")
+            raise
 
     def load_shaders(self):
         """Load all shader pairs from the shaders directory."""

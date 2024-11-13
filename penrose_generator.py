@@ -89,42 +89,6 @@ def update_toggles(shaders):
         logger.info("Exiting application.")
         return False
 
-def render_tiles(shaders, width, height):
-    global config_data, tiles_cache
-    current_time = glfw.get_time() * 1000  # Convert to milliseconds
-
-    gamma_values = config_data['gamma']
-    scale_value = config_data['scale']
-    color1 = tuple(config_data["color1"])
-    color2 = tuple(config_data["color2"])
-    config_key = (tuple(gamma_values), width, height, scale_value, color1, color2)
-    
-    if config_key not in tiles_cache:
-        tiles_cache.clear()
-        print("Cache cleared")
-        print("Rendering tiles...", gamma_values, scale_value, color1, color2)
-        tiles_objects = op.tiling(gamma_values, width, height, scale_value)
-        op.calculate_neighbors(tiles_objects)
-        tiles_cache[config_key] = tiles_objects
-
-    visible_tiles = tiles_cache[config_key]
-    center = complex(width // 2, height // 2)
-    shader_func = shaders.current_shader()
-
-    for tile in visible_tiles:
-        try:
-            modified_color = shader_func(tile, current_time, visible_tiles, color1, color2, width, height,scale_value)
-            vertices = op.to_canvas(tile.vertices, scale_value, center,3)
-            glBegin(GL_POLYGON)
-            glColor4ub(*modified_color)
-            for vertex in vertices:
-                glVertex2f(vertex[0], vertex[1])
-            glEnd()
-        except Exception as e:
-            logger.error(f"Error rendering tile: {e}")
-            shaders.reset_state()
-            continue
-
 def setup_window(fullscreen=False):
     global width, height
     if not glfw.init():
