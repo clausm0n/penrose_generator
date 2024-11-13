@@ -1,5 +1,6 @@
 // no_effect.vert
 #version 120
+
 attribute vec2 position;
 attribute float tile_type; // 1.0 for kite, 0.0 for dart
 attribute vec2 centroid;

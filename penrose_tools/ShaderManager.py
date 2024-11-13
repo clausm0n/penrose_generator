@@ -8,7 +8,7 @@ import logging
 class ShaderManager:
     def __init__(self, shaders_folder='Shaders'):
         # Get the directory where the script is located
-        script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         self.shaders_folder = os.path.join(script_dir, shaders_folder)
         self.shader_programs = []
         self.shader_names = []
@@ -59,15 +59,24 @@ class ShaderManager:
 
         try:
             vertex_shader = shaders.compileShader(vertex_src, GL_VERTEX_SHADER)
-            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
-            program = shaders.compileProgram(vertex_shader, fragment_shader)
-            return program
         except shaders.ShaderCompilationError as e:
-            self.logger.error(f"Shader compilation error in {vertex_path} or {fragment_path}: {e}")
+            self.logger.error(f"Vertex shader compilation error in {vertex_path}: {e}")
             raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error during shader compilation: {e}")
+
+        try:
+            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
+        except shaders.ShaderCompilationError as e:
+            self.logger.error(f"Fragment shader compilation error in {fragment_path}: {e}")
             raise
+
+        try:
+            program = shaders.compileProgram(vertex_shader, fragment_shader)
+        except shaders.ShaderCompilationError as e:
+            self.logger.error(f"Shader program linking error for {vertex_path} and {fragment_path}: {e}")
+            raise
+
+        return program
+
 
     def next_shader(self):
         if not self.shader_programs:
