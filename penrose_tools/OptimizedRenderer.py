@@ -100,23 +100,24 @@ class OptimizedRenderer:
         self.attribute_locations.clear()
         self.uniform_locations.clear()
 
-        # Get attribute locations - store even if -1
+        # Get attribute locations
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
-        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')  # Changed key to match
-
-        # Log if any required attributes are missing
-        if self.attribute_locations['position'] == -1:
-            self.logger.warning("Position attribute not found in shader")
-        if self.attribute_locations['tile_type'] == -1:
-            self.logger.warning("Tile type attribute not found in shader")
-        if self.attribute_locations['tile_centroid'] == -1:  # Changed key here too
-            self.logger.warning("Tile centroid attribute not found in shader")
+        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')
 
         # Get uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
         self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
+        
+        # New uniform locations for region blend shader
+        self.uniform_locations['star_centers'] = glGetUniformLocation(shader_program, 'star_centers')
+        self.uniform_locations['starburst_centers'] = glGetUniformLocation(shader_program, 'starburst_centers')
+        self.uniform_locations['neighbor_centers'] = glGetUniformLocation(shader_program, 'neighbor_centers')
+        self.uniform_locations['neighbor_factors'] = glGetUniformLocation(shader_program, 'neighbor_factors')
+        self.uniform_locations['num_stars'] = glGetUniformLocation(shader_program, 'num_stars')
+        self.uniform_locations['num_starbursts'] = glGetUniformLocation(shader_program, 'num_starbursts')
+        self.uniform_locations['num_neighbors'] = glGetUniformLocation(shader_program, 'num_neighbors')
 
 
     def render_tiles(self, width, height, config_data):
