@@ -277,13 +277,17 @@ class OptimizedRenderer:
             
             # Pattern uniforms only for relevant shaders
             if shader_name == 'region_blend':
-                self.uniform_locations.update({
-                    'color1': glGetUniformLocation(shader_program, 'color1'),
-                    'color2': glGetUniformLocation(shader_program, 'color2'),
-                    'pattern_texture': glGetUniformLocation(shader_program, 'pattern_texture'),
-                    'texture_size': glGetUniformLocation(shader_program, 'texture_size'),
-                    'pattern_bounds': glGetUniformLocation(shader_program, 'pattern_bounds')
-                })
+                # Update for quadrant-based system
+                for i in range(4):
+                    self.uniform_locations[f'pattern_texture_{i}'] = glGetUniformLocation(shader_program, f'pattern_texture_{i}')
+                
+                # Array uniform for quadrant bounds
+                for i in range(4):
+                    self.uniform_locations[f'quadrant_bounds[{i}]'] = glGetUniformLocation(shader_program, f'quadrant_bounds[{i}]')
+                
+                self.uniform_locations['texture_size'] = glGetUniformLocation(shader_program, 'texture_size')
+                self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
+                self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -573,5 +577,5 @@ def __del__(self):
             glDeleteBuffers(1, [self.vbo])
         if self.ebo is not None:
             glDeleteBuffers(1, [self.ebo])
-        if hasattr(self, 'pattern_texture'):
-            glDeleteTextures([self.pattern_texture])
+        if hasattr(self, 'pattern_textures'):
+            glDeleteTextures(self.pattern_textures)
