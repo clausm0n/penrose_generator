@@ -1,13 +1,15 @@
-
 // region_blend.frag
 #version 120
 #extension GL_EXT_gpu_shader4 : enable
 
 uniform vec3 color1;
 uniform vec3 color2;
-uniform sampler2D pattern_texture;
-uniform vec2 texture_size;
-uniform vec4 pattern_bounds;  // minX, minY, maxX, maxY in tile coordinate space
+uniform sampler2D pattern_texture_0;  // First quadrant texture
+uniform sampler2D pattern_texture_1;  // Second quadrant texture
+uniform sampler2D pattern_texture_2;  // Third quadrant texture
+uniform sampler2D pattern_texture_3;  // Fourth quadrant texture
+uniform vec4 quadrant_bounds[4];      // Bounds for each quadrant
+uniform vec2 texture_size;            // Size of each texture
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
@@ -22,10 +24,25 @@ vec3 invertColor(vec3 color) {
     return vec3(1.0) - color;
 }
 
+bool inQuadrant(vec2 pos, vec4 bounds) {
+    return pos.x >= bounds.x && pos.x <= bounds.z &&
+           pos.y >= bounds.y && pos.y <= bounds.w;
+}
+
 vec4 findPattern() {
-    // Convert centroid to normalized coordinates based on pattern bounds
-    vec2 normalized = (v_tile_centroid - pattern_bounds.xy) / (pattern_bounds.zw - pattern_bounds.xy);
-    return texture2D(pattern_texture, normalized);
+    // Determine which quadrant the centroid falls into
+    for (int i = 0; i < 4; i++) {
+        if (inQuadrant(v_tile_centroid, quadrant_bounds[i])) {
+            vec4 bounds = quadrant_bounds[i];
+            vec2 normalized = (v_tile_centroid - bounds.xy) / (bounds.zw - bounds.xy);
+            
+            if (i == 0) return texture2D(pattern_texture_0, normalized);
+            if (i == 1) return texture2D(pattern_texture_1, normalized);
+            if (i == 2) return texture2D(pattern_texture_2, normalized);
+            if (i == 3) return texture2D(pattern_texture_3, normalized);
+        }
+    }
+    return vec4(0.0, v_tile_type > 0.5 ? 1.0 : 0.0, 0.0, 1.0);
 }
 
 void main() {
