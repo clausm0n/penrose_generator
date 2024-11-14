@@ -138,12 +138,12 @@ class OptimizedRenderer:
         if cache_key not in self.tile_cache:
             self.tile_cache.clear()
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-            
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
-
             self.setup_buffers(tiles, width, height, config_data['scale'])
             self.get_shader_locations()
+
+        tiles = self.tile_cache[cache_key]
 
         # Use shader program
         shader_program = self.shader_manager.current_shader_program()
@@ -153,32 +153,42 @@ class OptimizedRenderer:
         stars = []
         starbursts = []
         neighbor_counts = []
+        center = complex(width / 2, height / 2)
 
         # Find all stars and starbursts
         for tile in tiles:
+            # Transform centroid to screen space
+            centroid = sum(tile.vertices) / len(tile.vertices)
+            screen_centroid = op.to_canvas([centroid], config_data['scale'], center, 3)[0]
+            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
+            
             if tile.is_kite and op.is_valid_star_kite(tile):
                 extended_star = op.find_star(tile, tiles)
                 if len(extended_star) == 5:
-                    # Convert complex vertices to real,imag pairs
-                    vertices_array = [(v.real, v.imag) for t in extended_star for v in [t.vertices[0]]]
-                    stars.extend(vertices_array)
-                
+                    for t in extended_star:
+                        t_centroid = sum(t.vertices) / len(t.vertices)
+                        t_screen = op.to_canvas([t_centroid], config_data['scale'], center, 3)[0]
+                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
+                        stars.extend([t_gl[0], t_gl[1]])
+                    
             elif not tile.is_kite and op.is_valid_starburst_dart(tile):
                 extended_starburst = op.find_starburst(tile, tiles)
                 if len(extended_starburst) == 10:
-                    vertices_array = [(v.real, v.imag) for t in extended_starburst for v in [t.vertices[0]]]
-                    starbursts.extend(vertices_array)
-            
-        # Calculate neighbor counts
-        kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
-        total_neighbors = kite_count + dart_count
-        blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
-        vertex = tile.vertices[0]
-        neighbor_counts.append(((vertex.real, vertex.imag), blend_factor))
+                    for t in extended_starburst:
+                        t_centroid = sum(t.vertices) / len(t.vertices)
+                        t_screen = op.to_canvas([t_centroid], config_data['scale'], center, 3)[0]
+                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
+                        starbursts.extend([t_gl[0], t_gl[1]])
+                    
+            # Calculate neighbor counts
+            kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
+            total_neighbors = kite_count + dart_count
+            blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+            neighbor_counts.append((gl_centroid, blend_factor))
 
-        # Convert to numpy arrays and pass to shader
+        # Pass arrays to shader
         if stars:
-            stars_array = np.array(stars, dtype=np.float32).flatten()  # Flatten the array of pairs
+            stars_array = np.array(stars, dtype=np.float32)
             loc = glGetUniformLocation(shader_program, 'star_centers')
             if loc != -1:
                 glUniform2fv(loc, len(stars_array)//2, stars_array)
@@ -187,7 +197,7 @@ class OptimizedRenderer:
                 glUniform1i(loc, len(stars_array)//2)
 
         if starbursts:
-            starbursts_array = np.array(starbursts, dtype=np.float32).flatten()
+            starbursts_array = np.array(starbursts, dtype=np.float32)
             loc = glGetUniformLocation(shader_program, 'starburst_centers')
             if loc != -1:
                 glUniform2fv(loc, len(starbursts_array)//2, starbursts_array)
@@ -197,7 +207,7 @@ class OptimizedRenderer:
 
         if neighbor_counts:
             centers, factors = zip(*neighbor_counts)
-            centers_array = np.array(centers, dtype=np.float32).flatten()
+            centers_array = np.array([(c[0], c[1]) for c in centers], dtype=np.float32).flatten()
             factors_array = np.array(factors, dtype=np.float32)
             loc = glGetUniformLocation(shader_program, 'neighbor_centers')
             if loc != -1:
@@ -209,7 +219,7 @@ class OptimizedRenderer:
             if loc != -1:
                 glUniform1i(loc, len(factors_array))
 
-        # Set uniforms
+        # Set color and time uniforms
         color1 = np.array(config_data["color1"]) / 255.0
         color2 = np.array(config_data["color2"]) / 255.0
         current_time = glfw.get_time() * 1000.0  # Convert to milliseconds to match Python version
@@ -217,7 +227,7 @@ class OptimizedRenderer:
         glUniform3f(self.uniform_locations['color1'], *color1)
         glUniform3f(self.uniform_locations['color2'], *color2)
         if 'time' in self.uniform_locations and self.uniform_locations['time'] != -1:
-            glUniform1f(self.uniform_locations['time'], current_time / 1000.0)  # Convert back to match shader
+            glUniform1f(self.uniform_locations['time'], current_time / 1000.0)
 
         # Enable blending
         glEnable(GL_BLEND)
@@ -237,7 +247,7 @@ class OptimizedRenderer:
                 elif attr_name == 'tile_type':
                     glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-                elif attr_name == 'tile_centroid':  # Changed this to match
+                elif attr_name == 'tile_centroid':
                     glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
