@@ -94,10 +94,18 @@ class OptimizedRenderer:
         self.attribute_locations.clear()
         self.uniform_locations.clear()
 
-        # Get attribute locations
+        # Get attribute locations - store even if -1
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
         self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'centroid')
+
+        # Log if any required attributes are missing
+        if self.attribute_locations['position'] == -1:
+            self.logger.warning("Position attribute not found in shader")
+        if self.attribute_locations['tile_type'] == -1:
+            self.logger.warning("Tile type attribute not found in shader")
+        if self.attribute_locations['centroid'] == -1:
+            self.logger.warning("Centroid attribute not found in shader")
 
         # Get uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
@@ -134,11 +142,12 @@ class OptimizedRenderer:
         color2 = np.array(config_data["color2"]) / 255.0
         current_time = glfw.get_time()  # Get current time
         
-        glUniform3f(self.uniform_locations['color1'], *color1)
-        glUniform3f(self.uniform_locations['color2'], *color2)
-        if 'time' in self.uniform_locations:
+        if 'color1' in self.uniform_locations:
+            glUniform3f(self.uniform_locations['color1'], *color1)
+        if 'color2' in self.uniform_locations:
+            glUniform3f(self.uniform_locations['color2'], *color2)
+        if 'time' in self.uniform_locations and self.uniform_locations['time'] != -1:
             glUniform1f(self.uniform_locations['time'], current_time)
-
 
         # Enable blending
         glEnable(GL_BLEND)
@@ -148,34 +157,29 @@ class OptimizedRenderer:
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
         stride = 5 * ctypes.sizeof(GLfloat)  # position (2) + tile_type (1) + centroid (2)
 
-        # Position attribute
-        if 'position' in self.attribute_locations:
-            loc = self.attribute_locations['position']
-            glEnableVertexAttribArray(loc)
-            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
-                                ctypes.c_void_p(0))
-
-        # Tile Type attribute
-        if 'tile_type' in self.attribute_locations:
-            loc = self.attribute_locations['tile_type']
-            glEnableVertexAttribArray(loc)
-            glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
-                                ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-
-        # Centroid attribute
-        if 'centroid' in self.attribute_locations:
-            loc = self.attribute_locations['centroid']
-            glEnableVertexAttribArray(loc)
-            glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
-                                ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
+        # Only enable and setup attributes that have valid locations
+        for attr_name, loc in self.attribute_locations.items():
+            if loc != -1:  # Only process valid locations
+                glEnableVertexAttribArray(loc)
+                if attr_name == 'position':
+                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
+                                        ctypes.c_void_p(0))
+                elif attr_name == 'tile_type':
+                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
+                                        ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
+                elif attr_name == 'centroid':
+                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
+                                        ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
         # Draw elements
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
 
-        # Cleanup
+        # Cleanup - only disable valid attributes
         for loc in self.attribute_locations.values():
-            glDisableVertexAttribArray(loc)
+            if loc != -1:
+                glDisableVertexAttribArray(loc)
+        
         glUseProgram(0)
 
     def __del__(self):
