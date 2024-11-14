@@ -92,9 +92,10 @@ def update_toggles(shaders):
         update_event.clear()
         config_data = op.read_config_file(CONFIG_PATH)
     if toggle_shader_event.is_set():
-        logger.info("Toggle Shader Event Detected")
+        logger.info("Toggle Shader Event Detected - Before toggle")
         toggle_shader_event.clear()
-        shaders.next_shader()
+        next_index = shaders.next_shader()
+        logger.info(f"Shader switched to index {next_index}")
     if shutdown_event.is_set():
         logger.info("Shutdown Event Detected")
         running = False

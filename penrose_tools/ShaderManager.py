@@ -193,6 +193,8 @@ class ShaderManager:
             ('shift_effect.vert', 'shift_effect.frag'),
         ]
 
+        self.logger.info(f"Attempting to load {len(shader_pairs)} shader pairs")
+        
         for vert_file, frag_file in shader_pairs:
             shader_name = vert_file.replace('.vert', '')
             vert_path = os.path.join(self.shaders_folder, vert_file)
@@ -201,6 +203,8 @@ class ShaderManager:
             try:
                 if not os.path.exists(vert_path) or not os.path.exists(frag_path):
                     self.logger.error(f"Shader files not found: {vert_file} or {frag_file}")
+                    self.logger.error(f"Looked in: {self.shaders_folder}")
+                    self.logger.error(f"Full paths: {vert_path}, {frag_path}")
                     continue
                     
                 program = self.compile_shader_program(vert_path, frag_path)
@@ -209,12 +213,19 @@ class ShaderManager:
                 self.logger.info(f"Successfully loaded shader: {shader_name}")
             except Exception as e:
                 self.logger.error(f"Error loading shader {shader_name}: {e}")
+        
+        self.logger.info(f"Successfully loaded {len(self.shader_programs)} shader programs: {', '.join(self.shader_names)}")
 
     def next_shader(self):
         """Switch to the next available shader program."""
         if not self.shader_programs:
+            self.logger.warning("No shader programs available to switch to")
             return self.current_shader_index
+            
+        old_index = self.current_shader_index
         self.current_shader_index = (self.current_shader_index + 1) % len(self.shader_programs)
+        self.logger.info(f"Switching shader from {old_index} to {self.current_shader_index}")
+        self.logger.info(f"Current shader: {self.shader_names[self.current_shader_index]}")
         return self.current_shader_index
 
     def current_shader_program(self):
