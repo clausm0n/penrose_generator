@@ -323,7 +323,30 @@ class OptimizedRenderer:
                 glBindTexture(GL_TEXTURE_2D, self.next_texture)
                 
                 # Set shader uniforms
-                scale, offset_x, offset_y, _, _ = self.image_processor.image_scales[current_index]
+                scale, offset_x, offset_y, new_width, new_height = self.image_processor.image_scales[current_index]
+
+                # Calculate proper scale to maintain aspect ratio while filling the array
+                if new_width / width > new_height / height:
+                    # Image is wider relative to the array
+                    scale_x = 1.0
+                    scale_y = (new_height * width) / (new_width * height)
+                else:
+                    # Image is taller relative to the array
+                    scale_x = (new_width * height) / (new_height * width)
+                    scale_y = 1.0
+
+                # Calculate centered offset
+                offset_x = (1.0 - scale_x) * 0.5
+                offset_y = (1.0 - scale_y) * 0.5
+
+                loc = self.uniform_locations.get('image_scale')
+                if loc is not None and loc != -1:
+                    glUniform2f(loc, scale_x, scale_y)
+
+                loc = self.uniform_locations.get('image_offset')
+                if loc is not None and loc != -1:
+                    glUniform2f(loc, offset_x, offset_y)
+
                 
                 loc = self.uniform_locations.get('current_image')
                 if loc is not None and loc != -1:
