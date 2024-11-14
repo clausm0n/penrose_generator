@@ -4,11 +4,11 @@
 // Input attributes
 attribute vec2 position;
 attribute float tile_type;
-attribute vec2 centroid;  // Add centroid as a new attribute
+attribute vec2 centroid;
 
 // Varying variables
 varying float v_tile_type;
-varying vec2 v_centroid;  // Pass centroid to fragment shader
+varying vec2 v_centroid;
 
 void main() {
     // Pass values to fragment shader

@@ -20,8 +20,5 @@ void main() {
     // Apply the time-based color shift
     vec3 final_color = base_color * time_factor;
     
-    // Clamp the color values between 0 and 1
-    final_color = clamp(final_color, 0.0, 1.0);
-    
     gl_FragColor = vec4(final_color, 1.0);
 }
