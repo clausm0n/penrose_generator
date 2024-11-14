@@ -1,27 +1,51 @@
 // region_blend.frag
-#version 330 core
-
-in float v_tile_type;
-in vec2 v_centroid;
-in vec2 v_tile_center;
+precision mediump float;
 
 uniform vec3 color1;
 uniform vec3 color2;
 
-out vec4 frag_color;
+varying float v_tile_type;
+varying vec2 v_tile_centroid;
 
-void main()
-{
-    // Placeholder blend_factor based on tile_type
-    float blend_factor = v_tile_type * 0.5; // Example: blend_factor = 0.5 for kites, 0.0 for darts
+// Function to create a pseudo-random value based on position
+float random(vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+}
 
-    // Invert color for certain conditions (e.g., for kites)
-    bool condition = (v_tile_type > 0.5);
-    vec3 blended_color = mix(color2, color1, blend_factor);
-    if(condition)
-    {
-        blended_color = vec3(1.0) - blended_color;
+void main() {
+    vec3 baseColor;
+    float blend_factor;
+    
+    // Simulate neighbor counting using position-based randomization
+    float neighbor_random = random(v_tile_centroid);
+    
+    // Create regions by using distance from tile centroid
+    float dist = length(v_tile_centroid);
+    float region_factor = sin(dist * 10.0) * 0.5 + 0.5;
+    
+    // Combine random neighbor simulation with region factor
+    blend_factor = mix(0.3, 0.7, region_factor * neighbor_random);
+    
+    // For kites (tile_type == 1.0), create star-like patterns
+    if (v_tile_type > 0.5) {
+        float star_pattern = step(0.8, sin(atan(v_tile_centroid.y, v_tile_centroid.x) * 5.0));
+        if (star_pattern > 0.5) {
+            // Invert colors for star pattern
+            baseColor = vec3(1.0) - mix(color1, color2, blend_factor);
+        } else {
+            baseColor = mix(color1, color2, blend_factor);
+        }
+    } 
+    // For darts (tile_type == 0.0), create starburst-like patterns
+    else {
+        float starburst_pattern = step(0.8, sin(atan(v_tile_centroid.y, v_tile_centroid.x) * 10.0));
+        if (starburst_pattern > 0.5) {
+            // Invert colors for starburst pattern
+            baseColor = vec3(1.0) - mix(color1, color2, blend_factor);
+        } else {
+            baseColor = mix(color1, color2, blend_factor);
+        }
     }
-
-    frag_color = vec4(blended_color, 1.0);
+    
+    gl_FragColor = vec4(baseColor, 1.0);
 }

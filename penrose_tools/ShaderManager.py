@@ -192,6 +192,9 @@ class ShaderManager:
             ('no_effect.vert', 'no_effect.frag'),
             ('shift_effect.vert', 'shift_effect.frag'),
             ('color_wave.vert', 'color_wave.frag'),
+            ('region_blend.vert', 'region_blend.frag'),
+            ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
+            ('pixelation_slideshow.vert', 'pixelation_slideshow.frag')
         ]
 
         self.logger.info(f"Attempting to load {len(shader_pairs)} shader pairs")
