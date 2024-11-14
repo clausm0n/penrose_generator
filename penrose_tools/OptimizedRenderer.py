@@ -181,8 +181,15 @@ class OptimizedRenderer:
         self.logger.info(f"Starburst regions contain {starburst_tiles} tiles")
         self.logger.info(f"Total tiles in patterns: {total_pattern_tiles}")
 
+        # In the process_patterns method, before returning:
+        pattern_array = np.array(patterns, dtype=np.float32)
+
+        # Sort pattern data by x then y coordinates for binary search
+        sorted_indices = np.lexsort((pattern_array[:,1], pattern_array[:,0]))
+        pattern_array = pattern_array[sorted_indices]
+
         return {
-            'tile_patterns': np.array(patterns, dtype=np.float32),
+            'tile_patterns': pattern_array,
             'pattern_counts': {
                 'stars': len(stars),
                 'starbursts': len(starbursts),

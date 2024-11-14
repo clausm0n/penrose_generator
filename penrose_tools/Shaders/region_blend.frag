@@ -2,8 +2,8 @@
 #version 120
 
 uniform vec3 color1;
-uniform vec3 color2;
-uniform vec4 tile_patterns[500];  // x,y = center, z = pattern type, w = blend factor
+uniform vec2 color2;
+uniform vec4 tile_patterns[3500];  // Increased size to handle larger tilings
 uniform int num_tiles;
 
 varying float v_tile_type;
@@ -20,7 +20,6 @@ vec3 invertColor(vec3 color) {
 }
 
 bool compareVec2(vec2 a, vec2 b) {
-    // More precise position matching
     return abs(a.x - b.x) < EPSILON && abs(a.y - b.y) < EPSILON;
 }
 
@@ -28,29 +27,43 @@ void main() {
     vec3 finalColor;
     float pattern_type = 0.0;
     float blend_factor = 0.5;
+    
+    // Binary search through pattern array for better performance
+    int left = 0;
+    int right = num_tiles - 1;
     bool found = false;
     
-    // Find this tile's exact pattern info
-    for (int i = 0; i < num_tiles && i < 500; i++) {
-        if (compareVec2(v_tile_centroid, tile_patterns[i].xy)) {
-            pattern_type = tile_patterns[i].z;
-            blend_factor = tile_patterns[i].w;
+    while (left <= right) {
+        int mid = (left + right) / 2;
+        vec2 test_pos = tile_patterns[mid].xy;
+        
+        if (compareVec2(v_tile_centroid, test_pos)) {
+            pattern_type = tile_patterns[mid].z;
+            blend_factor = tile_patterns[mid].w;
             found = true;
             break;
         }
+        
+        // Compare based on x coordinate primarily, then y
+        if (v_tile_centroid.x < test_pos.x || 
+            (v_tile_centroid.x == test_pos.x && v_tile_centroid.y < test_pos.y)) {
+            right = mid - 1;
+        } else {
+            left = mid + 1;
+        }
     }
     
-    // Exactly match the original Python effect's logic
+    // Apply pattern coloring
     if (pattern_type > 0.5 && pattern_type < 1.5) {
-        // Star pattern (5 kites) - invert with 0.3 blend
+        // Star pattern
         finalColor = invertColor(blendColors(color1, color2, 0.3));
     }
     else if (pattern_type > 1.5) {
-        // Starburst pattern (10 darts) - invert with 0.7 blend
+        // Starburst pattern
         finalColor = invertColor(blendColors(color1, color2, 0.7));
     }
     else {
-        // Normal tile - use neighbor-based blend
+        // Normal tile
         finalColor = blendColors(color1, color2, blend_factor);
     }
     
