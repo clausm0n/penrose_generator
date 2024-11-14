@@ -315,7 +315,7 @@ class OptimizedRenderer:
         
         shader_name = self.shader_manager.shader_names[self.current_shader_index]
 
-        # Handle image transitions for pixelation_slideshow shader
+        # Handle different shader types
         if shader_name == 'pixelation_slideshow':
             current_time = glfw.get_time() * 1000.0
             transition_duration = 5000.0  # 5 seconds
@@ -386,40 +386,39 @@ class OptimizedRenderer:
                 self.logger.debug(f"Scale: ({scale_x}, {scale_y}), Offset: ({offset_x}, {offset_y})")
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
-        else:  # Handle other shaders
-            # Get cached pattern data for pattern-based shaders
-            if shader_name == 'region_blend':
-                # Create or update pattern texture
-                if not hasattr(self, 'pattern_texture'):
-                    pattern_data = self.pattern_cache[cache_key]['tile_patterns']
-                    self.pattern_texture = self.create_pattern_texture(pattern_data, width, height)
-                
-                # Bind pattern texture
-                glActiveTexture(GL_TEXTURE0)
-                glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-                
-                # Set uniforms
-                loc = self.uniform_locations.get('pattern_texture')
-                if loc is not None and loc != -1:
-                    glUniform1i(loc, 0)
-                
-                loc = self.uniform_locations.get('texture_size')
-                if loc is not None and loc != -1:
-                    glUniform2f(loc, width, height)
-                
-                # Set colors
-                color1 = np.array(config_data["color1"]) / 255.0
-                color2 = np.array(config_data["color2"]) / 255.0
-                
-                loc = self.uniform_locations.get('color1')
-                if loc is not None and loc != -1:
-                    glUniform3f(loc, *color1)
-                
-                loc = self.uniform_locations.get('color2')
-                if loc is not None and loc != -1:
-                    glUniform3f(loc, *color2)
+        elif shader_name == 'region_blend':
+            # Create or update pattern texture
+            if cache_key not in self.tile_cache or not hasattr(self, 'pattern_texture'):
+                pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+                self.pattern_texture = self.create_pattern_texture(pattern_data, width, height)
+            
+            # Bind pattern texture
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+            
+            # Set pattern texture uniforms
+            loc = self.uniform_locations.get('pattern_texture')
+            if loc is not None and loc != -1:
+                glUniform1i(loc, 0)
+            
+            loc = self.uniform_locations.get('texture_size')
+            if loc is not None and loc != -1:
+                glUniform2f(loc, float(width), float(height))
+            
+            # Set colors
+            color1 = np.array(config_data["color1"]) / 255.0
+            color2 = np.array(config_data["color2"]) / 255.0
+            
+            loc = self.uniform_locations.get('color1')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color1)
+            
+            loc = self.uniform_locations.get('color2')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color2)
 
-            # Set color and time uniforms for non-image shaders
+        else:  # Handle other shaders
+            # Set color and time uniforms for non-special shaders
             color1 = np.array(config_data["color1"]) / 255.0
             color2 = np.array(config_data["color2"]) / 255.0
             current_time = glfw.get_time() * 1000.0
@@ -469,10 +468,12 @@ class OptimizedRenderer:
         
         glUseProgram(0)
 
-    def __del__(self):
-        """Clean up OpenGL resources."""
-        if glfw.get_current_context():
-            if self.vbo is not None:
-                glDeleteBuffers(1, [self.vbo])
-            if self.ebo is not None:
-                glDeleteBuffers(1, [self.ebo])
+def __del__(self):
+    """Clean up OpenGL resources."""
+    if glfw.get_current_context():
+        if self.vbo is not None:
+            glDeleteBuffers(1, [self.vbo])
+        if self.ebo is not None:
+            glDeleteBuffers(1, [self.ebo])
+        if hasattr(self, 'pattern_texture'):
+            glDeleteTextures([self.pattern_texture])
