@@ -2,7 +2,7 @@
 #version 120
 
 uniform vec3 color1;
-uniform vec2 color2;
+uniform vec3 color2;  // Fixed: vec3 instead of vec2
 uniform vec4 tile_patterns[3500];  // Increased size to handle larger tilings
 uniform int num_tiles;
 
