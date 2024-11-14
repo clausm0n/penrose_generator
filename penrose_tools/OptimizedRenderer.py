@@ -18,7 +18,8 @@ class OptimizedRenderer:
         self.attribute_locations = {}
         self.uniform_locations = {}
         self.logger = logging.getLogger('OptimizedRenderer')
-        self.current_shader_index = 0  # Add this to track shader changes
+        self.current_shader_index = 0
+        self.pattern_cache = {}
         
         # Verify we have a valid OpenGL context before creating shader manager
         if not glfw.get_current_context():
@@ -119,6 +120,56 @@ class OptimizedRenderer:
         self.uniform_locations['num_starbursts'] = glGetUniformLocation(shader_program, 'num_starbursts')
         self.uniform_locations['num_neighbors'] = glGetUniformLocation(shader_program, 'num_neighbors')
 
+    def process_patterns(self, tiles, width, height, scale_value):
+        """Process and cache star/starburst patterns and neighbor information."""
+        stars = []
+        starbursts = []
+        neighbor_counts = []
+        center = complex(width / 2, height / 2)
+
+        # Find all stars and starbursts
+        for tile in tiles:
+            # Transform centroid to screen space
+            centroid = sum(tile.vertices) / len(tile.vertices)
+            screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
+            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
+            
+            if tile.is_kite and op.is_valid_star_kite(tile):
+                extended_star = op.find_star(tile, tiles)
+                if len(extended_star) == 5:
+                    for t in extended_star:
+                        t_centroid = sum(t.vertices) / len(t.vertices)
+                        t_screen = op.to_canvas([t_centroid], scale_value, center, 3)[0]
+                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
+                        stars.extend([t_gl[0], t_gl[1]])
+                    
+            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                extended_starburst = op.find_starburst(tile, tiles)
+                if len(extended_starburst) == 10:
+                    for t in extended_starburst:
+                        t_centroid = sum(t.vertices) / len(t.vertices)
+                        t_screen = op.to_canvas([t_centroid], scale_value, center, 3)[0]
+                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
+                        starbursts.extend([t_gl[0], t_gl[1]])
+                    
+            # Calculate neighbor counts
+            kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
+            total_neighbors = kite_count + dart_count
+            blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+            neighbor_counts.append((gl_centroid, blend_factor))
+
+        # Convert to numpy arrays once
+        pattern_data = {
+            'stars': np.array(stars, dtype=np.float32) if stars else None,
+            'starbursts': np.array(starbursts, dtype=np.float32) if starbursts else None
+        }
+        
+        if neighbor_counts:
+            centers, factors = zip(*neighbor_counts)
+            pattern_data['neighbor_centers'] = np.array([(c[0], c[1]) for c in centers], dtype=np.float32).flatten()
+            pattern_data['neighbor_factors'] = np.array(factors, dtype=np.float32)
+
+        return pattern_data
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
@@ -135,88 +186,56 @@ class OptimizedRenderer:
             config_data['scale'],
         )
 
-        # Regenerate tiles if needed
+        # Regenerate tiles and patterns if needed
         if cache_key not in self.tile_cache:
             self.tile_cache.clear()
+            self.pattern_cache.clear()
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
+            
+            # Process and cache pattern data
+            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
+            
             self.setup_buffers(tiles, width, height, config_data['scale'])
             self.get_shader_locations()
-
-        tiles = self.tile_cache[cache_key]
 
         # Use shader program
         shader_program = self.shader_manager.current_shader_program()
         glUseProgram(shader_program)
 
-        # Process stars and starbursts
-        stars = []
-        starbursts = []
-        neighbor_counts = []
-        center = complex(width / 2, height / 2)
-
-        # Find all stars and starbursts
-        for tile in tiles:
-            # Transform centroid to screen space
-            centroid = sum(tile.vertices) / len(tile.vertices)
-            screen_centroid = op.to_canvas([centroid], config_data['scale'], center, 3)[0]
-            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
-            
-            if tile.is_kite and op.is_valid_star_kite(tile):
-                extended_star = op.find_star(tile, tiles)
-                if len(extended_star) == 5:
-                    for t in extended_star:
-                        t_centroid = sum(t.vertices) / len(t.vertices)
-                        t_screen = op.to_canvas([t_centroid], config_data['scale'], center, 3)[0]
-                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
-                        stars.extend([t_gl[0], t_gl[1]])
-                    
-            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
-                extended_starburst = op.find_starburst(tile, tiles)
-                if len(extended_starburst) == 10:
-                    for t in extended_starburst:
-                        t_centroid = sum(t.vertices) / len(t.vertices)
-                        t_screen = op.to_canvas([t_centroid], config_data['scale'], center, 3)[0]
-                        t_gl = self.transform_to_gl_space(t_screen[0], t_screen[1], width, height)
-                        starbursts.extend([t_gl[0], t_gl[1]])
-                    
-            # Calculate neighbor counts
-            kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
-            total_neighbors = kite_count + dart_count
-            blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
-            neighbor_counts.append((gl_centroid, blend_factor))
-
-        # Pass arrays to shader
-        if stars:
-            stars_array = np.array(stars, dtype=np.float32)
-            loc = glGetUniformLocation(shader_program, 'star_centers')
+        # Get cached pattern data
+        pattern_data = self.pattern_cache[cache_key]
+        
+        # Set pattern uniforms
+        if pattern_data.get('stars') is not None:
+            stars_array = pattern_data['stars']
+            loc = self.uniform_locations.get('star_centers')
             if loc != -1:
                 glUniform2fv(loc, len(stars_array)//2, stars_array)
-            loc = glGetUniformLocation(shader_program, 'num_stars')
+            loc = self.uniform_locations.get('num_stars')
             if loc != -1:
                 glUniform1i(loc, len(stars_array)//2)
 
-        if starbursts:
-            starbursts_array = np.array(starbursts, dtype=np.float32)
-            loc = glGetUniformLocation(shader_program, 'starburst_centers')
+        if pattern_data.get('starbursts') is not None:
+            starbursts_array = pattern_data['starbursts']
+            loc = self.uniform_locations.get('starburst_centers')
             if loc != -1:
                 glUniform2fv(loc, len(starbursts_array)//2, starbursts_array)
-            loc = glGetUniformLocation(shader_program, 'num_starbursts')
+            loc = self.uniform_locations.get('num_starbursts')
             if loc != -1:
                 glUniform1i(loc, len(starbursts_array)//2)
 
-        if neighbor_counts:
-            centers, factors = zip(*neighbor_counts)
-            centers_array = np.array([(c[0], c[1]) for c in centers], dtype=np.float32).flatten()
-            factors_array = np.array(factors, dtype=np.float32)
-            loc = glGetUniformLocation(shader_program, 'neighbor_centers')
+        if 'neighbor_centers' in pattern_data:
+            centers_array = pattern_data['neighbor_centers']
+            factors_array = pattern_data['neighbor_factors']
+            loc = self.uniform_locations.get('neighbor_centers')
             if loc != -1:
                 glUniform2fv(loc, len(centers_array)//2, centers_array)
-            loc = glGetUniformLocation(shader_program, 'neighbor_factors')
+            loc = self.uniform_locations.get('neighbor_factors')
             if loc != -1:
                 glUniform1fv(loc, len(factors_array), factors_array)
-            loc = glGetUniformLocation(shader_program, 'num_neighbors')
+            loc = self.uniform_locations.get('num_neighbors')
             if loc != -1:
                 glUniform1i(loc, len(factors_array))
 
