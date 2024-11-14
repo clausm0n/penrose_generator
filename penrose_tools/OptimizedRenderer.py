@@ -139,21 +139,24 @@ class OptimizedRenderer:
         self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')
 
         # Get uniform locations
-        self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
-        self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
-        self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
-        
-        # Pattern uniforms
-        self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
-        self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
-
-        # Get uniform locations for pixelation slideshow
-        self.uniform_locations.update({
-            'current_image': glGetUniformLocation(shader_program, 'current_image'),
-            'next_image': glGetUniformLocation(shader_program, 'next_image'),
-            'transition_progress': glGetUniformLocation(shader_program, 'transition_progress'),
-            'image_transform': glGetUniformLocation(shader_program, 'image_transform')
-        })
+        shader_name = self.shader_manager.shader_names[self.current_shader_index]
+        if shader_name == 'pixelation_slideshow':
+            self.uniform_locations.update({
+                'current_image': glGetUniformLocation(shader_program, 'current_image'),
+                'next_image': glGetUniformLocation(shader_program, 'next_image'),
+                'transition_progress': glGetUniformLocation(shader_program, 'transition_progress'),
+                'image_transform': glGetUniformLocation(shader_program, 'image_transform')
+            })
+        else:
+            # Standard uniforms for other shaders
+            self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
+            self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
+            self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
+            
+            # Pattern uniforms only for relevant shaders
+            if shader_name in ['region_blend']:
+                self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
+                self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -271,24 +274,11 @@ class OptimizedRenderer:
         # Use shader program
         shader_program = self.shader_manager.current_shader_program()
         glUseProgram(shader_program)
-
-        # Get cached pattern data
-        pattern_data = self.pattern_cache[cache_key]
-        if 'tile_patterns' in pattern_data:
-            patterns = pattern_data['tile_patterns']
-            
-            # Set pattern data - using single uniform array
-            loc = self.uniform_locations.get('tile_patterns')
-            if loc is not None and loc != -1:
-                glUniform4fv(loc, len(patterns), patterns)
-            
-            # Set number of tiles
-            loc = self.uniform_locations.get('num_tiles')
-            if loc is not None and loc != -1:
-                glUniform1i(loc, len(patterns))
         
+        shader_name = self.shader_manager.shader_names[self.current_shader_index]
+
         # Handle image transitions for pixelation_slideshow shader
-        if self.shader_manager.shader_names[self.current_shader_index] == 'pixelation_slideshow':
+        if shader_name == 'pixelation_slideshow':
             current_time = glfw.get_time() * 1000.0
             transition_duration = 5000.0  # 5 seconds
             cycle_duration = 10000.0  # 10 seconds
@@ -313,18 +303,9 @@ class OptimizedRenderer:
                     self.image_processor.image_data[next_index]
                 )
                 
-                # Set image uniforms
-                glActiveTexture(GL_TEXTURE0)
-                glBindTexture(GL_TEXTURE_2D, self.current_texture)
-                glActiveTexture(GL_TEXTURE1)
-                glBindTexture(GL_TEXTURE_2D, self.next_texture)
-
                 # Calculate proper scale to fill the array while maintaining aspect ratio
                 img_width = self.image_processor.image_data[current_index].shape[1]
                 img_height = self.image_processor.image_data[current_index].shape[0]
-                
-                # Set shader uniforms
-                scale, offset_x, offset_y, new_width, new_height = self.image_processor.image_scales[current_index]
                 
                 # Calculate aspect ratios
                 img_ratio = img_width / img_height
@@ -343,15 +324,9 @@ class OptimizedRenderer:
                     offset_x = (1.0 - scale_x) * 0.5
                     offset_y = 0.0
 
-                loc = self.uniform_locations.get('image_scale')
-                if loc is not None and loc != -1:
-                    glUniform2f(loc, scale_x, scale_y)
-
-                loc = self.uniform_locations.get('image_offset')
-                if loc is not None and loc != -1:
-                    glUniform2f(loc, offset_x, offset_y)
-
-                
+                # Set textures and uniforms
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(GL_TEXTURE_2D, self.current_texture)
                 loc = self.uniform_locations.get('current_image')
                 if loc is not None and loc != -1:
                     glUniform1i(loc, 0)
@@ -361,46 +336,48 @@ class OptimizedRenderer:
                 loc = self.uniform_locations.get('next_image')
                 if loc is not None and loc != -1:
                     glUniform1i(loc, 1)
-                    
-                # Set transform
+
+                loc = self.uniform_locations.get('transition_progress')
+                if loc is not None and loc != -1:
+                    glUniform1f(loc, transition_progress)
+
                 loc = self.uniform_locations.get('image_transform')
                 if loc is not None and loc != -1:
                     glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
 
-                # Set transition progress
-                loc = self.uniform_locations.get('transition_progress')
-                if loc is not None and loc != -1:
-                    glUniform1f(loc, transition_progress)
-                    
-                loc = self.uniform_locations.get('image_scale')
-                if loc is not None and loc != -1:
-                    glUniform2f(loc, scale, scale)
-                    
-                loc = self.uniform_locations.get('image_offset')
-                if loc is not None and loc != -1:
-                    glUniform2f(loc, offset_x / width, offset_y / height)
-
-                self.logger.debug(f"Image scale: {scale}, {scale}")
-                self.logger.debug(f"Image offset: {offset_x / width}, {offset_y / height}")
+                self.logger.debug(f"Scale: ({scale_x}, {scale_y}), Offset: ({offset_x}, {offset_y})")
                 self.logger.debug(f"Transition progress: {transition_progress}")
+        
+        else:  # Handle other shaders
+            # Get cached pattern data for pattern-based shaders
+            if shader_name == 'region_blend':
+                pattern_data = self.pattern_cache[cache_key]
+                if 'tile_patterns' in pattern_data:
+                    patterns = pattern_data['tile_patterns']
+                    loc = self.uniform_locations.get('tile_patterns')
+                    if loc is not None and loc != -1:
+                        glUniform4fv(loc, len(patterns), patterns)
+                    
+                    loc = self.uniform_locations.get('num_tiles')
+                    if loc is not None and loc != -1:
+                        glUniform1i(loc, len(patterns))
 
-        # Set color and time uniforms
-        color1 = np.array(config_data["color1"]) / 255.0
-        color2 = np.array(config_data["color2"]) / 255.0
-        current_time = glfw.get_time() * 1000.0
-        
-        # Set color uniforms
-        loc = self.uniform_locations.get('color1')
-        if loc is not None and loc != -1:
-            glUniform3f(loc, *color1)
-        
-        loc = self.uniform_locations.get('color2')
-        if loc is not None and loc != -1:
-            glUniform3f(loc, *color2)
-        
-        loc = self.uniform_locations.get('time')
-        if loc is not None and loc != -1:
-            glUniform1f(loc, current_time / 1000.0)
+            # Set color and time uniforms for non-image shaders
+            color1 = np.array(config_data["color1"]) / 255.0
+            color2 = np.array(config_data["color2"]) / 255.0
+            current_time = glfw.get_time() * 1000.0
+            
+            loc = self.uniform_locations.get('color1')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color1)
+            
+            loc = self.uniform_locations.get('color2')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color2)
+            
+            loc = self.uniform_locations.get('time')
+            if loc is not None and loc != -1:
+                glUniform1f(loc, current_time / 1000.0)
 
         # Enable blending
         glEnable(GL_BLEND)
