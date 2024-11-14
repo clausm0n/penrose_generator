@@ -36,6 +36,40 @@ class OptimizedRenderer:
         """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
     
+    def create_pattern_texture(self, patterns, width, height):
+        """Create a texture from pattern data."""
+        # Create a texture to store pattern information
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        
+        # Set texture parameters
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        
+        # Create texture data array
+        texture_data = np.zeros((height, width, 4), dtype=np.float32)
+        
+        # Convert pattern data to texture format
+        for pattern in patterns:
+            # Convert GL space coordinates back to texture space
+            x = int((pattern[0] + 1.0) * width * 0.5)
+            y = int((pattern[1] + 1.0) * height * 0.5)
+            
+            # Ensure coordinates are within bounds
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            
+            # Store pattern type and blend factor
+            texture_data[y, x] = [pattern[2], pattern[3], 0.0, 1.0]
+        
+        # Upload texture data
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0,
+                    GL_RGBA, GL_FLOAT, texture_data)
+        
+        return texture
+    
     def create_texture(self, image_data):
         """Create OpenGL texture from numpy array."""
         texture = glGenTextures(1)
@@ -154,9 +188,13 @@ class OptimizedRenderer:
             self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
             
             # Pattern uniforms only for relevant shaders
-            if shader_name in ['region_blend']:
-                self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
-                self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
+            if shader_name == 'region_blend':
+                self.uniform_locations.update({
+                    'color1': glGetUniformLocation(shader_program, 'color1'),
+                    'color2': glGetUniformLocation(shader_program, 'color2'),
+                    'pattern_texture': glGetUniformLocation(shader_program, 'pattern_texture'),
+                    'texture_size': glGetUniformLocation(shader_program, 'texture_size')
+                })
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -351,16 +389,35 @@ class OptimizedRenderer:
         else:  # Handle other shaders
             # Get cached pattern data for pattern-based shaders
             if shader_name == 'region_blend':
-                pattern_data = self.pattern_cache[cache_key]
-                if 'tile_patterns' in pattern_data:
-                    patterns = pattern_data['tile_patterns']
-                    loc = self.uniform_locations.get('tile_patterns')
-                    if loc is not None and loc != -1:
-                        glUniform4fv(loc, len(patterns), patterns)
-                    
-                    loc = self.uniform_locations.get('num_tiles')
-                    if loc is not None and loc != -1:
-                        glUniform1i(loc, len(patterns))
+                # Create or update pattern texture
+                if not hasattr(self, 'pattern_texture'):
+                    pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+                    self.pattern_texture = self.create_pattern_texture(pattern_data, width, height)
+                
+                # Bind pattern texture
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+                
+                # Set uniforms
+                loc = self.uniform_locations.get('pattern_texture')
+                if loc is not None and loc != -1:
+                    glUniform1i(loc, 0)
+                
+                loc = self.uniform_locations.get('texture_size')
+                if loc is not None and loc != -1:
+                    glUniform2f(loc, width, height)
+                
+                # Set colors
+                color1 = np.array(config_data["color1"]) / 255.0
+                color2 = np.array(config_data["color2"]) / 255.0
+                
+                loc = self.uniform_locations.get('color1')
+                if loc is not None and loc != -1:
+                    glUniform3f(loc, *color1)
+                
+                loc = self.uniform_locations.get('color2')
+                if loc is not None and loc != -1:
+                    glUniform3f(loc, *color2)
 
             # Set color and time uniforms for non-image shaders
             color1 = np.array(config_data["color1"]) / 255.0

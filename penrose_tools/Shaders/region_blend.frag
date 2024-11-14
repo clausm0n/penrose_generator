@@ -1,10 +1,11 @@
 // region_blend.frag
 #version 120
+#extension GL_EXT_gpu_shader4 : enable
 
 uniform vec3 color1;
-uniform vec3 color2;  // Fixed: vec3 instead of vec2
-uniform vec4 tile_patterns[2048];  // Increased size to handle larger tilings
-uniform int num_tiles;
+uniform vec3 color2;
+uniform sampler2D pattern_texture;  // Using 2D texture to store pattern data
+uniform vec2 texture_size;          // Width and height of the texture
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
@@ -19,41 +20,20 @@ vec3 invertColor(vec3 color) {
     return vec3(1.0) - color;
 }
 
-bool compareVec2(vec2 a, vec2 b) {
-    return abs(a.x - b.x) < EPSILON && abs(a.y - b.y) < EPSILON;
+// Find pattern data in texture
+vec4 findPattern() {
+    // Convert centroid position to texture coordinates
+    vec2 texCoord = (v_tile_centroid + 1.0) * 0.5;
+    return texture2D(pattern_texture, texCoord);
 }
 
 void main() {
+    vec4 pattern = findPattern();
+    float pattern_type = pattern.r;  // Pattern type stored in red channel
+    float blend_factor = pattern.g;  // Blend factor stored in green channel
+    
     vec3 finalColor;
-    float pattern_type = 0.0;
-    float blend_factor = 0.5;
     
-    // Binary search through pattern array for better performance
-    int left = 0;
-    int right = num_tiles - 1;
-    bool found = false;
-    
-    while (left <= right) {
-        int mid = (left + right) / 2;
-        vec2 test_pos = tile_patterns[mid].xy;
-        
-        if (compareVec2(v_tile_centroid, test_pos)) {
-            pattern_type = tile_patterns[mid].z;
-            blend_factor = tile_patterns[mid].w;
-            found = true;
-            break;
-        }
-        
-        // Compare based on x coordinate primarily, then y
-        if (v_tile_centroid.x < test_pos.x || 
-            (v_tile_centroid.x == test_pos.x && v_tile_centroid.y < test_pos.y)) {
-            right = mid - 1;
-        } else {
-            left = mid + 1;
-        }
-    }
-    
-    // Apply pattern coloring
     if (pattern_type > 0.5 && pattern_type < 1.5) {
         // Star pattern
         finalColor = invertColor(blendColors(color1, color2, 0.3));
