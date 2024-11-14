@@ -22,28 +22,32 @@ vec3 invertColor(vec3 color) {
 void main() {
     vec3 finalColor;
     bool found = false;
+    float pattern_type = 0.0;
+    float blend_factor = 0.5;
     
     // Find this tile's pattern info
     for (int i = 0; i < num_tiles && i < 500; i++) {
         vec4 pattern = tile_patterns[i];
         if (distance(v_tile_centroid, pattern.xy) < EPSILON) {
-            if (pattern.z > 0.5 && pattern.z < 1.5) {  // Star pattern
-                finalColor = invertColor(blendColors(color1, color2, 0.3));
-            }
-            else if (pattern.z > 1.5) {  // Starburst pattern
-                finalColor = invertColor(blendColors(color1, color2, 0.7));
-            }
-            else {  // Normal tile
-                finalColor = blendColors(color1, color2, pattern.w);
-            }
+            pattern_type = pattern.z;
+            blend_factor = pattern.w;
             found = true;
             break;
         }
     }
     
-    // Fallback if tile not found
-    if (!found) {
-        finalColor = blendColors(color1, color2, 0.5);
+    // Apply pattern-specific coloring
+    if (pattern_type > 0.5 && pattern_type < 1.5) {  // Star pattern
+        // Use inverted colors for complete star tiles
+        finalColor = invertColor(blendColors(color1, color2, 0.3));
+    }
+    else if (pattern_type > 1.5) {  // Starburst pattern
+        // Use inverted colors for complete starburst tiles
+        finalColor = invertColor(blendColors(color1, color2, 0.7));
+    }
+    else {  // Normal tile or fallback
+        // Use neighbor-based blending
+        finalColor = blendColors(color1, color2, blend_factor);
     }
     
     gl_FragColor = vec4(finalColor, 1.0);

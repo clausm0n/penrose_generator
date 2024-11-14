@@ -119,7 +119,28 @@ class OptimizedRenderer:
         """Process and cache pattern data for every tile."""
         center = complex(width / 2, height / 2)
         patterns = []
+        processed_tiles = set()  # Keep track of tiles we've processed
 
+        # First pass - find all stars and starbursts
+        star_tiles = set()
+        starburst_tiles = set()
+        for tile in tiles:
+            if tile in processed_tiles:
+                continue
+                
+            if tile.is_kite and op.is_valid_star_kite(tile):
+                extended_star = op.find_star(tile, tiles)
+                if len(extended_star) == 5:
+                    star_tiles.update(extended_star)
+                    processed_tiles.update(extended_star)
+                    
+            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                extended_starburst = op.find_starburst(tile, tiles)
+                if len(extended_starburst) == 10:
+                    starburst_tiles.update(extended_starburst)
+                    processed_tiles.update(extended_starburst)
+
+        # Second pass - process all tiles
         for tile in tiles:
             # Transform centroid to screen space
             centroid = sum(tile.vertices) / len(tile.vertices)
@@ -131,19 +152,13 @@ class OptimizedRenderer:
             total_neighbors = kite_count + dart_count
             blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
             
-            pattern_type = 0.0  # Default: normal tile
-            
-            # Check for star pattern
-            if tile.is_kite and op.is_valid_star_kite(tile):
-                extended_star = op.find_star(tile, tiles)
-                if len(extended_star) == 5:
-                    pattern_type = 1.0
-            
-            # Check for starburst pattern
-            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
-                extended_starburst = op.find_starburst(tile, tiles)
-                if len(extended_starburst) == 10:
-                    pattern_type = 2.0
+            # Determine pattern type
+            if tile in star_tiles:
+                pattern_type = 1.0  # Star pattern
+            elif tile in starburst_tiles:
+                pattern_type = 2.0  # Starburst pattern
+            else:
+                pattern_type = 0.0  # Normal tile
 
             # Store centroid, pattern type, and blend factor
             patterns.append([gl_centroid[0], gl_centroid[1], pattern_type, blend_factor])
