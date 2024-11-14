@@ -3,7 +3,7 @@
 
 uniform vec3 color1;
 uniform vec3 color2;  // Fixed: vec3 instead of vec2
-uniform vec4 tile_patterns[5500];  // Increased size to handle larger tilings
+uniform vec4 tile_patterns[1024];  // Increased size to handle larger tilings
 uniform int num_tiles;
 
 varying float v_tile_type;
