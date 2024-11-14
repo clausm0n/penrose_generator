@@ -1,4 +1,6 @@
 // raindrop_ripple.vert
+#version 120
+
 attribute vec2 position;
 attribute float tile_type;
 attribute vec2 tile_centroid;

@@ -1,5 +1,5 @@
 // pixelation_slideshow.frag
-precision mediump float;
+#version 120
 
 uniform vec3 color1;
 uniform vec3 color2;
