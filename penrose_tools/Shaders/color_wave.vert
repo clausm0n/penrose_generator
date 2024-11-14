@@ -1,13 +1,20 @@
 // color_wave.vert
-#version 140
+#version 120
 
-in vec2 position;
-in float tile_type;
-out float v_tile_type;
-out vec2 v_position;
+// Input attributes
+attribute vec2 position;
+attribute float tile_type;
+attribute vec2 tile_centroid;
+
+// Varying variables
+varying float v_tile_type;
+varying vec2 v_position;  // We'll pass the relative position to calculate wave effect
 
 void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
+    // Pass values to fragment shader
     v_tile_type = tile_type;
-    v_position = position;
+    v_position = tile_centroid;  // This is already in normalized coordinates
+    
+    // Set the position
+    gl_Position = vec4(position, 0.0, 1.0);
 }
