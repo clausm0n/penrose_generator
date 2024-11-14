@@ -140,14 +140,12 @@ class OptimizedRenderer:
         # Set uniforms
         color1 = np.array(config_data["color1"]) / 255.0
         color2 = np.array(config_data["color2"]) / 255.0
-        current_time = glfw.get_time()  # Get current time
+        current_time = glfw.get_time() * 1000.0  # Convert to milliseconds to match Python version
         
-        if 'color1' in self.uniform_locations:
-            glUniform3f(self.uniform_locations['color1'], *color1)
-        if 'color2' in self.uniform_locations:
-            glUniform3f(self.uniform_locations['color2'], *color2)
+        glUniform3f(self.uniform_locations['color1'], *color1)
+        glUniform3f(self.uniform_locations['color2'], *color2)
         if 'time' in self.uniform_locations and self.uniform_locations['time'] != -1:
-            glUniform1f(self.uniform_locations['time'], current_time)
+            glUniform1f(self.uniform_locations['time'], current_time / 1000.0)  # Convert back to match shader
 
         # Enable blending
         glEnable(GL_BLEND)

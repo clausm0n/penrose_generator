@@ -4,14 +4,14 @@
 // Input attributes
 attribute vec2 position;
 attribute float tile_type;
-attribute vec2 tile_centroid;  // Changed from 'centroid' to 'tile_centroid'
+attribute vec2 tile_centroid;
 
 // Varying variables
 varying float v_tile_type;
-varying vec2 v_tile_centroid;  // Changed to match attribute name
+varying vec2 v_tile_centroid;
 
 void main() {
-    // Pass values to fragment shader
+    // Pass values to fragment shader without modification
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
