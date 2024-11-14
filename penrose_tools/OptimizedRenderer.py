@@ -18,12 +18,18 @@ class OptimizedRenderer:
         self.attribute_locations = {}
         self.uniform_locations = {}
         self.logger = logging.getLogger('OptimizedRenderer')
+        self.current_shader_index = 0  # Add this to track shader changes
         
         # Verify we have a valid OpenGL context before creating shader manager
         if not glfw.get_current_context():
             raise RuntimeError("OptimizedRenderer requires an active OpenGL context")
             
         self.shader_manager = ShaderManager()
+
+    def force_refresh(self):
+        """Force a refresh of the buffers by clearing the tile cache."""
+        self.tile_cache.clear()
+
 
     def transform_to_gl_space(self, x, y, width, height):
         """Transform screen coordinates to OpenGL coordinate space."""
@@ -115,7 +121,12 @@ class OptimizedRenderer:
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
-        # Create cache key based on current configuration
+        # Check if shader has changed
+        if self.current_shader_index != self.shader_manager.current_shader_index:
+            self.current_shader_index = self.shader_manager.current_shader_index
+            self.force_refresh()  # Force refresh when shader changes
+            self.logger.info("Shader changed, forcing buffer refresh")
+
         cache_key = (
             tuple(config_data['gamma']),
             width,
