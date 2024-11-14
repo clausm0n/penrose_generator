@@ -36,9 +36,19 @@ class OptimizedRenderer:
         """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
     
-    def create_pattern_texture(self, patterns, width, height):
-        """Create a texture from pattern data."""
-        # Create a texture to store pattern information
+    def create_pattern_texture(self, patterns, tile_bounds):
+        """Create a texture from pattern data with proper coordinate mapping."""
+        min_x, min_y, max_x, max_y = tile_bounds
+        
+        # Calculate texture dimensions based on tile bounds
+        width = int(max_x - min_x)
+        height = int(max_y - min_y)
+        
+        # Ensure minimum texture size
+        width = max(width, 1024)
+        height = max(height, 1024)
+        
+        # Create texture
         texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, texture)
         
@@ -51,24 +61,41 @@ class OptimizedRenderer:
         # Create texture data array
         texture_data = np.zeros((height, width, 4), dtype=np.float32)
         
-        # Convert pattern data to texture format
+        # Convert pattern data to texture coordinates
         for pattern in patterns:
-            # Convert GL space coordinates back to texture space
-            x = int((pattern[0] + 1.0) * width * 0.5)
-            y = int((pattern[1] + 1.0) * height * 0.5)
+            x = int((pattern[0] - min_x) * width / (max_x - min_x))
+            y = int((pattern[1] - min_y) * height / (max_y - min_y))
             
             # Ensure coordinates are within bounds
             x = max(0, min(x, width - 1))
             y = max(0, min(y, height - 1))
             
-            # Store pattern type and blend factor
+            # Store pattern data
             texture_data[y, x] = [pattern[2], pattern[3], 0.0, 1.0]
         
         # Upload texture data
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0,
                     GL_RGBA, GL_FLOAT, texture_data)
         
-        return texture
+        return texture, (width, height)
+
+    def update_pattern_texture(self, cache_key):
+        """Update pattern texture when config changes."""
+        tiles = self.tile_cache[cache_key]
+        pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+        
+        # Calculate tile bounds
+        tile_positions = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
+        min_x, min_y = np.min(tile_positions, axis=0)
+        max_x, max_y = np.max(tile_positions, axis=0)
+        tile_bounds = (min_x, min_y, max_x, max_y)
+        
+        # Create or update texture
+        if hasattr(self, 'pattern_texture'):
+            glDeleteTextures([self.pattern_texture])
+        self.pattern_texture, (tex_width, tex_height) = self.create_pattern_texture(pattern_data, tile_bounds)
+        self.pattern_bounds = tile_bounds
+        return tex_width, tex_height
     
     def create_texture(self, image_data):
         """Create OpenGL texture from numpy array."""
@@ -193,7 +220,8 @@ class OptimizedRenderer:
                     'color1': glGetUniformLocation(shader_program, 'color1'),
                     'color2': glGetUniformLocation(shader_program, 'color2'),
                     'pattern_texture': glGetUniformLocation(shader_program, 'pattern_texture'),
-                    'texture_size': glGetUniformLocation(shader_program, 'texture_size')
+                    'texture_size': glGetUniformLocation(shader_program, 'texture_size'),
+                    'pattern_bounds': glGetUniformLocation(shader_program, 'pattern_bounds')
                 })
 
     def process_patterns(self, tiles, width, height, scale_value):
@@ -387,23 +415,30 @@ class OptimizedRenderer:
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
         elif shader_name == 'region_blend':
-            # Create or update pattern texture
-            if cache_key not in self.tile_cache or not hasattr(self, 'pattern_texture'):
-                pattern_data = self.pattern_cache[cache_key]['tile_patterns']
-                self.pattern_texture = self.create_pattern_texture(pattern_data, width, height)
+            # Update pattern texture if needed
+            if (cache_key not in self.tile_cache or 
+                not hasattr(self, 'pattern_texture') or 
+                self.current_cache_key != cache_key):
+                
+                tex_width, tex_height = self.update_pattern_texture(cache_key)
+                self.current_cache_key = cache_key
             
             # Bind pattern texture
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
             
-            # Set pattern texture uniforms
+            # Set uniforms
             loc = self.uniform_locations.get('pattern_texture')
             if loc is not None and loc != -1:
                 glUniform1i(loc, 0)
             
             loc = self.uniform_locations.get('texture_size')
             if loc is not None and loc != -1:
-                glUniform2f(loc, float(width), float(height))
+                glUniform2f(loc, float(tex_width), float(tex_height))
+            
+            loc = self.uniform_locations.get('pattern_bounds')
+            if loc is not None and loc != -1:
+                glUniform4f(loc, *self.pattern_bounds)
             
             # Set colors
             color1 = np.array(config_data["color1"]) / 255.0
