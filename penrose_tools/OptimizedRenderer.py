@@ -119,52 +119,55 @@ class OptimizedRenderer:
         """Process and cache pattern data for every tile."""
         center = complex(width / 2, height / 2)
         patterns = []
-        processed_tiles = set()  # Keep track of tiles we've processed
 
-        # First pass - find all stars and starbursts
-        star_tiles = set()
-        starburst_tiles = set()
-        for tile in tiles:
-            if tile in processed_tiles:
-                continue
-                
-            if tile.is_kite and op.is_valid_star_kite(tile):
-                extended_star = op.find_star(tile, tiles)
-                if len(extended_star) == 5:
-                    star_tiles.update(extended_star)
-                    processed_tiles.update(extended_star)
-                    
-            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
-                extended_starburst = op.find_starburst(tile, tiles)
-                if len(extended_starburst) == 10:
-                    starburst_tiles.update(extended_starburst)
-                    processed_tiles.update(extended_starburst)
-
-        # Second pass - process all tiles
-        for tile in tiles:
-            # Transform centroid to screen space
+        # Helper to transform centroids consistently
+        def transform_centroid(tile):
             centroid = sum(tile.vertices) / len(tile.vertices)
             screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
-            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
+            return self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
 
-            # Calculate base blend factor from neighbors
+        # Process each tile individually, exactly like the original
+        for tile in tiles:
+            gl_centroid = transform_centroid(tile)
+            
+            # Calculate neighbor blend factor
             kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
             total_neighbors = kite_count + dart_count
             blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
             
-            # Determine pattern type
-            if tile in star_tiles:
-                pattern_type = 1.0  # Star pattern
-            elif tile in starburst_tiles:
-                pattern_type = 2.0  # Starburst pattern
-            else:
-                pattern_type = 0.0  # Normal tile
+            # Default to normal tile
+            pattern_type = 0.0
+            
+            # Check for star pattern - directly matching original logic
+            if tile.is_kite and op.is_valid_star_kite(tile):
+                extended_star = op.find_star(tile, tiles)
+                if len(extended_star) == 5:
+                    pattern_type = 1.0  # Will trigger inverted colors with 0.3 blend
+                    
+            # Check for starburst pattern - directly matching original logic
+            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                extended_starburst = op.find_starburst(tile, tiles)
+                if len(extended_starburst) == 10:
+                    pattern_type = 2.0  # Will trigger inverted colors with 0.7 blend
 
-            # Store centroid, pattern type, and blend factor
+            # Store all data for this tile
             patterns.append([gl_centroid[0], gl_centroid[1], pattern_type, blend_factor])
 
+            # Debug output for pattern detection
+            if pattern_type == 1.0:
+                self.logger.debug(f"Found star tile at {gl_centroid}")
+            elif pattern_type == 2.0:
+                self.logger.debug(f"Found starburst tile at {gl_centroid}")
+
+        pattern_array = np.array(patterns, dtype=np.float32)
+        
+        # Count patterns for verification
+        star_count = np.sum(pattern_array[:, 2] == 1.0)
+        starburst_count = np.sum(pattern_array[:, 2] == 2.0)
+        self.logger.info(f"Found {star_count} star tiles and {starburst_count} starburst tiles")
+
         return {
-            'tile_patterns': np.array(patterns, dtype=np.float32)
+            'tile_patterns': pattern_array
         }
 
     def render_tiles(self, width, height, config_data):
