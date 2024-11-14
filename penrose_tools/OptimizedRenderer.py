@@ -116,58 +116,56 @@ class OptimizedRenderer:
         self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
 
     def process_patterns(self, tiles, width, height, scale_value):
-        """Process and cache pattern data for every tile."""
+        """Process and cache pattern data for every tile with complete pattern coverage."""
         center = complex(width / 2, height / 2)
         patterns = []
+        pattern_tiles = set()  # Track all tiles that are part of a pattern
 
-        # Helper to transform centroids consistently
-        def transform_centroid(tile):
+        # First pass - identify all pattern tiles
+        for tile in tiles:
+            if tile.is_kite and op.is_valid_star_kite(tile):
+                extended_star = op.find_star(tile, tiles)
+                if len(extended_star) == 5:
+                    # Add all tiles in the star
+                    for star_tile in extended_star:
+                        pattern_tiles.add((star_tile, 1.0))  # 1.0 = star pattern
+                    
+            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                extended_starburst = op.find_starburst(tile, tiles)
+                if len(extended_starburst) == 10:
+                    # Add all tiles in the starburst
+                    for burst_tile in extended_starburst:
+                        pattern_tiles.add((burst_tile, 2.0))  # 2.0 = starburst pattern
+
+        # For logging pattern counts
+        star_tiles = len([t for t, p in pattern_tiles if p == 1.0])
+        starburst_tiles = len([t for t, p in pattern_tiles if p == 2.0])
+        self.logger.info(f"Found {star_tiles} tiles in stars and {starburst_tiles} tiles in starbursts")
+
+        # Second pass - process all tiles with pattern information
+        for tile in tiles:
+            # Transform centroid to GL space
             centroid = sum(tile.vertices) / len(tile.vertices)
             screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
-            return self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
-
-        # Process each tile individually, exactly like the original
-        for tile in tiles:
-            gl_centroid = transform_centroid(tile)
+            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
             
             # Calculate neighbor blend factor
             kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
             total_neighbors = kite_count + dart_count
             blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
-            
-            # Default to normal tile
-            pattern_type = 0.0
-            
-            # Check for star pattern - directly matching original logic
-            if tile.is_kite and op.is_valid_star_kite(tile):
-                extended_star = op.find_star(tile, tiles)
-                if len(extended_star) == 5:
-                    pattern_type = 1.0  # Will trigger inverted colors with 0.3 blend
-                    
-            # Check for starburst pattern - directly matching original logic
-            elif not tile.is_kite and op.is_valid_starburst_dart(tile):
-                extended_starburst = op.find_starburst(tile, tiles)
-                if len(extended_starburst) == 10:
-                    pattern_type = 2.0  # Will trigger inverted colors with 0.7 blend
 
-            # Store all data for this tile
+            # Check if this tile is part of a pattern
+            pattern_type = 0.0  # Default to normal tile
+            for pattern_tile, pattern_code in pattern_tiles:
+                if pattern_tile == tile:
+                    pattern_type = pattern_code
+                    break
+
             patterns.append([gl_centroid[0], gl_centroid[1], pattern_type, blend_factor])
 
-            # Debug output for pattern detection
-            if pattern_type == 1.0:
-                self.logger.debug(f"Found star tile at {gl_centroid}")
-            elif pattern_type == 2.0:
-                self.logger.debug(f"Found starburst tile at {gl_centroid}")
-
-        pattern_array = np.array(patterns, dtype=np.float32)
-        
-        # Count patterns for verification
-        star_count = np.sum(pattern_array[:, 2] == 1.0)
-        starburst_count = np.sum(pattern_array[:, 2] == 2.0)
-        self.logger.info(f"Found {star_count} star tiles and {starburst_count} starburst tiles")
-
+        # Convert to numpy array and return
         return {
-            'tile_patterns': pattern_array
+            'tile_patterns': np.array(patterns, dtype=np.float32)
         }
 
     def render_tiles(self, width, height, config_data):
