@@ -190,40 +190,33 @@ class OptimizedRenderer:
         if 'tile_patterns' in pattern_data:
             patterns = pattern_data['tile_patterns']
             
-            # Set centers
-            loc = self.uniform_locations.get('tile_centers')
-            if loc != -1:
-                glUniform2fv(loc, len(patterns), patterns[:, :2].flatten())
-                
-            # Set pattern data
+            # Set pattern data - using single uniform array
             loc = self.uniform_locations.get('tile_patterns')
-            if loc != -1:
+            if loc is not None and loc != -1:
                 glUniform4fv(loc, len(patterns), patterns)
-                
-            # Set blend factors
-            loc = self.uniform_locations.get('blend_factors')
-            if loc != -1:
-                glUniform1fv(loc, len(patterns), patterns[:, 3])
-                
-            # Set special blends
-            loc = self.uniform_locations.get('special_blends')
-            if loc != -1:
-                glUniform1fv(loc, len(patterns), patterns[:, 4])
-                            
+            
             # Set number of tiles
             loc = self.uniform_locations.get('num_tiles')
-            if loc != -1:
+            if loc is not None and loc != -1:
                 glUniform1i(loc, len(patterns))
 
         # Set color and time uniforms
         color1 = np.array(config_data["color1"]) / 255.0
         color2 = np.array(config_data["color2"]) / 255.0
-        current_time = glfw.get_time() * 1000.0  # Convert to milliseconds to match Python version
+        current_time = glfw.get_time() * 1000.0
         
-        glUniform3f(self.uniform_locations['color1'], *color1)
-        glUniform3f(self.uniform_locations['color2'], *color2)
-        if 'time' in self.uniform_locations and self.uniform_locations['time'] != -1:
-            glUniform1f(self.uniform_locations['time'], current_time / 1000.0)
+        # Set color uniforms
+        loc = self.uniform_locations.get('color1')
+        if loc is not None and loc != -1:
+            glUniform3f(loc, *color1)
+        
+        loc = self.uniform_locations.get('color2')
+        if loc is not None and loc != -1:
+            glUniform3f(loc, *color2)
+        
+        loc = self.uniform_locations.get('time')
+        if loc is not None and loc != -1:
+            glUniform1f(loc, current_time / 1000.0)
 
         # Enable blending
         glEnable(GL_BLEND)
@@ -231,11 +224,11 @@ class OptimizedRenderer:
 
         # Bind buffers and set attribute pointers
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        stride = 5 * ctypes.sizeof(GLfloat)  # position (2) + tile_type (1) + centroid (2)
+        stride = 5 * ctypes.sizeof(GLfloat)
 
         # Only enable and setup attributes that have valid locations
         for attr_name, loc in self.attribute_locations.items():
-            if loc != -1:  # Only process valid locations
+            if loc != -1:
                 glEnableVertexAttribArray(loc)
                 if attr_name == 'position':
                     glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
@@ -251,7 +244,7 @@ class OptimizedRenderer:
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
 
-        # Cleanup - only disable valid attributes
+        # Cleanup
         for loc in self.attribute_locations.values():
             if loc != -1:
                 glDisableVertexAttribArray(loc)
