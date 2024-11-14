@@ -147,16 +147,13 @@ class OptimizedRenderer:
         self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
         self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
 
-        # Add image-related uniform locations
-        program = self.shader_manager.current_shader_program()
-        if program:
-            self.uniform_locations.update({
-                'current_image': glGetUniformLocation(program, 'current_image'),
-                'next_image': glGetUniformLocation(program, 'next_image'),
-                'transition_progress': glGetUniformLocation(program, 'transition_progress'),
-                'image_scale': glGetUniformLocation(program, 'image_scale'),
-                'image_offset': glGetUniformLocation(program, 'image_offset')
-            })
+        # Get uniform locations for pixelation slideshow
+        self.uniform_locations.update({
+            'current_image': glGetUniformLocation(shader_program, 'current_image'),
+            'next_image': glGetUniformLocation(shader_program, 'next_image'),
+            'transition_progress': glGetUniformLocation(shader_program, 'transition_progress'),
+            'image_transform': glGetUniformLocation(shader_program, 'image_transform')
+        })
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -321,23 +318,30 @@ class OptimizedRenderer:
                 glBindTexture(GL_TEXTURE_2D, self.current_texture)
                 glActiveTexture(GL_TEXTURE1)
                 glBindTexture(GL_TEXTURE_2D, self.next_texture)
+
+                # Calculate proper scale to fill the array while maintaining aspect ratio
+                img_width = self.image_processor.image_data[current_index].shape[1]
+                img_height = self.image_processor.image_data[current_index].shape[0]
                 
                 # Set shader uniforms
                 scale, offset_x, offset_y, new_width, new_height = self.image_processor.image_scales[current_index]
-
-                # Calculate proper scale to maintain aspect ratio while filling the array
-                if new_width / width > new_height / height:
-                    # Image is wider relative to the array
+                
+                # Calculate aspect ratios
+                img_ratio = img_width / img_height
+                array_ratio = width / height
+                
+                if img_ratio > array_ratio:
+                    # Image is wider relative to array
                     scale_x = 1.0
-                    scale_y = (new_height * width) / (new_width * height)
+                    scale_y = array_ratio / img_ratio
+                    offset_x = 0.0
+                    offset_y = (1.0 - scale_y) * 0.5
                 else:
-                    # Image is taller relative to the array
-                    scale_x = (new_width * height) / (new_height * width)
+                    # Image is taller relative to array
+                    scale_x = img_ratio / array_ratio
                     scale_y = 1.0
-
-                # Calculate centered offset
-                offset_x = (1.0 - scale_x) * 0.5
-                offset_y = (1.0 - scale_y) * 0.5
+                    offset_x = (1.0 - scale_x) * 0.5
+                    offset_y = 0.0
 
                 loc = self.uniform_locations.get('image_scale')
                 if loc is not None and loc != -1:
@@ -351,11 +355,19 @@ class OptimizedRenderer:
                 loc = self.uniform_locations.get('current_image')
                 if loc is not None and loc != -1:
                     glUniform1i(loc, 0)
-                    
+
+                glActiveTexture(GL_TEXTURE1)
+                glBindTexture(GL_TEXTURE_2D, self.next_texture)
                 loc = self.uniform_locations.get('next_image')
                 if loc is not None and loc != -1:
                     glUniform1i(loc, 1)
                     
+                # Set transform
+                loc = self.uniform_locations.get('image_transform')
+                if loc is not None and loc != -1:
+                    glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
+
+                # Set transition progress
                 loc = self.uniform_locations.get('transition_progress')
                 if loc is not None and loc != -1:
                     glUniform1f(loc, transition_progress)
