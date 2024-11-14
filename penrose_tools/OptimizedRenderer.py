@@ -111,21 +111,15 @@ class OptimizedRenderer:
         self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
         self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
         
-        # New uniform locations for region blend shader
-        self.uniform_locations['star_centers'] = glGetUniformLocation(shader_program, 'star_centers')
-        self.uniform_locations['starburst_centers'] = glGetUniformLocation(shader_program, 'starburst_centers')
-        self.uniform_locations['neighbor_centers'] = glGetUniformLocation(shader_program, 'neighbor_centers')
-        self.uniform_locations['neighbor_factors'] = glGetUniformLocation(shader_program, 'neighbor_factors')
-        self.uniform_locations['num_stars'] = glGetUniformLocation(shader_program, 'num_stars')
-        self.uniform_locations['num_starbursts'] = glGetUniformLocation(shader_program, 'num_starbursts')
-        self.uniform_locations['num_neighbors'] = glGetUniformLocation(shader_program, 'num_neighbors')
+        # Pattern uniforms
+        self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
+        self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data for every tile."""
-        tile_patterns = []  # Will store pattern type and blend factor for each tile
         center = complex(width / 2, height / 2)
+        patterns = []
 
-        # Process each tile
         for tile in tiles:
             # Transform centroid to screen space
             centroid = sum(tile.vertices) / len(tile.vertices)
@@ -136,32 +130,26 @@ class OptimizedRenderer:
             kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
             total_neighbors = kite_count + dart_count
             blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
-
-            pattern_type = 0  # 0: normal, 1: star, 2: starburst
-            special_blend = blend_factor
-
+            
+            pattern_type = 0.0  # Default: normal tile
+            
             # Check for star pattern
             if tile.is_kite and op.is_valid_star_kite(tile):
                 extended_star = op.find_star(tile, tiles)
                 if len(extended_star) == 5:
-                    pattern_type = 1
-                    special_blend = 0.3  # Special blend factor for stars
+                    pattern_type = 1.0
             
             # Check for starburst pattern
             elif not tile.is_kite and op.is_valid_starburst_dart(tile):
                 extended_starburst = op.find_starburst(tile, tiles)
                 if len(extended_starburst) == 10:
-                    pattern_type = 2
-                    special_blend = 0.7  # Special blend factor for starbursts
+                    pattern_type = 2.0
 
-            # Store the tile's information
-            tile_patterns.append((gl_centroid[0], gl_centroid[1], pattern_type, blend_factor, special_blend))
+            # Store centroid, pattern type, and blend factor
+            patterns.append([gl_centroid[0], gl_centroid[1], pattern_type, blend_factor])
 
-        # Convert to structured numpy arrays
-        pattern_data = np.array(tile_patterns, dtype=np.float32)
-        
         return {
-            'tile_patterns': pattern_data
+            'tile_patterns': np.array(patterns, dtype=np.float32)
         }
 
     def render_tiles(self, width, height, config_data):
@@ -207,10 +195,10 @@ class OptimizedRenderer:
             if loc != -1:
                 glUniform2fv(loc, len(patterns), patterns[:, :2].flatten())
                 
-            # Set pattern types
-            loc = self.uniform_locations.get('pattern_types')
+            # Set pattern data
+            loc = self.uniform_locations.get('tile_patterns')
             if loc != -1:
-                glUniform1fv(loc, len(patterns), patterns[:, 2])
+                glUniform4fv(loc, len(patterns), patterns)
                 
             # Set blend factors
             loc = self.uniform_locations.get('blend_factors')
@@ -221,7 +209,7 @@ class OptimizedRenderer:
             loc = self.uniform_locations.get('special_blends')
             if loc != -1:
                 glUniform1fv(loc, len(patterns), patterns[:, 4])
-                
+                            
             # Set number of tiles
             loc = self.uniform_locations.get('num_tiles')
             if loc != -1:
