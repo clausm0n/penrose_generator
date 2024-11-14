@@ -345,6 +345,10 @@ class OptimizedRenderer:
                 if loc is not None and loc != -1:
                     glUniform2f(loc, offset_x / width, offset_y / height)
 
+                self.logger.debug(f"Image scale: {scale}, {scale}")
+                self.logger.debug(f"Image offset: {offset_x / width}, {offset_y / height}")
+                self.logger.debug(f"Transition progress: {transition_progress}")
+
         # Set color and time uniforms
         color1 = np.array(config_data["color1"]) / 255.0
         color2 = np.array(config_data["color2"]) / 255.0
