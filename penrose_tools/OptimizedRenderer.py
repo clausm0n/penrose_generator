@@ -97,7 +97,7 @@ class OptimizedRenderer:
         # Get attribute locations - store even if -1
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
-        self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'centroid')
+        self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')  # Changed name here
 
         # Log if any required attributes are missing
         if self.attribute_locations['position'] == -1:
@@ -105,7 +105,7 @@ class OptimizedRenderer:
         if self.attribute_locations['tile_type'] == -1:
             self.logger.warning("Tile type attribute not found in shader")
         if self.attribute_locations['centroid'] == -1:
-            self.logger.warning("Centroid attribute not found in shader")
+            self.logger.warning("Tile centroid attribute not found in shader")
 
         # Get uniform locations
         self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
