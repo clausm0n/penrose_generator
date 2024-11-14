@@ -138,6 +138,61 @@ class OptimizedRenderer:
         if cache_key not in self.tile_cache:
             self.tile_cache.clear()
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+            # After calculating tiles in render_tiles:
+            stars = []
+            starbursts = []
+            neighbor_counts = []
+
+            # Find all stars and starbursts
+            for tile in tiles:
+                if tile.is_kite and op.is_valid_star_kite(tile):
+                    extended_star = op.find_star(tile, tiles)
+                    if len(extended_star) == 5:
+                        stars.extend([t.vertices[0] for t in extended_star])  # Use first vertex as identifier
+                        
+                elif not tile.is_kite and op.is_valid_starburst_dart(tile):
+                    extended_starburst = op.find_starburst(tile, tiles)
+                    if len(extended_starburst) == 10:
+                        starbursts.extend([t.vertices[0] for t in extended_starburst])
+                        
+                # Calculate neighbor counts
+                kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
+                total_neighbors = kite_count + dart_count
+                blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+                neighbor_counts.append((tile.vertices[0], blend_factor))
+
+            # Convert to numpy arrays and pass to shader
+            if stars:
+                stars_array = np.array(stars, dtype=np.float32)
+                loc = glGetUniformLocation(shader_program, 'star_centers')
+                if loc != -1:
+                    glUniform2fv(loc, len(stars_array)//2, stars_array)
+                loc = glGetUniformLocation(shader_program, 'num_stars')
+                if loc != -1:
+                    glUniform1i(loc, len(stars_array)//2)
+
+            if starbursts:
+                starbursts_array = np.array(starbursts, dtype=np.float32)
+                loc = glGetUniformLocation(shader_program, 'starburst_centers')
+                if loc != -1:
+                    glUniform2fv(loc, len(starbursts_array)//2, starbursts_array)
+                loc = glGetUniformLocation(shader_program, 'num_starbursts')
+                if loc != -1:
+                    glUniform1i(loc, len(starbursts_array)//2)
+
+            if neighbor_counts:
+                centers, factors = zip(*neighbor_counts)
+                centers_array = np.array(centers, dtype=np.float32)
+                factors_array = np.array(factors, dtype=np.float32)
+                loc = glGetUniformLocation(shader_program, 'neighbor_centers')
+                if loc != -1:
+                    glUniform2fv(loc, len(centers_array)//2, centers_array)
+                loc = glGetUniformLocation(shader_program, 'neighbor_factors')
+                if loc != -1:
+                    glUniform1fv(loc, len(factors_array), factors_array)
+                loc = glGetUniformLocation(shader_program, 'num_neighbors')
+                if loc != -1:
+                    glUniform1i(loc, len(factors_array))
             op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
 
