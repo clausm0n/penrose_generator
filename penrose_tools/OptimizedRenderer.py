@@ -103,14 +103,14 @@ class OptimizedRenderer:
         # Get attribute locations - store even if -1
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
-        self.attribute_locations['centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')
+        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')  # Changed key to match
 
         # Log if any required attributes are missing
         if self.attribute_locations['position'] == -1:
             self.logger.warning("Position attribute not found in shader")
         if self.attribute_locations['tile_type'] == -1:
             self.logger.warning("Tile type attribute not found in shader")
-        if self.attribute_locations['centroid'] == -1:
+        if self.attribute_locations['tile_centroid'] == -1:  # Changed key here too
             self.logger.warning("Tile centroid attribute not found in shader")
 
         # Get uniform locations
@@ -176,7 +176,7 @@ class OptimizedRenderer:
                 elif attr_name == 'tile_type':
                     glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-                elif attr_name == 'centroid':
+                elif attr_name == 'tile_centroid':  # Changed this to match
                     glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
