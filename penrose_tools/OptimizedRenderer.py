@@ -35,129 +35,7 @@ class OptimizedRenderer:
     def transform_to_gl_space(self, x, y, width, height):
         """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
-    
-    def create_pattern_texture(self, patterns, tile_bounds):
-        """Create a texture from pattern data with proper coordinate mapping."""
-        min_x, min_y, max_x, max_y = tile_bounds
         
-        # Calculate texture dimensions based on tile bounds
-        width = int(max_x - min_x)
-        height = int(max_y - min_y)
-        
-        # Ensure minimum texture size
-        width = max(width, 1024)
-        height = max(height, 1024)
-        
-        # Create texture
-        texture = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, texture)
-        
-        # Set texture parameters
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        
-        # Create texture data array
-        texture_data = np.zeros((height, width, 4), dtype=np.float32)
-        
-        # Convert pattern data to texture coordinates
-        for pattern in patterns:
-            x = int((pattern[0] - min_x) * width / (max_x - min_x))
-            y = int((pattern[1] - min_y) * height / (max_y - min_y))
-            
-            # Ensure coordinates are within bounds
-            x = max(0, min(x, width - 1))
-            y = max(0, min(y, height - 1))
-            
-            # Store pattern data
-            texture_data[y, x] = [pattern[2], pattern[3], 0.0, 1.0]
-        
-        # Upload texture data
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0,
-                    GL_RGBA, GL_FLOAT, texture_data)
-        
-        return texture, (width, height)
-
-    
-    def update_pattern_textures(self, cache_key):
-        """Update pattern textures when config changes."""
-        tiles = self.tile_cache[cache_key]
-        pattern_data = self.pattern_cache[cache_key]['tile_patterns']
-        
-        # Calculate tile bounds
-        tile_positions = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
-        min_x, min_y = np.min(tile_positions, axis=0)
-        max_x, max_y = np.max(tile_positions, axis=0)
-        tile_bounds = (min_x, min_y, max_x, max_y)
-        
-        # Clean up old textures
-        if hasattr(self, 'pattern_textures'):
-            glDeleteTextures(self.pattern_textures)
-        
-        # Create new textures
-        self.pattern_textures, self.quadrant_bounds, self.tex_size = \
-            self.create_quadrant_textures(pattern_data, tile_bounds)
-    
-    def create_quadrant_textures(self, patterns, tile_bounds):
-        """Create textures for each quadrant of the pattern space."""
-        min_x, min_y, max_x, max_y = tile_bounds
-        mid_x = (min_x + max_x) / 2
-        mid_y = (min_y + max_y) / 2
-        
-        # Define quadrant bounds
-        quadrants = [
-            (mid_x, mid_y, max_x, max_y),    # Q1 (+,+)
-            (min_x, mid_y, mid_x, max_y),    # Q2 (-,+)
-            (min_x, min_y, mid_x, mid_y),    # Q3 (-,-)
-            (mid_x, min_y, max_x, mid_y)     # Q4 (+,-)
-        ]
-        
-        # Calculate optimal texture size
-        tex_size = 2048  # Fixed size for each quadrant texture
-        
-        textures = []
-        pattern_counts = []
-        
-        for q_bounds in quadrants:
-            qx_min, qy_min, qx_max, qy_max = q_bounds
-            
-            # Filter patterns for this quadrant
-            q_patterns = [p for p in patterns if (
-                p[0] >= qx_min and p[0] <= qx_max and
-                p[1] >= qy_min and p[1] <= qy_max
-            )]
-            pattern_counts.append(len(q_patterns))
-            
-            # Create texture
-            texture = glGenTextures(1)
-            glBindTexture(GL_TEXTURE_2D, texture)
-            
-            # Set texture parameters
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-            
-            # Create and fill texture data
-            texture_data = np.zeros((tex_size, tex_size, 4), dtype=np.float32)
-            
-            for pattern in q_patterns:
-                # Normalize coordinates to this quadrant
-                x = int((pattern[0] - qx_min) * (tex_size - 1) / (qx_max - qx_min))
-                y = int((pattern[1] - qy_min) * (tex_size - 1) / (qy_max - qy_min))
-                
-                # Store pattern data
-                texture_data[y, x] = [pattern[2], pattern[3], 0.0, 1.0]
-            
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, tex_size, tex_size, 0,
-                        GL_RGBA, GL_FLOAT, texture_data)
-            
-            textures.append(texture)
-    
-        self.logger.info(f"Created quadrant textures with pattern counts: {pattern_counts}")
-        return textures, quadrants, tex_size
-    
     def create_texture(self, image_data):
         """Create OpenGL texture from numpy array."""
         texture = glGenTextures(1)
@@ -275,19 +153,13 @@ class OptimizedRenderer:
             self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
             self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
             
-            # Pattern uniforms only for relevant shaders
             if shader_name == 'region_blend':
-                # Update for quadrant-based system
-                for i in range(4):
-                    self.uniform_locations[f'pattern_texture_{i}'] = glGetUniformLocation(shader_program, f'pattern_texture_{i}')
-                
-                # Array uniform for quadrant bounds
-                for i in range(4):
-                    self.uniform_locations[f'quadrant_bounds[{i}]'] = glGetUniformLocation(shader_program, f'quadrant_bounds[{i}]')
-                
-                self.uniform_locations['texture_size'] = glGetUniformLocation(shader_program, 'texture_size')
-                self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
-                self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
+                self.uniform_locations.update({
+                    'color1': glGetUniformLocation(shader_program, 'color1'),
+                    'color2': glGetUniformLocation(shader_program, 'color2'),
+                    'tile_patterns': glGetUniformLocation(shader_program, 'tile_patterns'),
+                    'num_tiles': glGetUniformLocation(shader_program, 'num_tiles')
+                })
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -480,32 +352,17 @@ class OptimizedRenderer:
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
         elif shader_name == 'region_blend':
-            # Update pattern textures if needed
-            if (cache_key not in self.tile_cache or 
-                not hasattr(self, 'pattern_textures') or 
-                self.current_cache_key != cache_key):
-                
-                self.update_pattern_textures(cache_key)
-                self.current_cache_key = cache_key
+            # Get pattern data
+            pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
-            # Bind pattern textures
-            for i, texture in enumerate(self.pattern_textures):
-                glActiveTexture(GL_TEXTURE0 + i)
-                glBindTexture(GL_TEXTURE_2D, texture)
-                loc = self.uniform_locations.get(f'pattern_texture_{i}')
-                if loc is not None and loc != -1:
-                    glUniform1i(loc, i)
-            
-            # Set quadrant bounds
-            for i, bounds in enumerate(self.quadrant_bounds):
-                loc = self.uniform_locations.get(f'quadrant_bounds[{i}]')
-                if loc is not None and loc != -1:
-                    glUniform4f(loc, *bounds)
-            
-            # Set texture size
-            loc = self.uniform_locations.get('texture_size')
+            # Set pattern data
+            loc = self.uniform_locations.get('tile_patterns')
             if loc is not None and loc != -1:
-                glUniform2f(loc, float(self.tex_size), float(self.tex_size))
+                glUniform4fv(loc, len(pattern_data), pattern_data.flatten())
+            
+            loc = self.uniform_locations.get('num_tiles')
+            if loc is not None and loc != -1:
+                glUniform1i(loc, len(pattern_data))
             
             # Set colors
             color1 = np.array(config_data["color1"]) / 255.0
@@ -577,5 +434,3 @@ def __del__(self):
             glDeleteBuffers(1, [self.vbo])
         if self.ebo is not None:
             glDeleteBuffers(1, [self.ebo])
-        if hasattr(self, 'pattern_textures'):
-            glDeleteTextures(self.pattern_textures)
