@@ -35,6 +35,38 @@ class OptimizedRenderer:
     def transform_to_gl_space(self, x, y, width, height):
         """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
+    
+    def create_texture(self, image_data):
+        """Create OpenGL texture from numpy array."""
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        
+        # Convert image to RGB if necessary
+        if len(image_data.shape) == 3 and image_data.shape[2] == 3:
+            format = GL_RGB
+        else:
+            format = GL_RGBA
+        
+        glTexImage2D(GL_TEXTURE_2D, 0, format, image_data.shape[1], image_data.shape[0], 
+                    0, format, GL_UNSIGNED_BYTE, image_data)
+        return texture
+
+    def update_image_textures(self, current_image, next_image):
+        """Update the current and next image textures."""
+        if not hasattr(self, 'current_texture'):
+            self.current_texture = self.create_texture(current_image)
+            self.next_texture = self.create_texture(next_image)
+        else:
+            glBindTexture(GL_TEXTURE_2D, self.current_texture)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, current_image.shape[1], current_image.shape[0],
+                        0, GL_RGB, GL_UNSIGNED_BYTE, current_image)
+            glBindTexture(GL_TEXTURE_2D, self.next_texture)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, next_image.shape[1], next_image.shape[0],
+                        0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
 
     def setup_buffers(self, tiles, width, height, scale_value):
         """Set up vertex and element buffers for rendering."""
@@ -114,6 +146,17 @@ class OptimizedRenderer:
         # Pattern uniforms
         self.uniform_locations['tile_patterns'] = glGetUniformLocation(shader_program, 'tile_patterns')
         self.uniform_locations['num_tiles'] = glGetUniformLocation(shader_program, 'num_tiles')
+
+        # Add image-related uniform locations
+        program = self.shader_manager.current_shader_program()
+        if program:
+            self.uniform_locations.update({
+                'current_image': glGetUniformLocation(program, 'current_image'),
+                'next_image': glGetUniformLocation(program, 'next_image'),
+                'transition_progress': glGetUniformLocation(program, 'transition_progress'),
+                'image_scale': glGetUniformLocation(program, 'image_scale'),
+                'image_offset': glGetUniformLocation(program, 'image_offset')
+            })
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
@@ -246,6 +289,61 @@ class OptimizedRenderer:
             loc = self.uniform_locations.get('num_tiles')
             if loc is not None and loc != -1:
                 glUniform1i(loc, len(patterns))
+        
+        # Handle image transitions for pixelation_slideshow shader
+        if self.shader_manager.shader_names[self.current_shader_index] == 'pixelation_slideshow':
+            current_time = glfw.get_time() * 1000.0
+            transition_duration = 5000.0  # 5 seconds
+            cycle_duration = 10000.0  # 10 seconds
+            
+            if not hasattr(self, 'image_processor'):
+                from .Effects import Effects
+                self.image_processor = Effects()
+                self.image_processor.load_images_from_folder()
+                if self.image_processor.image_files:
+                    self.image_processor.load_and_process_images(self.tile_cache[cache_key])
+            
+            if hasattr(self, 'image_processor') and self.image_processor.image_data:
+                cycle_position = (current_time % (cycle_duration * len(self.image_processor.image_data))) / cycle_duration
+                current_index = int(cycle_position)
+                next_index = (current_index + 1) % len(self.image_processor.image_data)
+                
+                transition_progress = cycle_position - current_index
+                
+                # Update image textures
+                self.update_image_textures(
+                    self.image_processor.image_data[current_index],
+                    self.image_processor.image_data[next_index]
+                )
+                
+                # Set image uniforms
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(GL_TEXTURE_2D, self.current_texture)
+                glActiveTexture(GL_TEXTURE1)
+                glBindTexture(GL_TEXTURE_2D, self.next_texture)
+                
+                # Set shader uniforms
+                scale, offset_x, offset_y, _, _ = self.image_processor.image_scales[current_index]
+                
+                loc = self.uniform_locations.get('current_image')
+                if loc is not None and loc != -1:
+                    glUniform1i(loc, 0)
+                    
+                loc = self.uniform_locations.get('next_image')
+                if loc is not None and loc != -1:
+                    glUniform1i(loc, 1)
+                    
+                loc = self.uniform_locations.get('transition_progress')
+                if loc is not None and loc != -1:
+                    glUniform1f(loc, transition_progress)
+                    
+                loc = self.uniform_locations.get('image_scale')
+                if loc is not None and loc != -1:
+                    glUniform2f(loc, scale, scale)
+                    
+                loc = self.uniform_locations.get('image_offset')
+                if loc is not None and loc != -1:
+                    glUniform2f(loc, offset_x / width, offset_y / height)
 
         # Set color and time uniforms
         color1 = np.array(config_data["color1"]) / 255.0
