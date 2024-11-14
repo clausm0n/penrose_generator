@@ -503,19 +503,6 @@ class OptimizedRenderer:
             if loc is not None and loc != -1:
                 glUniform2f(loc, float(self.tex_size), float(self.tex_size))
             
-            # Set uniforms
-            loc = self.uniform_locations.get('pattern_texture')
-            if loc is not None and loc != -1:
-                glUniform1i(loc, 0)
-            
-            loc = self.uniform_locations.get('texture_size')
-            if loc is not None and loc != -1:
-                glUniform2f(loc, float(tex_width), float(tex_height))
-            
-            loc = self.uniform_locations.get('pattern_bounds')
-            if loc is not None and loc != -1:
-                glUniform4f(loc, *self.pattern_bounds)
-            
             # Set colors
             color1 = np.array(config_data["color1"]) / 255.0
             color2 = np.array(config_data["color2"]) / 255.0
