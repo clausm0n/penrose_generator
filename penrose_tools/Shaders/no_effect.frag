@@ -1,3 +1,4 @@
+// no_effect.frag
 #version 120
 
 // Varying variables
