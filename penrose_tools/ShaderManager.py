@@ -97,7 +97,7 @@ class ShaderManager:
             attributes = {
                 0: "position",
                 1: "tile_type",
-                2: "centroid"
+                2: "tile_centroid"
             }
             for location, name in attributes.items():
                 glBindAttribLocation(program, location, name)
