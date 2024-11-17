@@ -265,12 +265,8 @@ class OptimizedRenderer:
             self.tile_cache.clear()
             self.pattern_cache.clear()
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-            op.calculate_neighbors(tiles)
             self.tile_cache[cache_key] = tiles
-            
-            # Process and cache pattern data
-            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
-            
+                        
             self.setup_buffers(tiles, width, height, config_data['scale'])
             self.get_shader_locations()
 
@@ -352,7 +348,9 @@ class OptimizedRenderer:
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
         elif shader_name == 'region_blend':
-            # Get pattern data
+            # Process and cache pattern data
+            op.calculate_neighbors(tiles)
+            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
             pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
             # Set pattern data
