@@ -10,7 +10,7 @@ varying vec2 v_tile_centroid;
 varying float v_pattern_type;
 varying float v_blend_factor;
 
-uniform vec4 tile_patterns[5000];  // xy = centroid, z = pattern type, w = blend factor
+uniform vec4 tile_patterns[3000];  // xy = centroid, z = pattern type, w = blend factor
 uniform int num_tiles;
 
 void main() {
