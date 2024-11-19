@@ -7,10 +7,10 @@ attribute vec2 tile_centroid;
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
-varying float v_blend_factor;
 varying float v_pattern_type;
+varying float v_neighbor_ratio;
 
-uniform vec4 pattern_data[3000];  // x,y = centroid, z = pattern type, w = blend factor
+uniform vec4 pattern_data[3000];  // x,y = centroid, z = pattern type, w = neighbor ratio
 uniform int num_patterns;
 
 void main() {
@@ -18,17 +18,15 @@ void main() {
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Default blend factor from tile type (will be used for neighbor-based blending)
+    // Default to no pattern
     v_pattern_type = 0.0;
-    v_blend_factor = pattern_data[0].w;  // Default blend factor from first non-pattern tile
+    v_neighbor_ratio = 0.5;  // Default neighbor ratio
     
-    // Look for pattern matches
+    // Check for pattern or get neighbor ratio
     for (int i = 0; i < num_patterns; i++) {
-        vec2 pattern_pos = pattern_data[i].xy;
-        float dist = distance(pattern_pos, tile_centroid);
-        if (dist < 0.001) {
-            v_pattern_type = pattern_data[i].z;  // 1.0 = star, 2.0 = starburst
-            v_blend_factor = pattern_data[i].w;  // Pattern-specific blend factor
+        if (distance(pattern_data[i].xy, tile_centroid) < 0.001) {
+            v_pattern_type = pattern_data[i].z;   // 1.0 = star, 2.0 = starburst
+            v_neighbor_ratio = pattern_data[i].w; // neighbor ratio for non-pattern tiles
             break;
         }
     }

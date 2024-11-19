@@ -185,12 +185,12 @@ class OptimizedRenderer:
                 })
 
     def process_patterns(self, tiles, width, height, scale_value):
-        """Process tiles to identify patterns and blend factors."""
+        """Process tiles to identify patterns and neighbor ratios."""
         pattern_data = []
         pattern_tiles = set()
         center = complex(width / 2, height / 2)
 
-        # First pass - find complete patterns
+        # First pass - find pattern tiles
         for tile in tiles:
             if tile not in pattern_tiles:
                 centroid = sum(tile.vertices) / len(tile.vertices)
@@ -204,7 +204,7 @@ class OptimizedRenderer:
                             star_centroid = sum(star_tile.vertices) / len(star_tile.vertices)
                             star_screen_pos = op.to_canvas([star_centroid], scale_value, center)[0]
                             star_gl_pos = self.transform_to_gl_space(star_screen_pos[0], star_screen_pos[1], width, height)
-                            pattern_data.append([star_gl_pos[0], star_gl_pos[1], 1.0, 0.3])
+                            pattern_data.append([star_gl_pos[0], star_gl_pos[1], 1.0, 0.0])  # Star pattern
                             pattern_tiles.add(star_tile)
                 
                 elif not tile.is_kite and op.is_valid_starburst_dart(tile):
@@ -214,22 +214,22 @@ class OptimizedRenderer:
                             burst_centroid = sum(burst_tile.vertices) / len(burst_tile.vertices)
                             burst_screen_pos = op.to_canvas([burst_centroid], scale_value, center)[0]
                             burst_gl_pos = self.transform_to_gl_space(burst_screen_pos[0], burst_screen_pos[1], width, height)
-                            pattern_data.append([burst_gl_pos[0], burst_gl_pos[1], 2.0, 0.7])
+                            pattern_data.append([burst_gl_pos[0], burst_gl_pos[1], 2.0, 0.0])  # Starburst pattern
                             pattern_tiles.add(burst_tile)
 
-        # Second pass - process remaining tiles with neighbor-based blending
+        # Second pass - process remaining tiles with neighbor ratios
         for tile in tiles:
             if tile not in pattern_tiles:
                 centroid = sum(tile.vertices) / len(tile.vertices)
                 screen_pos = op.to_canvas([centroid], scale_value, center)[0]
                 gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
                 
-                # Calculate neighbor-based blend factor
+                # Calculate neighbor ratio
                 kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
                 total_neighbors = kite_count + dart_count
-                blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
+                neighbor_ratio = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
                 
-                pattern_data.append([gl_pos[0], gl_pos[1], 0.0, blend_factor])
+                pattern_data.append([gl_pos[0], gl_pos[1], 0.0, neighbor_ratio])
 
         return np.array(pattern_data, dtype=np.float32)
 
