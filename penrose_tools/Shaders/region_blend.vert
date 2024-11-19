@@ -13,7 +13,7 @@ varying float v_blend_factor;
 varying float v_pattern_type;
 
 // Uniforms
-uniform vec4 tile_patterns[6000];
+uniform vec4 tile_patterns[5000];
 uniform int num_tiles;
 
 // Helper function to find both pattern type and blend factor
