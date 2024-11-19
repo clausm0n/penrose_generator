@@ -18,17 +18,17 @@ void main() {
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Default values
+    // Default blend factor from tile type (will be used for neighbor-based blending)
     v_pattern_type = 0.0;
-    v_blend_factor = tile_type;  // Use tile type (kite = 1.0, dart = 0.0) as default blend
+    v_blend_factor = pattern_data[0].w;  // Default blend factor from first non-pattern tile
     
     // Look for pattern matches
     for (int i = 0; i < num_patterns; i++) {
         vec2 pattern_pos = pattern_data[i].xy;
         float dist = distance(pattern_pos, tile_centroid);
         if (dist < 0.001) {
-            v_pattern_type = pattern_data[i].z;
-            v_blend_factor = pattern_data[i].w;
+            v_pattern_type = pattern_data[i].z;  // 1.0 = star, 2.0 = starburst
+            v_blend_factor = pattern_data[i].w;  // Pattern-specific blend factor
             break;
         }
     }

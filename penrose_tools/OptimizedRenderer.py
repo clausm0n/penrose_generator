@@ -217,13 +217,14 @@ class OptimizedRenderer:
                             pattern_data.append([burst_gl_pos[0], burst_gl_pos[1], 2.0, 0.7])
                             pattern_tiles.add(burst_tile)
 
-        # Second pass - process remaining tiles
+        # Second pass - process remaining tiles with neighbor-based blending
         for tile in tiles:
             if tile not in pattern_tiles:
                 centroid = sum(tile.vertices) / len(tile.vertices)
                 screen_pos = op.to_canvas([centroid], scale_value, center)[0]
                 gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
                 
+                # Calculate neighbor-based blend factor
                 kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
                 total_neighbors = kite_count + dart_count
                 blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
