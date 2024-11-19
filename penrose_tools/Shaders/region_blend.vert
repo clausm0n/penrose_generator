@@ -4,7 +4,7 @@
 // Input attributes
 attribute vec2 position;
 attribute float tile_type;
-attribute vec2 tile_center;  // renamed from tile_centroid
+attribute vec2 tile_centroid;
 
 // Varying variables
 varying float v_tile_type;
@@ -44,14 +44,14 @@ float find_pattern_type(vec2 center_pos) {    // renamed parameter from centroid
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
-    v_center = tile_center;
+    v_center = tile_centroid;
     v_tile_type = tile_type;
-    v_pattern_type = find_pattern_type(tile_center);
+    v_pattern_type = find_pattern_type(tile_centroid);
     
     float pattern_blend = 0.0;
     for (int i = 0; i < num_tiles; i++) {
-        if (abs(tile_patterns[i].x - tile_center.x) < 0.0001 && 
-            abs(tile_patterns[i].y - tile_center.y) < 0.0001) {
+        if (abs(tile_patterns[i].x - tile_centroid.x) < 0.0001 && 
+            abs(tile_patterns[i].y - tile_centroid.y) < 0.0001) {
             pattern_blend = tile_patterns[i].w;
             break;
         }

@@ -3,7 +3,7 @@
 
 // Varying variables from vertex shader
 varying float v_tile_type;
-varying vec2 v_center;         // renamed from v_centroid
+varying vec2 v_centroid;
 varying float v_blend_factor;
 varying float v_pattern_type;
 
