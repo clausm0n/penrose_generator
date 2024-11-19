@@ -69,33 +69,33 @@ class OptimizedRenderer:
                         0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
 
     def setup_buffers(self, tiles, width, height, scale_value):
-        """Set up vertex and element buffers for rendering."""
         vertices = []
         indices = []
         offset = 0
         center = complex(width / 2, height / 2)
 
+        # Get pattern data
+        tile_pattern_data = self.process_patterns(tiles, width, height, scale_value)
+
         # Process each tile
         for tile in tiles:
             # Get screen space vertices
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
-            transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
-                            for x, y in screen_verts]
+            transformed_verts = [self.transform_to_gl_space(x, y, width, height) for x, y in screen_verts]
 
             # Calculate tile type
             tile_type = 1.0 if tile.is_kite else 0.0
-            
-            # Calculate centroid in screen space
-            centroid = sum(tile.vertices) / len(tile.vertices)
-            screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
-            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
+
+            # Get pattern data
+            pattern_type, blend_factor = tile_pattern_data[tile]
 
             # Add vertices and attributes
             for vert in transformed_verts:
                 vertices.extend([
                     vert[0], vert[1],      # position
                     tile_type,             # tile_type
-                    gl_centroid[0], gl_centroid[1]  # centroid
+                    pattern_type,          # pattern_type
+                    blend_factor           # blend_factor
                 ])
 
             # Create indices for this tile
@@ -117,15 +117,14 @@ class OptimizedRenderer:
         if self.vbo is None:
             self.vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, 
-                    self.vertices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, self.vertices_array, GL_STATIC_DRAW)
 
         # Create and bind element buffer
         if self.ebo is None:
             self.ebo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, 
-                    self.indices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, self.indices_array, GL_STATIC_DRAW)
+
 
     def get_shader_locations(self):
         """Get locations of shader attributes and uniforms."""
@@ -136,7 +135,8 @@ class OptimizedRenderer:
         # Get attribute locations
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
-        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')
+        self.attribute_locations['pattern_type'] = glGetAttribLocation(shader_program, 'pattern_type')
+        self.attribute_locations['blend_factor'] = glGetAttribLocation(shader_program, 'blend_factor')
 
         # Get uniform locations
         shader_name = self.shader_manager.shader_names[self.current_shader_index]
@@ -162,31 +162,25 @@ class OptimizedRenderer:
                 })
 
     def process_patterns(self, tiles, width, height, scale_value):
-        """Process and cache pattern data with complete region detection."""
         center = complex(width / 2, height / 2)
-        patterns = []
-        pattern_tiles = set()  # Track tiles that are part of complete patterns
-        stars = []  # Track complete star regions
-        starbursts = []  # Track complete starburst regions
+        pattern_tiles = set()
+        stars = []
+        starbursts = []
+        tile_pattern_data = {}
 
         # First pass - identify complete regions
         for tile in tiles:
-            if tile not in pattern_tiles:  # Only process tiles not already in a pattern
+            if tile not in pattern_tiles:
                 if tile.is_kite and op.is_valid_star_kite(tile):
                     star_tiles = op.find_star(tile, tiles)
-                    if len(star_tiles) == 5:  # Complete star found
+                    if len(star_tiles) == 5:
                         stars.append(star_tiles)
                         pattern_tiles.update(star_tiles)
-                        self.logger.debug(f"Found complete star with {len(star_tiles)} kites")
-                
                 elif not tile.is_kite and op.is_valid_starburst_dart(tile):
                     starburst_tiles = op.find_starburst(tile, tiles)
-                    if len(starburst_tiles) == 10:  # Complete starburst found
+                    if len(starburst_tiles) == 10:
                         starbursts.append(starburst_tiles)
                         pattern_tiles.update(starburst_tiles)
-                        self.logger.debug(f"Found complete starburst with {len(starburst_tiles)} darts")
-
-        self.logger.info(f"Found {len(stars)} complete stars and {len(starbursts)} complete starbursts")
 
         # Second pass - process all tiles
         for tile in tiles:
@@ -194,56 +188,31 @@ class OptimizedRenderer:
             centroid = sum(tile.vertices) / len(tile.vertices)
             screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
             gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
-            
+
             # Check if tile is in a complete pattern first
             pattern_type = 0.0
             for star in stars:
                 if tile in star:
                     pattern_type = 1.0
                     break
-                    
-            if pattern_type == 0.0:  # Not in a star, check starbursts
+            if pattern_type == 0.0:
                 for starburst in starbursts:
                     if tile in starburst:
                         pattern_type = 2.0
                         break
 
-            # If not in a pattern, calculate neighbor-based blend
+            # Set blend factor
             if pattern_type == 0.0:
                 kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
                 total_neighbors = kite_count + dart_count
                 blend_factor = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
             else:
-                # Pattern tiles use fixed blend factors
                 blend_factor = 0.3 if pattern_type == 1.0 else 0.7
 
-            patterns.append([gl_centroid[0], gl_centroid[1], pattern_type, blend_factor])
+            tile_pattern_data[tile] = (pattern_type, blend_factor)
 
-        total_pattern_tiles = len(pattern_tiles)
-        star_tiles = sum(len(star) for star in stars)
-        starburst_tiles = sum(len(burst) for burst in starbursts)
-        
-        self.logger.info(f"Star regions contain {star_tiles} tiles")
-        self.logger.info(f"Starburst regions contain {starburst_tiles} tiles")
-        self.logger.info(f"Total tiles in patterns: {total_pattern_tiles}")
+        return tile_pattern_data
 
-        # In the process_patterns method, before returning:
-        pattern_array = np.array(patterns, dtype=np.float32)
-
-        # Sort pattern data by x then y coordinates for binary search
-        sorted_indices = np.lexsort((pattern_array[:,1], pattern_array[:,0]))
-        pattern_array = pattern_array[sorted_indices]
-
-        return {
-            'tile_patterns': pattern_array,
-            'pattern_counts': {
-                'stars': len(stars),
-                'starbursts': len(starbursts),
-                'star_tiles': star_tiles,
-                'starburst_tiles': starburst_tiles,
-                'total_pattern_tiles': total_pattern_tiles
-            }
-        }
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
