@@ -8,7 +8,7 @@ attribute vec2 tile_centroid;
 
 // Varying variables
 varying float v_tile_type;
-varying vec2 v_centroid;      // Renamed to match fragment shader
+varying vec2 v_centroid;
 varying float v_blend_factor;
 varying float v_pattern_type;
 
@@ -16,21 +16,25 @@ varying float v_pattern_type;
 uniform vec4 tile_patterns[3000];
 uniform int num_tiles;
 
-float find_pattern_type(vec2 center_pos) {
+// Helper function to find both pattern type and blend factor
+vec2 find_pattern_data(vec2 center_pos) {
     int left = 0;
     int right = num_tiles - 1;
+    
+    // Increased precision for better pattern matching
+    float epsilon = 0.00001;
     
     while (left <= right) {
         int mid = (left + right) / 2;
         vec2 pattern_pos = tile_patterns[mid].xy;
-        
-        float epsilon = 0.0001;
         vec2 diff = abs(center_pos - pattern_pos);
         
+        // Check if we found a match
         if (diff.x < epsilon && diff.y < epsilon) {
-            return tile_patterns[mid].z;
+            return vec2(tile_patterns[mid].z, tile_patterns[mid].w);
         }
         
+        // Binary search comparison
         if (pattern_pos.x < center_pos.x || 
             (abs(pattern_pos.x - center_pos.x) < epsilon && pattern_pos.y < center_pos.y)) {
             left = mid + 1;
@@ -39,23 +43,17 @@ float find_pattern_type(vec2 center_pos) {
         }
     }
     
-    return 0.0;
+    // Return default values if no match found
+    return vec2(0.0, 0.5);
 }
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
-    v_centroid = tile_centroid;    // Updated to match new name
+    v_centroid = tile_centroid;
     v_tile_type = tile_type;
-    v_pattern_type = find_pattern_type(tile_centroid);
     
-    float pattern_blend = 0.0;
-    for (int i = 0; i < num_tiles; i++) {
-        if (abs(tile_patterns[i].x - tile_centroid.x) < 0.0001 && 
-            abs(tile_patterns[i].y - tile_centroid.y) < 0.0001) {
-            pattern_blend = tile_patterns[i].w;
-            break;
-        }
-    }
-    
-    v_blend_factor = pattern_blend;
+    // Get both pattern type and blend factor in one search
+    vec2 pattern_data = find_pattern_data(tile_centroid);
+    v_pattern_type = pattern_data.x;
+    v_blend_factor = pattern_data.y;
 }
