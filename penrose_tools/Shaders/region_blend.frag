@@ -1,13 +1,16 @@
 // region_blend.frag
-#version 120
+#version 300 es
+precision highp float;
 
-varying vec2 v_centroid;
-varying float v_tile_type;
-varying float v_blend_factor;
-varying float v_pattern_type;
+in vec2 v_centroid;
+in float v_tile_type;
+in float v_blend_factor;
+in float v_pattern_type;
 
 uniform vec3 color1;
 uniform vec3 color2;
+
+out vec4 fragColor;
 
 vec3 invert_color(vec3 color) {
     return vec3(1.0) - color;
@@ -16,7 +19,6 @@ vec3 invert_color(vec3 color) {
 void main() {
     vec3 blended_color;
     
-    // Pattern type: 1.0 = star, 2.0 = starburst
     if (v_pattern_type == 1.0) {
         // Complete star region
         blended_color = invert_color(mix(color1, color2, 0.3));
@@ -28,5 +30,5 @@ void main() {
         blended_color = mix(color1, color2, v_blend_factor);
     }
     
-    gl_FragColor = vec4(blended_color, 1.0);
+    fragColor = vec4(blended_color, 1.0);
 }
