@@ -13,7 +13,7 @@ varying float v_blend_factor;
 varying float v_pattern_type;
 
 // Uniforms
-uniform vec4 tile_patterns[1000];
+uniform vec4 tile_patterns[3000];
 uniform int num_tiles;
 
 float find_pattern_type(vec2 center_pos) {
