@@ -371,21 +371,25 @@ class OptimizedRenderer:
 
         # Bind buffers and set attribute pointers
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        stride = 5 * ctypes.sizeof(GLfloat)
+        stride = 5 * ctypes.sizeof(GLfloat)  # Update stride based on the number of attributes
+
 
         # Only enable and setup attributes that have valid locations
         for attr_name, loc in self.attribute_locations.items():
             if loc != -1:
                 glEnableVertexAttribArray(loc)
                 if attr_name == 'position':
-                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
-                                        ctypes.c_void_p(0))
+                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
                 elif attr_name == 'tile_type':
-                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
-                                        ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
+                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
                 elif attr_name == 'tile_centroid':
                     glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
+                elif attr_name == 'pattern_type':
+                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
+                elif attr_name == 'blend_factor':
+                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(4 * ctypes.sizeof(GLfloat)))
+
 
         # Draw elements
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
