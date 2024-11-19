@@ -340,10 +340,13 @@ class OptimizedRenderer:
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
         if shader_name == 'region_blend':
-            shader_program = self.shader_manager.current_shader_program()
-            pattern_data = self.process_patterns(self.tile_cache[cache_key], width, height, config_data['scale'])
+            # Set pattern data
+            pattern_data = self.pattern_cache.get(cache_key)
+            if pattern_data is None:
+                pattern_data = self.process_patterns(self.tile_cache[cache_key], width, height, config_data['scale'])
+                self.pattern_cache[cache_key] = pattern_data
             
-            # Set pattern data uniform
+            # Set pattern uniforms
             pattern_loc = glGetUniformLocation(shader_program, 'pattern_data')
             num_patterns_loc = glGetUniformLocation(shader_program, 'num_patterns')
             
@@ -351,6 +354,18 @@ class OptimizedRenderer:
                 glUniform4fv(pattern_loc, len(pattern_data), pattern_data.flatten())
             if num_patterns_loc != -1:
                 glUniform1i(num_patterns_loc, len(pattern_data))
+            
+            # Set color uniforms
+            color1 = np.array(config_data["color1"]) / 255.0
+            color2 = np.array(config_data["color2"]) / 255.0
+            
+            loc = self.uniform_locations.get('color1')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color1)
+            
+            loc = self.uniform_locations.get('color2')
+            if loc is not None and loc != -1:
+                glUniform3f(loc, *color2)
 
         else:  # Handle other shaders
             # Set color and time uniforms for non-special shaders

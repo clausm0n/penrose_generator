@@ -18,15 +18,17 @@ void main() {
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Initialize with the tile type as the blend factor
+    // Default values
     v_pattern_type = 0.0;
-    v_blend_factor = v_tile_type;
+    v_blend_factor = tile_type;  // Use tile type (kite = 1.0, dart = 0.0) as default blend
     
     // Look for pattern matches
     for (int i = 0; i < num_patterns; i++) {
-        if (distance(pattern_data[i].xy, tile_centroid) < 0.001) {
-            v_pattern_type = pattern_data[i].z;   // 1.0 = star, 2.0 = starburst
-            v_blend_factor = pattern_data[i].w;   // Use the pattern-specific blend factor
+        vec2 pattern_pos = pattern_data[i].xy;
+        float dist = distance(pattern_pos, tile_centroid);
+        if (dist < 0.001) {
+            v_pattern_type = pattern_data[i].z;
+            v_blend_factor = pattern_data[i].w;
             break;
         }
     }
