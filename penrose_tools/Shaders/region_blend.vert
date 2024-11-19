@@ -18,11 +18,11 @@ void main() {
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Default values
+    // Initialize with normal tile values
     v_pattern_type = 0.0;
-    v_blend_factor = 0.5;
+    v_blend_factor = tile_type > 0.5 ? 1.0 : 0.0;  // Default kite/dart blending
     
-    // Find matching pattern data
+    // Look for pattern matches
     for(int i = 0; i < num_patterns; i++) {
         if(distance(pattern_data[i].xy, tile_centroid) < 0.001) {
             v_pattern_type = pattern_data[i].z;
