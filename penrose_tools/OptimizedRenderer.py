@@ -186,11 +186,14 @@ class OptimizedRenderer:
 
     def process_patterns(self, tiles, width, height, scale_value):
         """Process tiles to identify patterns and neighbor ratios."""
-        pattern_data = []
+        # Create a texture-sized array for pattern data
+        texture_size = 2048  # Use power of 2 for texture size
+        pattern_texture = np.zeros((texture_size, texture_size, 4), dtype=np.float32)
+        
         pattern_tiles = set()
         center = complex(width / 2, height / 2)
 
-        # First find all patterns to ensure we don't miss any
+        # First pass - identify all patterns
         all_stars = []
         all_starbursts = []
         
@@ -207,37 +210,44 @@ class OptimizedRenderer:
                         all_starbursts.append(burst)
                         pattern_tiles.update(burst)
 
-        # Add pattern tiles first
+        # Function to convert GL position to texture coordinates
+        def gl_to_texture_coord(gl_pos):
+            x = int((gl_pos[0] + 1.0) * (texture_size - 1) * 0.5)
+            y = int((gl_pos[1] + 1.0) * (texture_size - 1) * 0.5)
+            return max(0, min(texture_size - 1, x)), max(0, min(texture_size - 1, y))
+
+        # Write pattern data to texture
         for star in all_stars:
-            for star_tile in star:
-                centroid = sum(star_tile.vertices) / len(star_tile.vertices)
+            for tile in star:
+                centroid = sum(tile.vertices) / len(tile.vertices)
                 screen_pos = op.to_canvas([centroid], scale_value, center)[0]
                 gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
-                pattern_data.append([gl_pos[0], gl_pos[1], 1.0, 0.0])  # Star pattern
+                tex_x, tex_y = gl_to_texture_coord(gl_pos)
+                pattern_texture[tex_y, tex_x] = [1.0, 0.0, 0.0, 1.0]  # Star pattern
 
         for burst in all_starbursts:
-            for burst_tile in burst:
-                centroid = sum(burst_tile.vertices) / len(burst_tile.vertices)
+            for tile in burst:
+                centroid = sum(tile.vertices) / len(tile.vertices)
                 screen_pos = op.to_canvas([centroid], scale_value, center)[0]
                 gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
-                pattern_data.append([gl_pos[0], gl_pos[1], 2.0, 0.0])  # Starburst pattern
+                tex_x, tex_y = gl_to_texture_coord(gl_pos)
+                pattern_texture[tex_y, tex_x] = [2.0, 0.0, 0.0, 1.0]  # Starburst pattern
 
-        # Process all remaining tiles with neighbor ratios
+        # Write neighbor ratios for non-pattern tiles
         for tile in tiles:
             if tile not in pattern_tiles:
                 centroid = sum(tile.vertices) / len(tile.vertices)
                 screen_pos = op.to_canvas([centroid], scale_value, center)[0]
                 gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
+                tex_x, tex_y = gl_to_texture_coord(gl_pos)
                 
-                # Calculate neighbor ratio
                 kite_count, dart_count = op.count_kite_and_dart_neighbors(tile)
                 total_neighbors = kite_count + dart_count
                 neighbor_ratio = 0.5 if total_neighbors == 0 else kite_count / total_neighbors
                 
-                pattern_data.append([gl_pos[0], gl_pos[1], 0.0, neighbor_ratio])
+                pattern_texture[tex_y, tex_x] = [0.0, neighbor_ratio, 0.0, 1.0]
 
-        self.logger.info(f"Processed {len(pattern_data)} tiles: {len(all_stars)} stars, {len(all_starbursts)} starbursts")
-        return np.array(pattern_data, dtype=np.float32)
+        return pattern_texture
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling."""
@@ -347,32 +357,26 @@ class OptimizedRenderer:
                 self.logger.debug(f"Transition progress: {transition_progress}")
         
         if shader_name == 'region_blend':
-            # Set pattern data
-            pattern_data = self.pattern_cache.get(cache_key)
-            if pattern_data is None:
-                pattern_data = self.process_patterns(self.tile_cache[cache_key], width, height, config_data['scale'])
-                self.pattern_cache[cache_key] = pattern_data
+            # Create and update pattern texture
+            pattern_texture = self.pattern_cache.get(cache_key)
+            if pattern_texture is None:
+                pattern_texture = self.process_patterns(self.tile_cache[cache_key], width, height, config_data['scale'])
+                self.pattern_cache[cache_key] = pattern_texture
             
-            # Set pattern uniforms
-            pattern_loc = glGetUniformLocation(shader_program, 'pattern_data')
-            num_patterns_loc = glGetUniformLocation(shader_program, 'num_patterns')
+            # Update pattern texture
+            self.update_pattern_texture(pattern_texture)
             
-            if pattern_loc != -1:
-                glUniform4fv(pattern_loc, len(pattern_data), pattern_data.flatten())
-            if num_patterns_loc != -1:
-                glUniform1i(num_patterns_loc, len(pattern_data))
+            # Set uniforms
+            texture_loc = glGetUniformLocation(shader_program, 'pattern_texture')
+            width_loc = glGetUniformLocation(shader_program, 'texture_width')
+            height_loc = glGetUniformLocation(shader_program, 'texture_height')
             
-            # Set color uniforms
-            color1 = np.array(config_data["color1"]) / 255.0
-            color2 = np.array(config_data["color2"]) / 255.0
-            
-            loc = self.uniform_locations.get('color1')
-            if loc is not None and loc != -1:
-                glUniform3f(loc, *color1)
-            
-            loc = self.uniform_locations.get('color2')
-            if loc is not None and loc != -1:
-                glUniform3f(loc, *color2)
+            if texture_loc != -1:
+                glUniform1i(texture_loc, 0)  # Use texture unit 0
+            if width_loc != -1:
+                glUniform1i(width_loc, pattern_texture.shape[1])
+            if height_loc != -1:
+                glUniform1i(height_loc, pattern_texture.shape[0])
 
         else:  # Handle other shaders
             # Set color and time uniforms for non-special shaders
