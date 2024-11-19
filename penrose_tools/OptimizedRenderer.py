@@ -156,6 +156,37 @@ class OptimizedRenderer:
                     'num_tiles': glGetUniformLocation(shader_program, 'num_tiles')
                 })
 
+    def create_pattern_texture(self, pattern_data):
+        """Create texture from pattern data."""
+        # Calculate texture dimensions to fit all pattern data
+        # Make it as square as possible
+        total_patterns = len(pattern_data)
+        texture_width = int(np.ceil(np.sqrt(total_patterns)))
+        texture_height = int(np.ceil(total_patterns / texture_width))
+        
+        # Create texture data array (width × height × RGBA)
+        texture_data = np.zeros((texture_height, texture_width, 4), dtype=np.float32)
+        
+        # Fill texture with pattern data
+        for i, pattern in enumerate(pattern_data):
+            y = i // texture_width
+            x = i % texture_width
+            texture_data[y, x] = pattern
+        
+        # Create and configure texture
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        
+        # Upload texture data
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, texture_width, texture_height, 
+                    0, GL_RGBA, GL_FLOAT, texture_data)
+        
+        return texture, texture_width, texture_height
+
     def process_patterns(self, tiles, width, height, scale_value):
         """Process and cache pattern data with complete region detection."""
         center = complex(width / 2, height / 2)
@@ -350,33 +381,26 @@ class OptimizedRenderer:
             # Get pattern data
             pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
-            # Ensure we don't exceed the maximum number of patterns
-            max_patterns = 4000  # Must match uniform array size in shader
-            if len(pattern_data) > max_patterns:
-                self.logger.warning(f"Pattern data exceeds maximum size ({len(pattern_data)} > {max_patterns})")
-                pattern_data = pattern_data[:max_patterns]
+            # Create pattern texture if not already created
+            if not hasattr(self, 'pattern_texture'):
+                self.pattern_texture, tex_width, tex_height = self.create_pattern_texture(pattern_data)
             
-            # Set pattern data uniform
-            loc = self.uniform_locations.get('tile_patterns')
+            # Bind pattern texture
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+            
+            # Set uniforms
+            loc = self.uniform_locations.get('pattern_texture')
             if loc is not None and loc != -1:
-                glUniform4fv(loc, len(pattern_data), pattern_data.flatten())
+                glUniform1i(loc, 0)
             
-            # Set number of tiles uniform
-            loc = self.uniform_locations.get('num_tiles')
+            loc = self.uniform_locations.get('texture_width')
             if loc is not None and loc != -1:
-                glUniform1i(loc, len(pattern_data))
-            
-            # Set colors
-            color1 = np.array(config_data["color1"]) / 255.0
-            color2 = np.array(config_data["color2"]) / 255.0
-            
-            loc = self.uniform_locations.get('color1')
+                glUniform1i(loc, tex_width)
+                
+            loc = self.uniform_locations.get('texture_height')
             if loc is not None and loc != -1:
-                glUniform3f(loc, *color1)
-            
-            loc = self.uniform_locations.get('color2')
-            if loc is not None and loc != -1:
-                glUniform3f(loc, *color2)
+                glUniform1i(loc, tex_height)
 
         else:  # Handle other shaders
             # Set color and time uniforms for non-special shaders
@@ -432,6 +456,8 @@ class OptimizedRenderer:
 def __del__(self):
     """Clean up OpenGL resources."""
     if glfw.get_current_context():
+        if hasattr(self, 'pattern_texture'):
+            glDeleteTextures([self.pattern_texture])
         if self.vbo is not None:
             glDeleteBuffers(1, [self.vbo])
         if self.ebo is not None:

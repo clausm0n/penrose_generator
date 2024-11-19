@@ -13,37 +13,30 @@ varying float v_blend_factor;
 varying float v_pattern_type;
 
 // Uniforms
-uniform vec4 tile_patterns[4000];
-uniform int num_tiles;
+uniform sampler2D pattern_texture;
+uniform int texture_width;
+uniform int texture_height;
 
-// Helper function to find both pattern type and blend factor
 vec2 find_pattern_data(vec2 center_pos) {
-    int left = 0;
-    int right = num_tiles - 1;
-    
-    // Increased precision for better pattern matching
     float epsilon = 0.00001;
     
-    while (left <= right) {
-        int mid = (left + right) / 2;
-        vec2 pattern_pos = tile_patterns[mid].xy;
-        vec2 diff = abs(center_pos - pattern_pos);
-        
-        // Check if we found a match
-        if (diff.x < epsilon && diff.y < epsilon) {
-            return vec2(tile_patterns[mid].z, tile_patterns[mid].w);
-        }
-        
-        // Binary search comparison
-        if (pattern_pos.x < center_pos.x || 
-            (abs(pattern_pos.x - center_pos.x) < epsilon && pattern_pos.y < center_pos.y)) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
+    // Binary search through texture rows
+    for (int y = 0; y < texture_height; y++) {
+        for (int x = 0; x < texture_width; x++) {
+            vec4 pattern_data = texture2D(pattern_texture, vec2(
+                (float(x) + 0.5) / float(texture_width),
+                (float(y) + 0.5) / float(texture_height)
+            ));
+            
+            vec2 pattern_pos = pattern_data.xy;
+            vec2 diff = abs(center_pos - pattern_pos);
+            
+            if (diff.x < epsilon && diff.y < epsilon) {
+                return vec2(pattern_data.z, pattern_data.w);
+            }
         }
     }
     
-    // Return default values if no match found
     return vec2(0.0, 0.5);
 }
 
@@ -52,7 +45,6 @@ void main() {
     v_centroid = tile_centroid;
     v_tile_type = tile_type;
     
-    // Get both pattern type and blend factor in one search
     vec2 pattern_data = find_pattern_data(tile_centroid);
     v_pattern_type = pattern_data.x;
     v_blend_factor = pattern_data.y;
