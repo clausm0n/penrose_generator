@@ -1,16 +1,18 @@
 // region_blend.vert
-#version 300 es
-precision highp float;
+#version 120
 
-in vec2 position;
-in float tile_type;
-in vec2 tile_centroid;
+// Input attributes
+attribute vec2 position;
+attribute float tile_type;
+attribute vec2 tile_centroid;
 
-out float v_tile_type;
-out vec2 v_centroid;
-out float v_blend_factor;
-out float v_pattern_type;
+// Varying variables
+varying float v_tile_type;
+varying vec2 v_centroid;
+varying float v_blend_factor;
+varying float v_pattern_type;
 
+// Uniforms
 uniform vec4 tile_patterns[1000];
 uniform int num_tiles;
 

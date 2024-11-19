@@ -1,16 +1,15 @@
 // region_blend.frag
-#version 300 es
-precision highp float;
+#version 120
 
-in vec2 v_centroid;
-in float v_tile_type;
-in float v_blend_factor;
-in float v_pattern_type;
+// Varying variables from vertex shader
+varying float v_tile_type;
+varying vec2 v_centroid;
+varying float v_blend_factor;
+varying float v_pattern_type;
 
+// Uniforms
 uniform vec3 color1;
 uniform vec3 color2;
-
-out vec4 fragColor;
 
 vec3 invert_color(vec3 color) {
     return vec3(1.0) - color;
@@ -30,5 +29,5 @@ void main() {
         blended_color = mix(color1, color2, v_blend_factor);
     }
     
-    fragColor = vec4(blended_color, 1.0);
+    gl_FragColor = vec4(blended_color, 1.0);
 }
