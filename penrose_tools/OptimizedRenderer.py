@@ -84,28 +84,21 @@ class OptimizedRenderer:
             transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
                             for x, y in screen_verts]
 
-            # Calculate tile type
-            tile_type = 1.0 if tile.is_kite else 0.0
-            
             # Calculate centroid in screen space
             centroid = sum(tile.vertices) / len(tile.vertices)
             screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
             gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
 
-            # Add vertices and attributes
+            # Add vertices with tile type and centroid
             for vert in transformed_verts:
                 vertices.extend([
-                    vert[0], vert[1],      # position
-                    tile_type,             # tile_type
+                    vert[0], vert[1],          # position
+                    1.0 if tile.is_kite else 0.0,  # tile_type
                     gl_centroid[0], gl_centroid[1]  # centroid
                 ])
 
-            # Create indices for this tile
+            # Create indices for triangulation
             num_verts = len(transformed_verts)
-            if num_verts < 3:
-                continue
-
-            # Triangulate the polygon
             for i in range(1, num_verts - 1):
                 indices.extend([offset, offset + i, offset + i + 1])
 
@@ -357,11 +350,18 @@ class OptimizedRenderer:
             # Get pattern data
             pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
-            # Set pattern data
+            # Ensure we don't exceed the maximum number of patterns
+            max_patterns = 1000  # Must match uniform array size in shader
+            if len(pattern_data) > max_patterns:
+                self.logger.warning(f"Pattern data exceeds maximum size ({len(pattern_data)} > {max_patterns})")
+                pattern_data = pattern_data[:max_patterns]
+            
+            # Set pattern data uniform
             loc = self.uniform_locations.get('tile_patterns')
             if loc is not None and loc != -1:
                 glUniform4fv(loc, len(pattern_data), pattern_data.flatten())
             
+            # Set number of tiles uniform
             loc = self.uniform_locations.get('num_tiles')
             if loc is not None and loc != -1:
                 glUniform1i(loc, len(pattern_data))
