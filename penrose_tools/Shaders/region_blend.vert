@@ -7,22 +7,27 @@ attribute vec2 tile_centroid;
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
-varying float v_pattern_type;
+varying float v_pattern_type;  // 0=normal, 1=star, 2=starburst
 varying float v_blend_factor;
 
-uniform sampler2D pattern_texture;
-uniform vec2 texture_size;
+uniform vec4 pattern_data[3000];  // x,y=centroid, z=pattern type, w=blend factor
+uniform int num_patterns;
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Convert centroid from [-1,1] to [0,1] texture space
-    vec2 tex_coord = (v_tile_centroid + 1.0) * 0.5;
+    // Default values
+    v_pattern_type = 0.0;
+    v_blend_factor = 0.5;
     
-    // Sample pattern data from texture
-    vec4 pattern_data = texture2D(pattern_texture, tex_coord);
-    v_pattern_type = pattern_data.r;  // Pattern type stored in red channel
-    v_blend_factor = pattern_data.g;  // Blend factor stored in green channel
+    // Find matching pattern data
+    for(int i = 0; i < num_patterns; i++) {
+        if(distance(pattern_data[i].xy, tile_centroid) < 0.001) {
+            v_pattern_type = pattern_data[i].z;
+            v_blend_factor = pattern_data[i].w;
+            break;
+        }
+    }
 }
