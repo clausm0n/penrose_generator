@@ -21,15 +21,15 @@ void main() {
     vec3 finalColor;
     
     if (v_pattern_type > 0.5 && v_pattern_type < 1.5) {
-        // Star pattern
+        // Star pattern - use inverted blend of colors
         finalColor = invertColor(blendColors(color1, color2, 0.3));
     }
     else if (v_pattern_type > 1.5) {
-        // Starburst pattern
+        // Starburst pattern - use different inverted blend
         finalColor = invertColor(blendColors(color1, color2, 0.7));
     }
     else {
-        // Normal tile
+        // Normal tile - use neighbor-based blending
         finalColor = blendColors(color1, color2, v_blend_factor);
     }
     
