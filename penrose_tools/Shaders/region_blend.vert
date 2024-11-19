@@ -11,15 +11,15 @@ varying float v_pattern_type;
 varying float v_blend_factor;
 
 uniform sampler2D pattern_texture;
-uniform vec2 texture_size;  // width and height of the pattern texture
+uniform vec4 viewport_bounds;  // minX, minY, maxX, maxY in GL space
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Convert centroid from [-1,1] to [0,1] for texture lookup
-    vec2 tex_coord = (v_tile_centroid + 1.0) * 0.5;
+    // Convert centroid to texture coordinates using viewport bounds
+    vec2 tex_coord = (v_tile_centroid - viewport_bounds.xy) / (viewport_bounds.zw - viewport_bounds.xy);
     
     // Sample pattern data from texture
     vec4 pattern_data = texture2D(pattern_texture, tex_coord);

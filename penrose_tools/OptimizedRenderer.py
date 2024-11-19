@@ -30,6 +30,32 @@ class OptimizedRenderer:
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache."""
         self.tile_cache.clear()
+    
+    def calculate_viewport_bounds(self, tiles, width, height, scale_value):
+        """Calculate the bounds of all tile centroids in GL space."""
+        center = complex(width / 2, height / 2)
+        min_x = float('inf')
+        min_y = float('inf')
+        max_x = float('-inf')
+        max_y = float('-inf')
+        
+        for tile in tiles:
+            centroid = sum(tile.vertices) / len(tile.vertices)
+            screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
+            gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
+            
+            min_x = min(min_x, gl_centroid[0])
+            min_y = min(min_y, gl_centroid[1])
+            max_x = max(max_x, gl_centroid[0])
+            max_y = max(max_y, gl_centroid[1])
+        
+        # Add padding to ensure we cover all tiles
+        padding = 0.1  # 10% padding
+        width = max_x - min_x
+        height = max_y - min_y
+        
+        return (min_x - width * padding, min_y - height * padding, 
+                max_x + width * padding, max_y + height * padding)
 
 
     def transform_to_gl_space(self, x, y, width, height):
@@ -85,26 +111,42 @@ class OptimizedRenderer:
         
         return texture
 
-    def update_pattern_texture(self, pattern_data, width, height):
+    def update_pattern_texture(self, tiles, pattern_data, width, height, scale_value, viewport_bounds):
         """Update pattern texture with new pattern data."""
+        # Calculate texture size based on tile density
+        tile_count = len(tiles)
+        tex_size = int(np.sqrt(tile_count) * 2)  # Make texture big enough to avoid aliasing
+        tex_size = max(512, min(4096, next_power_of_2(tex_size)))  # Clamp to reasonable size
+        
         if not hasattr(self, 'pattern_texture'):
-            self.pattern_texture = self.create_pattern_texture(width, height)
+            self.pattern_texture = self.create_pattern_texture(tex_size, tex_size)
         
         # Convert pattern data to texture format
-        texture_data = np.zeros((height, width, 4), dtype=np.float32)
+        texture_data = np.zeros((tex_size, tex_size, 4), dtype=np.float32)
         
+        # Map from GL space to texture space
+        def gl_to_tex(x, y):
+            tx = (x - viewport_bounds[0]) / (viewport_bounds[2] - viewport_bounds[0])
+            ty = (y - viewport_bounds[1]) / (viewport_bounds[3] - viewport_bounds[1])
+            return (int(tx * (tex_size-1)), int(ty * (tex_size-1)))
+        
+        # Fill texture with pattern data
         for pattern in pattern_data:
-            # Convert centroid from [-1,1] to texture coordinates [0,width-1]x[0,height-1]
-            x = int((pattern[0] + 1.0) * (width - 1) / 2.0)
-            y = int((pattern[1] + 1.0) * (height - 1) / 2.0)
-            
-            if 0 <= x < width and 0 <= y < height:
+            x, y = gl_to_tex(pattern[0], pattern[1])
+            if 0 <= x < tex_size and 0 <= y < tex_size:
                 # Store pattern type and blend factor
                 texture_data[y, x] = [pattern[2], pattern[3], 0.0, 1.0]
+                
+                # Fill neighboring pixels to ensure coverage
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < tex_size and 0 <= ny < tex_size:
+                            texture_data[ny, nx] = [pattern[2], pattern[3], 0.0, 1.0]
         
         # Update texture
         glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, tex_size, tex_size, 0,
                     GL_RGBA, GL_FLOAT, texture_data)
 
     def setup_buffers(self, tiles, width, height, scale_value):
@@ -401,8 +443,18 @@ class OptimizedRenderer:
             
             pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
-            # Update pattern texture
-            self.update_pattern_texture(pattern_data, width, height)
+            # Calculate viewport bounds for proper texture mapping
+            viewport_bounds = self.calculate_viewport_bounds(
+                self.tile_cache[cache_key], width, height, config_data['scale']
+            )
+            
+            # Update pattern texture with viewport-aware coordinates
+            self.update_pattern_texture(
+                self.tile_cache[cache_key],
+                self.pattern_cache[cache_key]['tile_patterns'],
+                width, height, config_data['scale'],
+                viewport_bounds
+            )
             
             # Set uniforms
             glActiveTexture(GL_TEXTURE0)
@@ -411,6 +463,10 @@ class OptimizedRenderer:
             loc = self.uniform_locations.get('pattern_texture')
             if loc is not None and loc != -1:
                 glUniform1i(loc, 0)
+            
+            loc = self.uniform_locations.get('viewport_bounds')
+            if loc is not None and loc != -1:
+                glUniform4f(loc, *viewport_bounds)
             
             loc = self.uniform_locations.get('texture_size')
             if loc is not None and loc != -1:
@@ -478,6 +534,10 @@ class OptimizedRenderer:
                 glDisableVertexAttribArray(loc)
         
         glUseProgram(0)
+    
+    def next_power_of_2(n):
+        """Return the next power of 2 greater than or equal to n."""
+        return 1 << (n - 1).bit_length()
 
 def __del__(self):
     """Clean up OpenGL resources."""
