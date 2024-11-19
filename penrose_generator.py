@@ -55,9 +55,11 @@ def setup_window(fullscreen=False):
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
-    # Request OpenGL 2.1 context
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+    # Request OpenGL 3.3 core profile
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, True)
     
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()
@@ -74,7 +76,15 @@ def setup_window(fullscreen=False):
         glfw.terminate()
         raise Exception("GLFW window can't be created")
     
+    # Make the context current
     glfw.make_context_current(window)
+    
+    # Log OpenGL information
+    logger.info(f"OpenGL Vendor: {glGetString(GL_VENDOR).decode()}")
+    logger.info(f"OpenGL Renderer: {glGetString(GL_RENDERER).decode()}")
+    logger.info(f"OpenGL Version: {glGetString(GL_VERSION).decode()}")
+    logger.info(f"GLSL Version: {glGetString(GL_SHADING_LANGUAGE_VERSION).decode()}")
+    
     return window
 
 def update_toggles(shaders):
