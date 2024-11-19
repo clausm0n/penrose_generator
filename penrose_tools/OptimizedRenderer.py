@@ -351,7 +351,7 @@ class OptimizedRenderer:
             pattern_data = self.pattern_cache[cache_key]['tile_patterns']
             
             # Ensure we don't exceed the maximum number of patterns
-            max_patterns = 3000  # Must match uniform array size in shader
+            max_patterns = 4000  # Must match uniform array size in shader
             if len(pattern_data) > max_patterns:
                 self.logger.warning(f"Pattern data exceeds maximum size ({len(pattern_data)} > {max_patterns})")
                 pattern_data = pattern_data[:max_patterns]
