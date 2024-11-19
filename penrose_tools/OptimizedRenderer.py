@@ -190,34 +190,39 @@ class OptimizedRenderer:
         pattern_tiles = set()
         center = complex(width / 2, height / 2)
 
-        # First pass - find pattern tiles
+        # First find all patterns to ensure we don't miss any
+        all_stars = []
+        all_starbursts = []
+        
         for tile in tiles:
             if tile not in pattern_tiles:
-                centroid = sum(tile.vertices) / len(tile.vertices)
-                screen_pos = op.to_canvas([centroid], scale_value, center)[0]
-                gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
-
                 if tile.is_kite and op.is_valid_star_kite(tile):
                     star = op.find_star(tile, tiles)
                     if len(star) == 5:
-                        for star_tile in star:
-                            star_centroid = sum(star_tile.vertices) / len(star_tile.vertices)
-                            star_screen_pos = op.to_canvas([star_centroid], scale_value, center)[0]
-                            star_gl_pos = self.transform_to_gl_space(star_screen_pos[0], star_screen_pos[1], width, height)
-                            pattern_data.append([star_gl_pos[0], star_gl_pos[1], 1.0, 0.0])  # Star pattern
-                            pattern_tiles.add(star_tile)
-                
+                        all_stars.append(star)
+                        pattern_tiles.update(star)
                 elif not tile.is_kite and op.is_valid_starburst_dart(tile):
                     burst = op.find_starburst(tile, tiles)
                     if len(burst) == 10:
-                        for burst_tile in burst:
-                            burst_centroid = sum(burst_tile.vertices) / len(burst_tile.vertices)
-                            burst_screen_pos = op.to_canvas([burst_centroid], scale_value, center)[0]
-                            burst_gl_pos = self.transform_to_gl_space(burst_screen_pos[0], burst_screen_pos[1], width, height)
-                            pattern_data.append([burst_gl_pos[0], burst_gl_pos[1], 2.0, 0.0])  # Starburst pattern
-                            pattern_tiles.add(burst_tile)
+                        all_starbursts.append(burst)
+                        pattern_tiles.update(burst)
 
-        # Second pass - process remaining tiles with neighbor ratios
+        # Add pattern tiles first
+        for star in all_stars:
+            for star_tile in star:
+                centroid = sum(star_tile.vertices) / len(star_tile.vertices)
+                screen_pos = op.to_canvas([centroid], scale_value, center)[0]
+                gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
+                pattern_data.append([gl_pos[0], gl_pos[1], 1.0, 0.0])  # Star pattern
+
+        for burst in all_starbursts:
+            for burst_tile in burst:
+                centroid = sum(burst_tile.vertices) / len(burst_tile.vertices)
+                screen_pos = op.to_canvas([centroid], scale_value, center)[0]
+                gl_pos = self.transform_to_gl_space(screen_pos[0], screen_pos[1], width, height)
+                pattern_data.append([gl_pos[0], gl_pos[1], 2.0, 0.0])  # Starburst pattern
+
+        # Process all remaining tiles with neighbor ratios
         for tile in tiles:
             if tile not in pattern_tiles:
                 centroid = sum(tile.vertices) / len(tile.vertices)
@@ -231,6 +236,7 @@ class OptimizedRenderer:
                 
                 pattern_data.append([gl_pos[0], gl_pos[1], 0.0, neighbor_ratio])
 
+        self.logger.info(f"Processed {len(pattern_data)} tiles: {len(all_stars)} stars, {len(all_starbursts)} starbursts")
         return np.array(pattern_data, dtype=np.float32)
 
     def render_tiles(self, width, height, config_data):
