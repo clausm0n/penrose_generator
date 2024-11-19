@@ -7,10 +7,10 @@ attribute vec2 tile_centroid;
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
-varying float v_pattern_type;
 varying float v_blend_factor;
+varying float v_pattern_type;
 
-uniform vec4 pattern_data[3000];
+uniform vec4 pattern_data[3000];  // x,y = centroid, z = pattern type, w = blend factor
 uniform int num_patterns;
 
 void main() {
@@ -18,15 +18,16 @@ void main() {
     v_tile_type = tile_type;
     v_tile_centroid = tile_centroid;
     
-    // Initialize with normal tile values
+    // Default to regular tile (no pattern)
     v_pattern_type = 0.0;
-    v_blend_factor = tile_type > 0.5 ? 1.0 : 0.0;  // Default kite/dart blending
+    v_blend_factor = 0.5;  // Default blend factor
     
-    // Look for pattern matches
-    for(int i = 0; i < num_patterns; i++) {
-        if(distance(pattern_data[i].xy, tile_centroid) < 0.001) {
-            v_pattern_type = pattern_data[i].z;
-            v_blend_factor = pattern_data[i].w;
+    // Find matching pattern for this tile's centroid
+    for (int i = 0; i < num_patterns; i++) {
+        vec2 pattern_pos = pattern_data[i].xy;
+        if (distance(pattern_pos, tile_centroid) < 0.001) {
+            v_pattern_type = pattern_data[i].z;   // 1.0 = star, 2.0 = starburst
+            v_blend_factor = pattern_data[i].w;   // Blend factor from pattern data
             break;
         }
     }
