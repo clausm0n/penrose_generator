@@ -5,6 +5,7 @@ uniform vec3 color1;
 uniform vec3 color2;
 
 varying float v_tile_type;
+varying vec2 v_tile_centroid;  // Added missing varying
 varying float v_pattern_type;
 varying float v_blend_factor;
 

@@ -7,10 +7,10 @@ attribute vec2 tile_centroid;
 
 varying float v_tile_type;
 varying vec2 v_tile_centroid;
-varying float v_pattern_type;  // 0=normal, 1=star, 2=starburst
+varying float v_pattern_type;
 varying float v_blend_factor;
 
-uniform vec4 pattern_data[3000];  // x,y=centroid, z=pattern type, w=blend factor
+uniform vec4 pattern_data[3000];
 uniform int num_patterns;
 
 void main() {
