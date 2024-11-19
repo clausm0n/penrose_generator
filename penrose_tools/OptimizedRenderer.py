@@ -131,7 +131,7 @@ class OptimizedRenderer:
         # Get attribute locations
         self.attribute_locations['position'] = glGetAttribLocation(shader_program, 'position')
         self.attribute_locations['tile_type'] = glGetAttribLocation(shader_program, 'tile_type')
-        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_centroid')
+        self.attribute_locations['tile_centroid'] = glGetAttribLocation(shader_program, 'tile_center')
 
         # Get uniform locations
         shader_name = self.shader_manager.shader_names[self.current_shader_index]
@@ -414,7 +414,7 @@ class OptimizedRenderer:
                 elif attr_name == 'tile_type':
                     glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-                elif attr_name == 'tile_centroid':
+                elif attr_name == 'tile_center':
                     glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
                                         ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
