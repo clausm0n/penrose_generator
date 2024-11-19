@@ -8,7 +8,7 @@ attribute vec2 tile_centroid;
 
 // Varying variables
 varying float v_tile_type;
-varying vec2 v_center;      // renamed from v_centroid
+varying vec2 v_centroid;      // Renamed to match fragment shader
 varying float v_blend_factor;
 varying float v_pattern_type;
 
@@ -16,7 +16,7 @@ varying float v_pattern_type;
 uniform vec4 tile_patterns[1000];
 uniform int num_tiles;
 
-float find_pattern_type(vec2 center_pos) {    // renamed parameter from centroid
+float find_pattern_type(vec2 center_pos) {
     int left = 0;
     int right = num_tiles - 1;
     
@@ -44,7 +44,7 @@ float find_pattern_type(vec2 center_pos) {    // renamed parameter from centroid
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);
-    v_center = tile_centroid;
+    v_centroid = tile_centroid;    // Updated to match new name
     v_tile_type = tile_type;
     v_pattern_type = find_pattern_type(tile_centroid);
     
