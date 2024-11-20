@@ -91,32 +91,38 @@ class OptimizedRenderer:
             return
             
         # Get current image dimensions
-        img_width = self.image_processor.image_data[current_index].shape[1]
-        img_height = self.image_processor.image_data[current_index].shape[0]
+        img_width = float(self.image_processor.image_data[current_index].shape[1])
+        img_height = float(self.image_processor.image_data[current_index].shape[0])
         
         # Calculate aspect ratios
         img_ratio = img_width / img_height
-        screen_ratio = width / height
+        screen_ratio = float(width) / float(height)
         
         # Calculate scale and offset to fit image while maintaining aspect ratio
         if img_ratio > screen_ratio:
             # Image is wider relative to screen
             scale_x = 1.0
-            scale_y = 1.0
+            scale_y = screen_ratio / img_ratio
             offset_x = 0.0
-            offset_y = (1.0 - screen_ratio / img_ratio) * 0.5
+            offset_y = 0.0
         else:
             # Image is taller relative to screen
-            scale_x = 1.0
+            scale_x = img_ratio / screen_ratio
             scale_y = 1.0
-            offset_x = (1.0 - img_ratio / screen_ratio) * 0.5
+            offset_x = 0.0
             offset_y = 0.0
+        
+        # Ensure exact floating point calculations
+        scale_x = float(scale_x)
+        scale_y = float(scale_y)
+        offset_x = float(offset_x)
+        offset_y = float(offset_y)
         
         # Debug output
         self.logger.debug(f"Image dimensions: {img_width}x{img_height}")
         self.logger.debug(f"Screen dimensions: {width}x{height}")
-        self.logger.debug(f"Aspect ratios - Image: {img_ratio:.2f}, Screen: {screen_ratio:.2f}")
-        self.logger.debug(f"Transform - Scale: ({scale_x:.2f}, {scale_y:.2f}), Offset: ({offset_x:.2f}, {offset_y:.2f})")
+        self.logger.debug(f"Aspect ratios - Image: {img_ratio:.4f}, Screen: {screen_ratio:.4f}")
+        self.logger.debug(f"Transform - Scale: ({scale_x:.4f}, {scale_y:.4f}), Offset: ({offset_x:.4f}, {offset_y:.4f})")
         
         # Set transform uniform
         loc = glGetUniformLocation(shader_program, 'image_transform')

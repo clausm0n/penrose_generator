@@ -1,3 +1,4 @@
+
 // pixelation_slideshow.frag
 #version 140
 
@@ -16,30 +17,32 @@ uniform float transition_progress;
 uniform vec4 image_transform; // xy = scale, zw = offset
 
 void main() {
-    // Convert from [-1,1] to [0,1] space, maintaining Y orientation
+    // Convert from [-1,1] to [0,1] space, flipping Y and maintaining aspect ratio
     vec2 uv = vec2(v_tile_centroid.x + 1.0, -v_tile_centroid.y + 1.0) * 0.5;
     
-    // Apply scaling and offset transformation
-    vec2 scaled_uv = (uv - 0.5) * image_transform.xy + 0.5;
-    scaled_uv += image_transform.zw;
+    // Center the UV coordinates before applying transformations
+    vec2 centered_uv = uv - 0.5;
     
-    // Sample images with gamma correction
-    vec4 current_color = pow(texture2D(current_image, scaled_uv), vec4(2.2));
-    vec4 next_color = pow(texture2D(next_image, scaled_uv), vec4(2.2));
+    // Apply aspect ratio correction and scaling
+    centered_uv = centered_uv * image_transform.xy;
     
-    // Smooth transition using cubic interpolation
+    // Move back to [0,1] range and apply offset
+    vec2 final_uv = centered_uv + 0.5 + image_transform.zw;
+    
+    // Sample images directly (no gamma correction needed for PNG/JPG)
+    vec4 current_color = texture2D(current_image, final_uv);
+    vec4 next_color = texture2D(next_image, final_uv);
+    
+    // Smooth transition
     float t = clamp(transition_progress, 0.0, 1.0);
-    t = t * t * (3.0 - 2.0 * t);  // Smoothstep
+    t = smoothstep(0.0, 1.0, t);  // Smoothstep for easier easing
     
-    // Mix colors with gamma correction
+    // Mix colors directly
     vec4 mixed_color = mix(current_color, next_color, t);
     
-    // Convert back from linear to sRGB space
-    mixed_color = pow(mixed_color, vec4(1.0/2.2));
-    
     // Check bounds
-    bool in_bounds = all(greaterThanEqual(scaled_uv, vec2(0.0))) && 
-                    all(lessThanEqual(scaled_uv, vec2(1.0)));
+    bool in_bounds = all(greaterThanEqual(final_uv, vec2(0.0))) && 
+                    all(lessThanEqual(final_uv, vec2(1.0)));
     
     // Output final color
     fragColor = in_bounds ? mixed_color : vec4(0.0, 0.0, 0.0, 1.0);
