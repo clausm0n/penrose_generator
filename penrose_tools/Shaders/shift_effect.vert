@@ -1,14 +1,14 @@
 // shift_effect.vert
-#version 120
+#version 140
 
-// Input attributes
-attribute vec2 position;
-attribute float tile_type;     // Make sure this matches exactly
-attribute vec2 tile_centroid;  // Changed to match binding name
+// Inputs
+in vec2 position;
+in float tile_type;
+in vec2 tile_centroid;
 
-// Varying variables
-varying float v_tile_type;
-varying vec2 v_tile_centroid;
+// Outputs to fragment shader
+out float v_tile_type;
+out vec2 v_tile_centroid;
 
 void main() {
     v_tile_type = tile_type;

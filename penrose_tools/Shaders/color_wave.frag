@@ -1,5 +1,5 @@
 // color_wave.frag
-#version 120
+#version 140
 
 // Constants
 const float PI = 3.14159265359;
@@ -9,11 +9,14 @@ const float BASE_DIRECTION = 0.785398;  // PI/4
 const float DIRECTION_CHANGE = 1.570796;  // PI/2
 const float TWEEN_DURATION = 1000000.0;
 
-// Varying variables
-varying float v_tile_type;
-varying vec2 v_position;
+// Inputs from vertex shader
+in float v_tile_type;
+in vec2 v_position;
 
-// Uniform variables
+// Output color
+out vec4 fragColor;
+
+// Uniforms
 uniform vec3 color1;
 uniform vec3 color2;
 uniform float time;
@@ -49,7 +52,7 @@ void main() {
     float wave_intensity = (sin(phase) + 1.0) * 0.5;
     
     // Interpolate between colors
-    vec3 final_color = color1 * (1.0 - wave_intensity) + color2 * wave_intensity;
+    vec3 final_color = mix(color1, color2, wave_intensity);
     
-    gl_FragColor = vec4(final_color, 1.0);
+    fragColor = vec4(final_color, 1.0);
 }
