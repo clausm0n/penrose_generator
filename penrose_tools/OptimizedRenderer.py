@@ -12,6 +12,7 @@ op = Operations()
 class OptimizedRenderer:
     def __init__(self):
         """Initialize the renderer after OpenGL context is created."""
+        self.vao = None
         self.vbo = None
         self.ebo = None
         self.tile_cache = {}
@@ -26,6 +27,17 @@ class OptimizedRenderer:
             raise RuntimeError("OptimizedRenderer requires an active OpenGL context")
             
         self.shader_manager = ShaderManager()
+        
+        # Initialize VAO
+        self.vao = glGenVertexArrays(1)
+        glBindVertexArray(self.vao)
+        
+        # Create buffers (but don't bind them yet)
+        self.vbo = glGenBuffers(1)
+        self.ebo = glGenBuffers(1)
+        
+        # Unbind VAO
+        glBindVertexArray(0)
 
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache."""
@@ -79,17 +91,14 @@ class OptimizedRenderer:
 
         # Process each tile
         for tile in tiles:
-            # Get screen space vertices
             screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
             transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
                             for x, y in screen_verts]
 
-            # Calculate centroid in screen space
             centroid = sum(tile.vertices) / len(tile.vertices)
             screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
             gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
 
-            # Add vertices with tile type and centroid
             for vert in transformed_verts:
                 vertices.extend([
                     vert[0], vert[1],          # position
@@ -97,30 +106,49 @@ class OptimizedRenderer:
                     gl_centroid[0], gl_centroid[1]  # centroid
                 ])
 
-            # Create indices for triangulation
             num_verts = len(transformed_verts)
             for i in range(1, num_verts - 1):
                 indices.extend([offset, offset + i, offset + i + 1])
 
             offset += num_verts
 
-        # Convert to numpy arrays
         self.vertices_array = np.array(vertices, dtype=np.float32)
         self.indices_array = np.array(indices, dtype=np.uint32)
 
-        # Create and bind vertex buffer
-        if self.vbo is None:
-            self.vbo = glGenBuffers(1)
+        # Bind VAO and set up buffers
+        glBindVertexArray(self.vao)
+
+        # Update VBO
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
         glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, 
                     self.vertices_array, GL_STATIC_DRAW)
 
-        # Create and bind element buffer
-        if self.ebo is None:
-            self.ebo = glGenBuffers(1)
+        # Update EBO
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, 
                     self.indices_array, GL_STATIC_DRAW)
+
+        # Set up vertex attributes
+        stride = 5 * ctypes.sizeof(GLfloat)
+        
+        # Position attribute (location 0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, 
+                            ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
+        
+        # Tile type attribute (location 1)
+        glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, 
+                            ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
+        glEnableVertexAttribArray(1)
+        
+        # Centroid attribute (location 2)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, 
+                            ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
+        glEnableVertexAttribArray(2)
+
+        # Unbind VAO
+        glBindVertexArray(0)
+
 
     def get_shader_locations(self):
         """Get locations of shader attributes and uniforms."""
