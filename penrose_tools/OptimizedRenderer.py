@@ -295,191 +295,131 @@ class OptimizedRenderer:
             }
         }
 
+    def set_standard_uniforms(self, shader_program, config_data):
+        """Set standard uniforms for basic shaders."""
+        color1 = np.array(config_data["color1"]) / 255.0
+        color2 = np.array(config_data["color2"]) / 255.0
+        current_time = glfw.get_time()
+        
+        loc = glGetUniformLocation(shader_program, "color1")
+        if loc != -1:
+            glUniform3f(loc, *color1)
+        
+        loc = glGetUniformLocation(shader_program, "color2")
+        if loc != -1:
+            glUniform3f(loc, *color2)
+        
+        loc = glGetUniformLocation(shader_program, "time")
+        if loc != -1:
+            glUniform1f(loc, current_time)
+
+    def handle_pixelation_slideshow(self, shader_program, width, height, cache_key):
+        """Handle pixelation slideshow shader setup."""
+        current_time = glfw.get_time() * 1000.0
+        transition_duration = 5000.0
+        cycle_duration = 10000.0
+        
+        if not hasattr(self, 'image_processor'):
+            from .Effects import Effects
+            self.image_processor = Effects()
+            self.image_processor.load_images_from_folder()
+            if self.image_processor.image_files:
+                self.image_processor.load_and_process_images(self.tile_cache[cache_key])
+        
+        if hasattr(self, 'image_processor') and self.image_processor.image_data:
+            cycle_position = (current_time % (cycle_duration * len(self.image_processor.image_data))) / cycle_duration
+            current_index = int(cycle_position)
+            next_index = (current_index + 1) % len(self.image_processor.image_data)
+            
+            transition_progress = cycle_position - current_index
+            
+            # Update textures and set uniforms
+            self.update_image_textures(
+                self.image_processor.image_data[current_index],
+                self.image_processor.image_data[next_index]
+            )
+            
+            # Calculate and set image transformation uniforms
+            self.set_image_transform_uniforms(shader_program, width, height, current_index)
+            
+            # Set texture uniforms
+            self.set_texture_uniforms(shader_program, transition_progress)
+
+    def handle_region_blend(self, shader_program, cache_key):
+        """Handle region blend shader setup."""
+        pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+        
+        if not hasattr(self, 'pattern_texture'):
+            self.pattern_texture, tex_width, tex_height = self.create_pattern_texture(pattern_data)
+        
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+        
+        loc = glGetUniformLocation(shader_program, 'pattern_texture')
+        if loc != -1:
+            glUniform1i(loc, 0)
+        
+        loc = glGetUniformLocation(shader_program, 'texture_width')
+        if loc != -1:
+            glUniform1i(loc, tex_width)
+            
+        loc = glGetUniformLocation(shader_program, 'texture_height')
+        if loc != -1:
+            glUniform1i(loc, tex_height)
+
     def render_tiles(self, width, height, config_data):
-        """Render the Penrose tiling."""
-        # Check if shader has changed
-        if self.current_shader_index != self.shader_manager.current_shader_index:
-            self.current_shader_index = self.shader_manager.current_shader_index
-            self.force_refresh()  # Force refresh when shader changes
-            self.logger.info("Shader changed, forcing buffer refresh")
+            """Render the Penrose tiling."""
+            if self.current_shader_index != self.shader_manager.current_shader_index:
+                self.current_shader_index = self.shader_manager.current_shader_index
+                self.force_refresh()
+                self.logger.info("Shader changed, forcing buffer refresh")
 
-        cache_key = (
-            tuple(config_data['gamma']),
-            width,
-            height,
-            config_data['scale'],
-        )
+            cache_key = (
+                tuple(config_data['gamma']),
+                width,
+                height,
+                config_data['scale'],
+            )
 
-        # Regenerate tiles and patterns if needed
-        if cache_key not in self.tile_cache:
-            self.tile_cache.clear()
-            self.pattern_cache.clear()
-            tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-            op.calculate_neighbors(tiles)
-            self.tile_cache[cache_key] = tiles
-            
-            # Process and cache pattern data
-            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
-            
-            self.setup_buffers(tiles, width, height, config_data['scale'])
-            self.get_shader_locations()
-
-        # Use shader program
-        shader_program = self.shader_manager.current_shader_program()
-        glUseProgram(shader_program)
-        
-        shader_name = self.shader_manager.shader_names[self.current_shader_index]
-
-        # Handle different shader types
-        if shader_name == 'pixelation_slideshow':
-            current_time = glfw.get_time() * 1000.0
-            transition_duration = 5000.0  # 5 seconds
-            cycle_duration = 10000.0  # 10 seconds
-            
-            if not hasattr(self, 'image_processor'):
-                from .Effects import Effects
-                self.image_processor = Effects()
-                self.image_processor.load_images_from_folder()
-                if self.image_processor.image_files:
-                    self.image_processor.load_and_process_images(self.tile_cache[cache_key])
-            
-            if hasattr(self, 'image_processor') and self.image_processor.image_data:
-                cycle_position = (current_time % (cycle_duration * len(self.image_processor.image_data))) / cycle_duration
-                current_index = int(cycle_position)
-                next_index = (current_index + 1) % len(self.image_processor.image_data)
+            if cache_key not in self.tile_cache:
+                self.tile_cache.clear()
+                self.pattern_cache.clear()
+                tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+                op.calculate_neighbors(tiles)
+                self.tile_cache[cache_key] = tiles
                 
-                transition_progress = cycle_position - current_index
+                # Process and cache pattern data
+                self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
                 
-                # Update image textures
-                self.update_image_textures(
-                    self.image_processor.image_data[current_index],
-                    self.image_processor.image_data[next_index]
-                )
-                
-                # Calculate proper scale to fill the array while maintaining aspect ratio
-                img_width = self.image_processor.image_data[current_index].shape[1]
-                img_height = self.image_processor.image_data[current_index].shape[0]
-                
-                # Calculate aspect ratios
-                img_ratio = img_width / img_height
-                array_ratio = width / height
-                
-                if img_ratio > array_ratio:
-                    # Image is wider relative to array
-                    scale_x = 1.0
-                    scale_y = array_ratio / img_ratio
-                    offset_x = 0.0
-                    offset_y = (1.0 - scale_y) * 0.5
-                else:
-                    # Image is taller relative to array
-                    scale_x = img_ratio / array_ratio
-                    scale_y = 1.0
-                    offset_x = (1.0 - scale_x) * 0.5
-                    offset_y = 0.0
+                self.setup_buffers(tiles, width, height, config_data['scale'])
+                self.get_shader_locations()
 
-                # Set textures and uniforms
-                glActiveTexture(GL_TEXTURE0)
-                glBindTexture(GL_TEXTURE_2D, self.current_texture)
-                loc = self.uniform_locations.get('current_image')
-                if loc is not None and loc != -1:
-                    glUniform1i(loc, 0)
-
-                glActiveTexture(GL_TEXTURE1)
-                glBindTexture(GL_TEXTURE_2D, self.next_texture)
-                loc = self.uniform_locations.get('next_image')
-                if loc is not None and loc != -1:
-                    glUniform1i(loc, 1)
-
-                loc = self.uniform_locations.get('transition_progress')
-                if loc is not None and loc != -1:
-                    glUniform1f(loc, transition_progress)
-
-                loc = self.uniform_locations.get('image_transform')
-                if loc is not None and loc != -1:
-                    glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
-
-                self.logger.debug(f"Scale: ({scale_x}, {scale_y}), Offset: ({offset_x}, {offset_y})")
-                self.logger.debug(f"Transition progress: {transition_progress}")
-        
-        elif shader_name == 'region_blend':
-            # Get pattern data
-            pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+            # Use shader program and set uniforms
+            shader_program = self.shader_manager.current_shader_program()
+            glUseProgram(shader_program)
             
-            # Create pattern texture if not already created
-            if not hasattr(self, 'pattern_texture'):
-                self.pattern_texture, tex_width, tex_height = self.create_pattern_texture(pattern_data)
-            
-            # Bind pattern texture
-            glActiveTexture(GL_TEXTURE0)
-            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-            
-            # Set uniforms
-            loc = self.uniform_locations.get('pattern_texture')
-            if loc is not None and loc != -1:
-                glUniform1i(loc, 0)
-            
-            loc = self.uniform_locations.get('texture_width')
-            if loc is not None and loc != -1:
-                glUniform1i(loc, tex_width)
-                
-            loc = self.uniform_locations.get('texture_height')
-            if loc is not None and loc != -1:
-                glUniform1i(loc, tex_height)
+            shader_name = self.shader_manager.shader_names[self.current_shader_index]
 
-        else:  # Handle other shaders
-            # Set color and time uniforms for non-special shaders
-            color1 = np.array(config_data["color1"]) / 255.0
-            color2 = np.array(config_data["color2"]) / 255.0
-            current_time = glfw.get_time() * 1000.0
+            # Handle different shader types
+            if shader_name == 'pixelation_slideshow':
+                self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
+            elif shader_name == 'region_blend':
+                self.handle_region_blend(shader_program, cache_key)
+            else:
+                # Set basic uniforms for standard shaders
+                self.set_standard_uniforms(shader_program, config_data)
+
+            # Enable blending
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            # Draw using VAO
+            glBindVertexArray(self.vao)
+            glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+            glBindVertexArray(0)
             
-            loc = self.uniform_locations.get('color1')
-            if loc is not None and loc != -1:
-                glUniform3f(loc, *color1)
-            
-            loc = self.uniform_locations.get('color2')
-            if loc is not None and loc != -1:
-                glUniform3f(loc, *color2)
-            
-            loc = self.uniform_locations.get('time')
-            if loc is not None and loc != -1:
-                glUniform1f(loc, current_time / 1000.0)
-
-        # Enable blending
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-
-        # Bind buffers and set attribute pointers
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
-        glBindVertexArray(0)
-        
-        glUseProgram(0)
-        stride = 5 * ctypes.sizeof(GLfloat)
-
-        # Only enable and setup attributes that have valid locations
-        for attr_name, loc in self.attribute_locations.items():
-            if loc != -1:
-                glEnableVertexAttribArray(loc)
-                if attr_name == 'position':
-                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
-                                        ctypes.c_void_p(0))
-                elif attr_name == 'tile_type':
-                    glVertexAttribPointer(loc, 1, GL_FLOAT, GL_FALSE, stride, 
-                                        ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-                elif attr_name == 'tile_centroid':
-                    glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, stride, 
-                                        ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
-
-        # Draw elements
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
-
-        # Cleanup
-        for loc in self.attribute_locations.values():
-            if loc != -1:
-                glDisableVertexAttribArray(loc)
-        
-        glUseProgram(0)
+            # Cleanup
+            glUseProgram(0)
 
 def __del__(self):
     """Clean up OpenGL resources."""
