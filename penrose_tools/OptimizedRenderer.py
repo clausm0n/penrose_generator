@@ -349,23 +349,37 @@ class OptimizedRenderer:
         """Handle region blend shader setup."""
         pattern_data = self.pattern_cache[cache_key]['tile_patterns']
         
-        if not hasattr(self, 'pattern_texture'):
-            self.pattern_texture, tex_width, tex_height = self.create_pattern_texture(pattern_data)
+        # Create or update pattern texture and get dimensions
+        if not hasattr(self, 'pattern_texture') or not hasattr(self, 'texture_dimensions'):
+            self.pattern_texture, width, height = self.create_pattern_texture(pattern_data)
+            self.texture_dimensions = (width, height)
+        else:
+            # If we already have a texture, just update its content
+            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+            texture_data = np.zeros((self.texture_dimensions[1], self.texture_dimensions[0], 4), dtype=np.float32)
+            for i, pattern in enumerate(pattern_data):
+                y = i // self.texture_dimensions[0]
+                x = i % self.texture_dimensions[0]
+                texture_data[y, x] = pattern
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 
+                        self.texture_dimensions[0], self.texture_dimensions[1],
+                        0, GL_RGBA, GL_FLOAT, texture_data)
+    
+    # Bind texture and set uniforms
+    glActiveTexture(GL_TEXTURE0)
+    glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+    
+    loc = glGetUniformLocation(shader_program, 'pattern_texture')
+    if loc != -1:
+        glUniform1i(loc, 0)
+    
+    loc = glGetUniformLocation(shader_program, 'texture_width')
+    if loc != -1:
+        glUniform1i(loc, self.texture_dimensions[0])
         
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-        
-        loc = glGetUniformLocation(shader_program, 'pattern_texture')
-        if loc != -1:
-            glUniform1i(loc, 0)
-        
-        loc = glGetUniformLocation(shader_program, 'texture_width')
-        if loc != -1:
-            glUniform1i(loc, tex_width)
-            
-        loc = glGetUniformLocation(shader_program, 'texture_height')
-        if loc != -1:
-            glUniform1i(loc, tex_height)
+    loc = glGetUniformLocation(shader_program, 'texture_height')
+    if loc != -1:
+        glUniform1i(loc, self.texture_dimensions[1])
 
     def render_tiles(self, width, height, config_data):
             """Render the Penrose tiling."""
@@ -426,6 +440,10 @@ def __del__(self):
     if glfw.get_current_context():
         if hasattr(self, 'pattern_texture'):
             glDeleteTextures([self.pattern_texture])
+        if hasattr(self, 'current_texture'):
+            glDeleteTextures([self.current_texture])
+        if hasattr(self, 'next_texture'):
+            glDeleteTextures([self.next_texture])
         if hasattr(self, 'vao'):
             glDeleteVertexArrays(1, [self.vao])
         if hasattr(self, 'vbo'):
