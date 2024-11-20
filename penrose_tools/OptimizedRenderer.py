@@ -51,25 +51,22 @@ class OptimizedRenderer:
         """Transform screen coordinates to OpenGL coordinate space."""
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
     
-
-    
     def create_texture(self, image_data):
         """Create OpenGL texture from numpy array."""
         texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, texture)
+        
+        # Set texture parameters
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         
-        # Convert image to RGB if necessary
-        if len(image_data.shape) == 3 and image_data.shape[2] == 3:
-            format = GL_RGB
-        else:
-            format = GL_RGBA
+        # Always use RGB format for images
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 
+                    image_data.shape[1], image_data.shape[0],
+                    0, GL_RGB, GL_UNSIGNED_BYTE, image_data)
         
-        glTexImage2D(GL_TEXTURE_2D, 0, format, image_data.shape[1], image_data.shape[0], 
-                    0, format, GL_UNSIGNED_BYTE, image_data)
         return texture
 
     def update_image_textures(self, current_image, next_image):
@@ -78,11 +75,16 @@ class OptimizedRenderer:
             self.current_texture = self.create_texture(current_image)
             self.next_texture = self.create_texture(next_image)
         else:
+            # Update current image
             glBindTexture(GL_TEXTURE_2D, self.current_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, current_image.shape[1], current_image.shape[0],
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+                        current_image.shape[1], current_image.shape[0],
                         0, GL_RGB, GL_UNSIGNED_BYTE, current_image)
+            
+            # Update next image
             glBindTexture(GL_TEXTURE_2D, self.next_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, next_image.shape[1], next_image.shape[0],
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+                        next_image.shape[1], next_image.shape[0],
                         0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
             
     def set_image_transform_uniforms(self, shader_program, width, height, current_index):
