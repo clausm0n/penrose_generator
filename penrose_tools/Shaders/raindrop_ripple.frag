@@ -83,3 +83,46 @@ float calculateRippleIntensity(vec2 center, vec2 position, float age, float size
     
     return 0.0;
 }
+
+void main() {
+    vec3 finalColor = color1;
+    float timeInSeconds = time;
+    
+    // Subtle water surface movement
+    float surfaceNoise = noise(v_tile_centroid * 2.0 + vec2(timeInSeconds * 0.05)) * 0.02;
+    finalColor = mix(finalColor, color2, surfaceNoise);
+    
+    float totalRippleEffect = 0.0;
+    
+    for(int i = 0; i < MAX_RAINDROPS; i++) {
+        // Calculate continuous ripple lifecycle
+        float cycleTime = mod(timeInSeconds + float(i) * (RIPPLE_LIFETIME / float(MAX_RAINDROPS)), RIPPLE_LIFETIME);
+        
+        // Only process ripple if it's within its lifetime
+        if(cycleTime < RIPPLE_LIFETIME) {
+            // Get ripple properties
+            vec2 rippleCenter = getRipplePosition(i, timeInSeconds);
+            float rippleSize = 0.3 + random(vec2(float(i), timeInSeconds * 0.1)) * 0.2;
+            
+            // Calculate ripple effect
+            float rippleEffect = calculateRippleIntensity(
+                rippleCenter,
+                v_tile_centroid,
+                cycleTime,
+                rippleSize
+            );
+            
+            // Add to total effect
+            totalRippleEffect += rippleEffect;
+        }
+    }
+    
+    // Smooth the total effect
+    totalRippleEffect = smoothstep(0.0, 1.0, totalRippleEffect);
+    
+    // Apply ripple effect with subtle highlight
+    vec3 rippleColor = mix(color2, vec3(1.0), 0.1);
+    finalColor = mix(finalColor, rippleColor, totalRippleEffect);
+    
+    fragColor = vec4(finalColor, 1.0);
+}
