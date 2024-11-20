@@ -102,21 +102,30 @@ class OptimizedRenderer:
         if img_ratio > screen_ratio:
             # Image is wider relative to screen
             scale_x = 1.0
-            scale_y = screen_ratio / img_ratio
+            scale_y = img_ratio / screen_ratio  # Adjusted to maintain aspect ratio
             offset_x = 0.0
-            offset_y = (1.0 - scale_y) * 0.5
+            offset_y = 0.0
         else:
             # Image is taller relative to screen
-            scale_x = img_ratio / screen_ratio
+            scale_x = screen_ratio / img_ratio  # Adjusted to maintain aspect ratio
             scale_y = 1.0
-            offset_x = (1.0 - scale_x) * 0.5
+            offset_x = 0.0
             offset_y = 0.0
+        
+        # Adjust scales to fit within bounds
+        scale_x = min(scale_x, 2.0)
+        scale_y = min(scale_y, 2.0)
+        
+        # Debug output
+        self.logger.debug(f"Image dimensions: {img_width}x{img_height}")
+        self.logger.debug(f"Screen dimensions: {width}x{height}")
+        self.logger.debug(f"Aspect ratios - Image: {img_ratio:.2f}, Screen: {screen_ratio:.2f}")
+        self.logger.debug(f"Transform - Scale: ({scale_x:.2f}, {scale_y:.2f}), Offset: ({offset_x:.2f}, {offset_y:.2f})")
         
         # Set transform uniform
         loc = glGetUniformLocation(shader_program, 'image_transform')
         if loc != -1:
             glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
-            self.logger.debug(f"Image transform: scale({scale_x}, {scale_y}), offset({offset_x}, {offset_y})")
 
     def set_texture_uniforms(self, shader_program, transition_progress):
         """Set texture uniforms for the slideshow shader."""

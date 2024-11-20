@@ -1,17 +1,23 @@
 // pixelation_slideshow.vert
-#version 120
+#version 140
 
-attribute vec2 position;
-attribute float tile_type;
-attribute vec2 tile_centroid;
+// Inputs
+in vec2 position;
+in float tile_type;
+in vec2 tile_centroid;
 
-varying vec2 v_position;
-varying float v_tile_type;
-varying vec2 v_tile_centroid;
+// Outputs to fragment shader
+out vec2 v_position;
+out float v_tile_type;
+out vec2 v_tile_centroid;
 
 void main() {
+    // Pass through vertex position unchanged
     gl_Position = vec4(position, 0.0, 1.0);
+    
+    // Pass through data to fragment shader
     v_position = position;
     v_tile_type = tile_type;
-    v_tile_centroid = tile_centroid;
+    // Flip Y coordinate to fix upside-down issue
+    v_tile_centroid = vec2(tile_centroid.x, -tile_centroid.y);
 }
