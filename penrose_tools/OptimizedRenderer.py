@@ -365,21 +365,21 @@ class OptimizedRenderer:
                         self.texture_dimensions[0], self.texture_dimensions[1],
                         0, GL_RGBA, GL_FLOAT, texture_data)
     
-    # Bind texture and set uniforms
-    glActiveTexture(GL_TEXTURE0)
-    glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-    
-    loc = glGetUniformLocation(shader_program, 'pattern_texture')
-    if loc != -1:
-        glUniform1i(loc, 0)
-    
-    loc = glGetUniformLocation(shader_program, 'texture_width')
-    if loc != -1:
-        glUniform1i(loc, self.texture_dimensions[0])
+        # Bind texture and set uniforms
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
         
-    loc = glGetUniformLocation(shader_program, 'texture_height')
-    if loc != -1:
-        glUniform1i(loc, self.texture_dimensions[1])
+        loc = glGetUniformLocation(shader_program, 'pattern_texture')
+        if loc != -1:
+            glUniform1i(loc, 0)
+        
+        loc = glGetUniformLocation(shader_program, 'texture_width')
+        if loc != -1:
+            glUniform1i(loc, self.texture_dimensions[0])
+            
+        loc = glGetUniformLocation(shader_program, 'texture_height')
+        if loc != -1:
+            glUniform1i(loc, self.texture_dimensions[1])
 
     def render_tiles(self, width, height, config_data):
             """Render the Penrose tiling."""
