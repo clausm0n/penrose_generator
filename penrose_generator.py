@@ -114,18 +114,13 @@ def main():
         logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
         
-        # Initialize OpenGL settings after context creation
+        # Initialize OpenGL settings
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(0, 0, 0, 1)
         
-        # Setup viewport and projection
+        # Setup viewport only - no more matrix mode operations
         glViewport(0, 0, width, height)
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(0, width, height, 0, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
         
         # Initialize renderer after OpenGL context is created
         renderer = OptimizedRenderer()
@@ -152,6 +147,7 @@ def main():
             renderer.render_tiles(width, height, config_data)
             glfw.swap_buffers(window)
 
+            # Frame rate limiting
             while glfw.get_time() < last_time + 1.0 / 60.0:
                 pass
             last_time = glfw.get_time()
