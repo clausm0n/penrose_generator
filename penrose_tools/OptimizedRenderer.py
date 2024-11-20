@@ -28,16 +28,10 @@ class OptimizedRenderer:
             
         self.shader_manager = ShaderManager()
         
-        # Initialize VAO
+        # Initialize VAO and buffers
         self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
-        
-        # Create buffers (but don't bind them yet)
         self.vbo = glGenBuffers(1)
         self.ebo = glGenBuffers(1)
-        
-        # Unbind VAO
-        glBindVertexArray(0)
 
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache."""
@@ -115,39 +109,41 @@ class OptimizedRenderer:
         self.vertices_array = np.array(vertices, dtype=np.float32)
         self.indices_array = np.array(indices, dtype=np.uint32)
 
-        # Bind VAO and set up buffers
+        # First bind the VAO
         glBindVertexArray(self.vao)
 
-        # Update VBO
+        # Then bind and set up the VBO
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
         glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, 
                     self.vertices_array, GL_STATIC_DRAW)
 
-        # Update EBO
+        # Then bind and set up the EBO
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, 
                     self.indices_array, GL_STATIC_DRAW)
 
-        # Set up vertex attributes
+        # Set up vertex attributes (with VBO still bound)
         stride = 5 * ctypes.sizeof(GLfloat)
+        offset = ctypes.c_void_p(0)
         
         # Position attribute (location 0)
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, 
-                            ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, offset)
         
         # Tile type attribute (location 1)
+        glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, 
                             ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-        glEnableVertexAttribArray(1)
         
         # Centroid attribute (location 2)
+        glEnableVertexAttribArray(2)
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, 
                             ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
-        glEnableVertexAttribArray(2)
 
-        # Unbind VAO
+        # Unbind VAO first, then VBO and EBO
         glBindVertexArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
 
 
     def get_shader_locations(self):
