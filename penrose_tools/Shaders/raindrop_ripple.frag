@@ -11,15 +11,14 @@ uniform vec3 color1;
 uniform vec3 color2;
 uniform float time;
 
-const int MAX_RAINDROPS = 8;  // Reduced for clearer visuals
+const int MAX_RAINDROPS = 8;
 const float PI = 3.14159265359;
+const float RIPPLE_LIFETIME = 12.0; // Full lifetime of a ripple
 
-// Improved random function for smoother variation
 float random(vec2 st) {
     return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
 }
 
-// Smoother noise function
 float noise(vec2 st) {
     vec2 i = floor(st);
     vec2 f = smoothstep(0.0, 1.0, fract(st));
@@ -32,101 +31,55 @@ float noise(vec2 st) {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-vec4 getRaindropProperties(int index, float timeInSeconds) {
-    // Slower variation in drop patterns
-    float slowTime = timeInSeconds * 0.2;
-    float dropSeed = random(vec2(float(index), floor(slowTime)));
+// Get a continuous position for a raindrop based on its lifecycle
+vec2 getRipplePosition(int index, float timeInSeconds) {
+    float rippleTime = timeInSeconds + float(index) * 1234.5678;
+    float slowTime = rippleTime * 0.1; // Slow down the variation
     
-    // More spread out timing
-    float dropOffset = dropSeed * 10.0;  // Increased spread
+    // Use different frequencies for x and y to avoid repetitive patterns
+    float x = cos(slowTime * 0.7) * 0.8;
+    float y = sin(slowTime * 0.5) * 0.8;
     
-    // More controlled position distribution
-    float posX = -0.8 + 1.6 * random(vec2(float(index), dropSeed));
-    float posY = -0.8 + 1.6 * random(vec2(dropSeed, float(index)));
+    // Add some noise for natural variation
+    x += noise(vec2(slowTime * 0.3, 0.0)) * 0.2;
+    y += noise(vec2(0.0, slowTime * 0.3)) * 0.2;
     
-    // More consistent drop sizes
-    float size = 0.2 + 0.15 * random(vec2(dropSeed, posY));
-    
-    return vec4(posX, posY, size, dropOffset);
+    return vec2(x, y);
 }
 
-float calculateRipple(vec2 center, vec2 position, float rippleTime, float dropSize) {
+float calculateRippleIntensity(vec2 center, vec2 position, float age, float size) {
     float distance = length(position - center);
     
-    // Slower ripple expansion
-    float baseRadius = 0.3 * dropSize;
-    float maxRadius = baseRadius * 6.0;
-    float expansionRate = 1.0;
-    float radius = maxRadius * (1.0 - exp(-rippleTime * expansionRate));
+    // Calculate ripple radius based on age
+    float maxRadius = 0.8 * size;
+    float radius = maxRadius * (1.0 - exp(-age * 1.5));
     
-    // Longer-lasting ripples with smoother falloff
-    float fadeStart = 2.0;
-    float fadeLength = 3.0;
-    float timeFactor = clamp(1.0 - (rippleTime - fadeStart) / fadeLength, 0.0, 1.0);
-    float baseIntensity = smoothstep(0.0, 0.2, rippleTime) * timeFactor;
+    // Calculate intensity with smooth falloff
+    float fadeStart = RIPPLE_LIFETIME * 0.3;
+    float fadeEnd = RIPPLE_LIFETIME * 0.9;
+    float timeFactor = 1.0;
     
-    // Wider, smoother ripple edges
-    float edgeWidth = 0.08 * dropSize;
+    if (age > fadeStart) {
+        timeFactor = smoothstep(fadeEnd, fadeStart, age);
+    }
+    
+    // Edge width varies with size and age
+    float edgeWidth = 0.08 * size * (1.0 + age * 0.1);
     
     if (distance <= radius) {
         float rippleShape;
         if (abs(distance - radius) < edgeWidth) {
-            // Smoother edge transition
+            // Smooth edge transition
             float edgeProgress = abs(distance - radius) / edgeWidth;
-            rippleShape = smoothstep(1.0, 0.0, edgeProgress);
+            rippleShape = smoothstep(1.0, 0.0, edgeProgress) * 0.7;
         } else {
-            // Smoother internal ripple
-            rippleShape = smoothstep(radius, radius * 0.7, distance);
+            // Internal ripple pattern
+            rippleShape = smoothstep(radius, radius * 0.7, distance) * 0.3;
         }
         
-        // Combine all factors for final intensity
-        return rippleShape * baseIntensity * dropSize;
+        // Combine for final intensity
+        return rippleShape * timeFactor * smoothstep(0.0, 0.2, age);
     }
     
     return 0.0;
-}
-
-void main() {
-    vec3 finalColor = color1;
-    float timeInSeconds = time;
-    
-    // Very subtle background water movement
-    float surfaceNoise = noise(v_tile_centroid * 2.0 + vec2(timeInSeconds * 0.05)) * 0.02;
-    finalColor = mix(finalColor, color2, surfaceNoise);
-    
-    // Accumulate ripple effects
-    float totalRippleEffect = 0.0;
-    
-    for(int i = 0; i < MAX_RAINDROPS; i++) {
-        vec4 dropProps = getRaindropProperties(i, timeInSeconds);
-        vec2 dropCenter = vec2(dropProps.x, dropProps.y);
-        float dropSize = dropProps.z;
-        float dropOffset = dropProps.w;
-        
-        // Longer cycle length for each ripple
-        float cycleLength = 8.0 + random(vec2(dropProps.x, dropProps.y)) * 4.0;
-        float rippleTime = mod(timeInSeconds - dropOffset, cycleLength);
-        
-        if(rippleTime > 0.0) {
-            // Calculate main ripple
-            float mainRipple = calculateRipple(dropCenter, v_tile_centroid, rippleTime, dropSize);
-            
-            // Add subtle secondary ripple with delay
-            float secondaryRipple = 0.0;
-            if(rippleTime > 0.5) {
-                secondaryRipple = calculateRipple(dropCenter, v_tile_centroid, rippleTime - 0.5, dropSize * 0.7) * 0.3;
-            }
-            
-            totalRippleEffect += mainRipple + secondaryRipple;
-        }
-    }
-    
-    // Clamp and smooth the total effect
-    totalRippleEffect = smoothstep(0.0, 1.0, totalRippleEffect);
-    
-    // Apply ripple effect to final color
-    vec3 rippleColor = mix(color2, vec3(1.0), 0.1);  // Subtle highlight
-    finalColor = mix(finalColor, rippleColor, totalRippleEffect);
-    
-    fragColor = vec4(finalColor, 1.0);
 }
