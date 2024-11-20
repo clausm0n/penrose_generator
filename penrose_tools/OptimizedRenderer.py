@@ -335,41 +335,59 @@ class OptimizedRenderer:
             # Set texture uniforms
             self.set_texture_uniforms(shader_program, transition_progress)
 
-    def handle_region_blend(self, shader_program, cache_key):
-        """Handle region blend shader setup."""
-        pattern_data = self.pattern_cache[cache_key]['tile_patterns']
-        
-        # Create or update pattern texture and get dimensions
-        if not hasattr(self, 'pattern_texture') or not hasattr(self, 'texture_dimensions'):
-            self.pattern_texture, width, height = self.create_pattern_texture(pattern_data)
-            self.texture_dimensions = (width, height)
-        else:
-            # If we already have a texture, just update its content
-            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-            texture_data = np.zeros((self.texture_dimensions[1], self.texture_dimensions[0], 4), dtype=np.float32)
-            for i, pattern in enumerate(pattern_data):
-                y = i // self.texture_dimensions[0]
-                x = i % self.texture_dimensions[0]
-                texture_data[y, x] = pattern
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 
-                        self.texture_dimensions[0], self.texture_dimensions[1],
-                        0, GL_RGBA, GL_FLOAT, texture_data)
-    
-        # Bind texture and set uniforms
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-        
-        loc = glGetUniformLocation(shader_program, 'pattern_texture')
-        if loc != -1:
-            glUniform1i(loc, 0)
-        
-        loc = glGetUniformLocation(shader_program, 'texture_width')
-        if loc != -1:
-            glUniform1i(loc, self.texture_dimensions[0])
+    def handle_region_blend(self, shader_program, cache_key, config_data):
+            """Handle region blend shader setup."""
+            # First set standard color uniforms
+            self.set_standard_uniforms(shader_program, config_data)
             
-        loc = glGetUniformLocation(shader_program, 'texture_height')
-        if loc != -1:
-            glUniform1i(loc, self.texture_dimensions[1])
+            # Then handle pattern-specific setup
+            pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+            
+            # Create or update pattern texture and get dimensions
+            if not hasattr(self, 'pattern_texture') or not hasattr(self, 'texture_dimensions'):
+                self.pattern_texture, width, height = self.create_pattern_texture(pattern_data)
+                self.texture_dimensions = (width, height)
+            else:
+                # If we already have a texture, just update its content
+                glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+                texture_data = np.zeros((self.texture_dimensions[1], self.texture_dimensions[0], 4), dtype=np.float32)
+                for i, pattern in enumerate(pattern_data):
+                    y = i // self.texture_dimensions[0]
+                    x = i % self.texture_dimensions[0]
+                    texture_data[y, x] = pattern
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 
+                            self.texture_dimensions[0], self.texture_dimensions[1],
+                            0, GL_RGBA, GL_FLOAT, texture_data)
+        
+            # Bind texture and set uniforms
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+            
+            # Debug output
+            self.logger.debug(f"Pattern texture dimensions: {self.texture_dimensions}")
+            self.logger.debug(f"Pattern data shape: {pattern_data.shape}")
+            
+            # Set texture uniforms
+            loc = glGetUniformLocation(shader_program, 'pattern_texture')
+            if loc != -1:
+                glUniform1i(loc, 0)
+                self.logger.debug("Pattern texture uniform set")
+            else:
+                self.logger.warning("Could not find pattern_texture uniform location")
+            
+            loc = glGetUniformLocation(shader_program, 'texture_width')
+            if loc != -1:
+                glUniform1i(loc, self.texture_dimensions[0])
+                self.logger.debug(f"Texture width set to {self.texture_dimensions[0]}")
+            else:
+                self.logger.warning("Could not find texture_width uniform location")
+                
+            loc = glGetUniformLocation(shader_program, 'texture_height')
+            if loc != -1:
+                glUniform1i(loc, self.texture_dimensions[1])
+                self.logger.debug(f"Texture height set to {self.texture_dimensions[1]}")
+            else:
+                self.logger.warning("Could not find texture_height uniform location")
 
     def render_tiles(self, width, height, config_data):
             """Render the Penrose tiling."""
@@ -398,7 +416,7 @@ class OptimizedRenderer:
                 self.setup_buffers(tiles, width, height, config_data['scale'])
                 self.get_shader_locations()
 
-            # Use shader program and set uniforms
+            # Use shader program
             shader_program = self.shader_manager.current_shader_program()
             glUseProgram(shader_program)
             
@@ -408,9 +426,13 @@ class OptimizedRenderer:
             if shader_name == 'pixelation_slideshow':
                 self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
             elif shader_name == 'region_blend':
-                self.handle_region_blend(shader_program, cache_key)
+                # Pass config_data to handle_region_blend
+                self.handle_region_blend(shader_program, cache_key, config_data)
+                # Debug output for color values
+                color1 = np.array(config_data["color1"]) / 255.0
+                color2 = np.array(config_data["color2"]) / 255.0
+                self.logger.debug(f"Color1: {color1}, Color2: {color2}")
             else:
-                # Set basic uniforms for standard shaders
                 self.set_standard_uniforms(shader_program, config_data)
 
             # Enable blending
