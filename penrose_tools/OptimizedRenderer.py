@@ -34,8 +34,17 @@ class OptimizedRenderer:
         self.ebo = glGenBuffers(1)
 
     def force_refresh(self):
-        """Force a refresh of the buffers by clearing the tile cache."""
+        """Force a refresh of the buffers by clearing the tile cache and textures."""
         self.tile_cache.clear()
+        self.pattern_cache.clear()
+        
+        # Clean up pattern texture if it exists
+        if hasattr(self, 'pattern_texture'):
+            glDeleteTextures([self.pattern_texture])
+            delattr(self, 'pattern_texture')
+        
+        if hasattr(self, 'texture_dimensions'):
+            delattr(self, 'texture_dimensions')
 
 
     def transform_to_gl_space(self, x, y, width, height):
@@ -336,58 +345,73 @@ class OptimizedRenderer:
             self.set_texture_uniforms(shader_program, transition_progress)
 
     def handle_region_blend(self, shader_program, cache_key, config_data):
-            """Handle region blend shader setup."""
-            # First set standard color uniforms
-            self.set_standard_uniforms(shader_program, config_data)
-            
-            # Then handle pattern-specific setup
-            pattern_data = self.pattern_cache[cache_key]['tile_patterns']
-            
-            # Create or update pattern texture and get dimensions
-            if not hasattr(self, 'pattern_texture') or not hasattr(self, 'texture_dimensions'):
-                self.pattern_texture, width, height = self.create_pattern_texture(pattern_data)
-                self.texture_dimensions = (width, height)
-            else:
-                # If we already have a texture, just update its content
-                glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-                texture_data = np.zeros((self.texture_dimensions[1], self.texture_dimensions[0], 4), dtype=np.float32)
-                for i, pattern in enumerate(pattern_data):
-                    y = i // self.texture_dimensions[0]
-                    x = i % self.texture_dimensions[0]
-                    texture_data[y, x] = pattern
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 
-                            self.texture_dimensions[0], self.texture_dimensions[1],
-                            0, GL_RGBA, GL_FLOAT, texture_data)
+        """Handle region blend shader setup."""
+        # First set standard color uniforms
+        self.set_standard_uniforms(shader_program, config_data)
         
-            # Bind texture and set uniforms
-            glActiveTexture(GL_TEXTURE0)
+        # Then handle pattern-specific setup
+        pattern_data = self.pattern_cache[cache_key]['tile_patterns']
+        
+        # Calculate required texture dimensions
+        total_patterns = len(pattern_data)
+        new_texture_width = int(np.ceil(np.sqrt(total_patterns)))
+        new_texture_height = int(np.ceil(total_patterns / new_texture_width))
+        
+        # Check if we need to recreate the texture due to size change
+        needs_new_texture = (
+            not hasattr(self, 'pattern_texture') or 
+            not hasattr(self, 'texture_dimensions') or
+            new_texture_width > self.texture_dimensions[0] or
+            new_texture_height > self.texture_dimensions[1]
+        )
+
+        if needs_new_texture:
+            # Delete old texture if it exists
+            if hasattr(self, 'pattern_texture'):
+                glDeleteTextures([self.pattern_texture])
+            
+            # Create new texture with new dimensions
+            self.pattern_texture, width, height = self.create_pattern_texture(pattern_data)
+            self.texture_dimensions = (width, height)
+            self.logger.debug(f"Created new pattern texture with dimensions: {width}x{height}")
+        else:
+            # Update existing texture
             glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+            texture_data = np.zeros((self.texture_dimensions[1], self.texture_dimensions[0], 4), dtype=np.float32)
             
-            # Debug output
-            self.logger.debug(f"Pattern texture dimensions: {self.texture_dimensions}")
-            self.logger.debug(f"Pattern data shape: {pattern_data.shape}")
-            
-            # Set texture uniforms
-            loc = glGetUniformLocation(shader_program, 'pattern_texture')
-            if loc != -1:
-                glUniform1i(loc, 0)
-                self.logger.debug("Pattern texture uniform set")
-            else:
-                self.logger.warning("Could not find pattern_texture uniform location")
-            
-            loc = glGetUniformLocation(shader_program, 'texture_width')
-            if loc != -1:
-                glUniform1i(loc, self.texture_dimensions[0])
-                self.logger.debug(f"Texture width set to {self.texture_dimensions[0]}")
-            else:
-                self.logger.warning("Could not find texture_width uniform location")
+            # Safely copy pattern data
+            for i, pattern in enumerate(pattern_data):
+                y = i // self.texture_dimensions[0]
+                x = i % self.texture_dimensions[0]
                 
-            loc = glGetUniformLocation(shader_program, 'texture_height')
-            if loc != -1:
-                glUniform1i(loc, self.texture_dimensions[1])
-                self.logger.debug(f"Texture height set to {self.texture_dimensions[1]}")
-            else:
-                self.logger.warning("Could not find texture_height uniform location")
+                # Double-check bounds to prevent any possible index errors
+                if y < texture_data.shape[0] and x < texture_data.shape[1]:
+                    texture_data[y, x] = pattern
+            
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 
+                        self.texture_dimensions[0], self.texture_dimensions[1],
+                        0, GL_RGBA, GL_FLOAT, texture_data)
+
+        # Bind texture and set uniforms
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+        
+        # Debug output
+        self.logger.debug(f"Current texture dimensions: {self.texture_dimensions}")
+        self.logger.debug(f"Total patterns: {total_patterns}")
+        
+        # Set texture uniforms
+        loc = glGetUniformLocation(shader_program, 'pattern_texture')
+        if loc != -1:
+            glUniform1i(loc, 0)
+        
+        loc = glGetUniformLocation(shader_program, 'texture_width')
+        if loc != -1:
+            glUniform1i(loc, self.texture_dimensions[0])
+            
+        loc = glGetUniformLocation(shader_program, 'texture_height')
+        if loc != -1:
+            glUniform1i(loc, self.texture_dimensions[1])
 
     def render_tiles(self, width, height, config_data):
             """Render the Penrose tiling."""
