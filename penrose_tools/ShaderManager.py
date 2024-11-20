@@ -192,6 +192,7 @@ class ShaderManager:
             ('no_effect.vert', 'no_effect.frag'),
             ('shift_effect.vert', 'shift_effect.frag'),
             ('color_wave.vert', 'color_wave.frag'),
+            ('color_flow.vert', 'color_flow.frag'),
             ('region_blend.vert', 'region_blend.frag'),
             ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
             ('koi_pond.vert', 'koi_pond.frag'),
