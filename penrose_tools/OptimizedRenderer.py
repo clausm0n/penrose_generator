@@ -167,18 +167,25 @@ class OptimizedRenderer:
                 'image_transform': glGetUniformLocation(shader_program, 'image_transform')
             })
         else:
-            # Standard uniforms for other shaders
-            self.uniform_locations['color1'] = glGetUniformLocation(shader_program, 'color1')
-            self.uniform_locations['color2'] = glGetUniformLocation(shader_program, 'color2')
-            self.uniform_locations['time'] = glGetUniformLocation(shader_program, 'time')
+            # Standard uniforms for all shaders
+            self.uniform_locations.update({
+                'color1': glGetUniformLocation(shader_program, 'color1'),
+                'color2': glGetUniformLocation(shader_program, 'color2'),
+                'time': glGetUniformLocation(shader_program, 'time')
+            })
             
+            # Region blend specific uniforms
             if shader_name == 'region_blend':
                 self.uniform_locations.update({
-                    'color1': glGetUniformLocation(shader_program, 'color1'),
-                    'color2': glGetUniformLocation(shader_program, 'color2'),
-                    'tile_patterns': glGetUniformLocation(shader_program, 'tile_patterns'),
-                    'num_tiles': glGetUniformLocation(shader_program, 'num_tiles')
+                    'pattern_texture': glGetUniformLocation(shader_program, 'pattern_texture'),
+                    'texture_width': glGetUniformLocation(shader_program, 'texture_width'),
+                    'texture_height': glGetUniformLocation(shader_program, 'texture_height')
                 })
+
+        # Debug log uniform locations
+        self.logger.debug(f"Shader uniforms for {shader_name}:")
+        for name, loc in self.uniform_locations.items():
+            self.logger.debug(f"  {name}: {loc}")
 
     def create_pattern_texture(self, pattern_data):
         """Create texture from pattern data."""
