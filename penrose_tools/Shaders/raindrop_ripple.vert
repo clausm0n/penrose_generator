@@ -1,13 +1,15 @@
 // raindrop_ripple.vert
-#version 120
+#version 140
 
-attribute vec2 position;
-attribute float tile_type;
-attribute vec2 tile_centroid;
+// Inputs
+in vec2 position;
+in float tile_type;
+in vec2 tile_centroid;
 
-varying vec2 v_position;
-varying float v_tile_type;
-varying vec2 v_tile_centroid;
+// Outputs
+out vec2 v_position;
+out float v_tile_type;
+out vec2 v_tile_centroid;
 
 void main() {
     gl_Position = vec4(position, 0.0, 1.0);

@@ -194,6 +194,7 @@ class ShaderManager:
             ('color_wave.vert', 'color_wave.frag'),
             ('region_blend.vert', 'region_blend.frag'),
             ('raindrop_ripple.vert', 'raindrop_ripple.frag'),
+            ('koi_pond.vert', 'koi_pond.frag'),
             ('pixelation_slideshow.vert', 'pixelation_slideshow.frag')
         ]
 
