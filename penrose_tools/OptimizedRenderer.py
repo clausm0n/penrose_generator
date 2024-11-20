@@ -84,6 +84,60 @@ class OptimizedRenderer:
             glBindTexture(GL_TEXTURE_2D, self.next_texture)
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, next_image.shape[1], next_image.shape[0],
                         0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
+            
+    def set_image_transform_uniforms(self, shader_program, width, height, current_index):
+        """Calculate and set image transformation uniforms."""
+        if not hasattr(self, 'image_processor') or not self.image_processor.image_data:
+            return
+            
+        # Get current image dimensions
+        img_width = self.image_processor.image_data[current_index].shape[1]
+        img_height = self.image_processor.image_data[current_index].shape[0]
+        
+        # Calculate aspect ratios
+        img_ratio = img_width / img_height
+        screen_ratio = width / height
+        
+        # Calculate scale and offset to fit image while maintaining aspect ratio
+        if img_ratio > screen_ratio:
+            # Image is wider relative to screen
+            scale_x = 1.0
+            scale_y = screen_ratio / img_ratio
+            offset_x = 0.0
+            offset_y = (1.0 - scale_y) * 0.5
+        else:
+            # Image is taller relative to screen
+            scale_x = img_ratio / screen_ratio
+            scale_y = 1.0
+            offset_x = (1.0 - scale_x) * 0.5
+            offset_y = 0.0
+        
+        # Set transform uniform
+        loc = glGetUniformLocation(shader_program, 'image_transform')
+        if loc != -1:
+            glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
+            self.logger.debug(f"Image transform: scale({scale_x}, {scale_y}), offset({offset_x}, {offset_y})")
+
+    def set_texture_uniforms(self, shader_program, transition_progress):
+        """Set texture uniforms for the slideshow shader."""
+        # Set current image texture
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.current_texture)
+        loc = glGetUniformLocation(shader_program, 'current_image')
+        if loc != -1:
+            glUniform1i(loc, 0)
+        
+        # Set next image texture
+        glActiveTexture(GL_TEXTURE1)
+        glBindTexture(GL_TEXTURE_2D, self.next_texture)
+        loc = glGetUniformLocation(shader_program, 'next_image')
+        if loc != -1:
+            glUniform1i(loc, 1)
+        
+        # Set transition progress
+        loc = glGetUniformLocation(shader_program, 'transition_progress')
+        if loc != -1:
+            glUniform1f(loc, transition_progress)
 
     def setup_buffers(self, tiles, width, height, scale_value):
         """Set up vertex and element buffers for rendering."""
@@ -318,31 +372,44 @@ class OptimizedRenderer:
         transition_duration = 5000.0
         cycle_duration = 10000.0
         
+        # Initialize image processor if needed
         if not hasattr(self, 'image_processor'):
             from .Effects import Effects
             self.image_processor = Effects()
             self.image_processor.load_images_from_folder()
             if self.image_processor.image_files:
                 self.image_processor.load_and_process_images(self.tile_cache[cache_key])
+                self.logger.debug(f"Loaded {len(self.image_processor.image_files)} images")
         
-        if hasattr(self, 'image_processor') and self.image_processor.image_data:
-            cycle_position = (current_time % (cycle_duration * len(self.image_processor.image_data))) / cycle_duration
-            current_index = int(cycle_position)
-            next_index = (current_index + 1) % len(self.image_processor.image_data)
-            
-            transition_progress = cycle_position - current_index
-            
-            # Update textures and set uniforms
+        if not hasattr(self, 'image_processor') or not self.image_processor.image_data:
+            self.logger.warning("No images available for slideshow")
+            return
+        
+        # Calculate transition timings
+        total_images = len(self.image_processor.image_data)
+        cycle_position = (current_time % (cycle_duration * total_images)) / cycle_duration
+        current_index = int(cycle_position)
+        next_index = (current_index + 1) % total_images
+        transition_progress = cycle_position - current_index
+        
+        self.logger.debug(f"Slideshow status: {current_index}->{next_index} ({transition_progress:.2f})")
+        
+        try:
+            # Update textures
             self.update_image_textures(
                 self.image_processor.image_data[current_index],
                 self.image_processor.image_data[next_index]
             )
             
-            # Calculate and set image transformation uniforms
+            # Set transformation uniforms
             self.set_image_transform_uniforms(shader_program, width, height, current_index)
             
             # Set texture uniforms
             self.set_texture_uniforms(shader_program, transition_progress)
+            
+        except Exception as e:
+            self.logger.error(f"Error in pixelation slideshow: {str(e)}")
+            raise
 
     def handle_region_blend(self, shader_program, cache_key, config_data):
         """Handle region blend shader setup."""
