@@ -92,41 +92,39 @@ class OptimizedRenderer:
         if not hasattr(self, 'image_processor') or not self.image_processor.image_data:
             return
             
-        # Get current image dimensions
-        img_width = float(self.image_processor.image_data[current_index].shape[1])
-        img_height = float(self.image_processor.image_data[current_index].shape[0])
+        # Get dimensions
+        img = self.image_processor.image_data[current_index]
+        img_width = float(img.shape[1])
+        img_height = float(img.shape[0])
+        screen_width = float(width)
+        screen_height = float(height)
         
         # Calculate aspect ratios
         img_ratio = img_width / img_height
-        screen_ratio = float(width) / float(height)
+        screen_ratio = screen_width / screen_height
         
-        # Calculate scale and offset to fit image while maintaining aspect ratio
+        # Calculate scales
         if img_ratio > screen_ratio:
-            # Image is wider relative to screen
+            # Fit to width
             scale_x = 1.0
             scale_y = screen_ratio / img_ratio
             offset_x = 0.0
-            offset_y = 0.0
+            offset_y = (1.0 - scale_y) / 2.0
         else:
-            # Image is taller relative to screen
+            # Fit to height
             scale_x = img_ratio / screen_ratio
             scale_y = 1.0
-            offset_x = 0.0
+            offset_x = (1.0 - scale_x) / 2.0
             offset_y = 0.0
         
-        # Ensure exact floating point calculations
-        scale_x = float(scale_x)
-        scale_y = float(scale_y)
-        offset_x = float(offset_x)
-        offset_y = float(offset_y)
-        
         # Debug output
-        self.logger.debug(f"Image dimensions: {img_width}x{img_height}")
-        self.logger.debug(f"Screen dimensions: {width}x{height}")
-        self.logger.debug(f"Aspect ratios - Image: {img_ratio:.4f}, Screen: {screen_ratio:.4f}")
-        self.logger.debug(f"Transform - Scale: ({scale_x:.4f}, {scale_y:.4f}), Offset: ({offset_x:.4f}, {offset_y:.4f})")
+        self.logger.debug(f"Transform calc:")
+        self.logger.debug(f"Image: {img_width}x{img_height} ratio={img_ratio}")
+        self.logger.debug(f"Screen: {screen_width}x{screen_height} ratio={screen_ratio}")
+        self.logger.debug(f"Scale: ({scale_x}, {scale_y})")
+        self.logger.debug(f"Offset: ({offset_x}, {offset_y})")
         
-        # Set transform uniform
+        # Set uniform
         loc = glGetUniformLocation(shader_program, 'image_transform')
         if loc != -1:
             glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)

@@ -15,5 +15,6 @@ void main() {
     gl_Position = vec4(position, 0.0, 1.0);
     v_position = position;
     v_tile_type = tile_type;
-    v_tile_centroid = vec2(tile_centroid.x, tile_centroid.y);  // Preserve coordinates exactly
+    // Keep original centroid coordinates
+    v_tile_centroid = tile_centroid;
 }
