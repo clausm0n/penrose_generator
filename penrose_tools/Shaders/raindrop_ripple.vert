@@ -1,12 +1,10 @@
 // raindrop_ripple.vert
 #version 140
 
-// Inputs
 in vec2 position;
 in float tile_type;
 in vec2 tile_centroid;
 
-// Outputs
 out vec2 v_position;
 out float v_tile_type;
 out vec2 v_tile_centroid;
