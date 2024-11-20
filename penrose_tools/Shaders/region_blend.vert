@@ -19,7 +19,7 @@ uniform int texture_height;
 
 vec2 find_pattern_data(vec2 center_pos) {
     vec2 tex_size = vec2(float(texture_width), float(texture_height));
-    float epsilon = 0.001; // Increased epsilon for better floating point comparison
+    float epsilon = 0.001;
     
     for (int i = 0; i < texture_width * texture_height; i++) {
         int y = i / texture_width;
@@ -33,20 +33,23 @@ vec2 find_pattern_data(vec2 center_pos) {
         vec4 pattern_data = texture2D(pattern_texture, tex_coord);
         vec2 pattern_pos = pattern_data.xy;
         
-        if (abs(pattern_pos.x - center_pos.x) < epsilon && 
-            abs(pattern_pos.y - center_pos.y) < epsilon) {
-            return vec2(pattern_data.z, pattern_data.w);
+        // Check if this texture pixel matches our centroid
+        if (length(pattern_pos - center_pos) < epsilon) {
+            return vec2(pattern_data.z, pattern_data.w);  // pattern_type and blend_factor
         }
     }
     
-    return vec2(0.0, 0.5); // Default values if no match found
+    // No match found - use default values
+    return vec2(0.0, tile_type > 0.5 ? 1.0 : 0.0);
 }
 
 void main() {
+    // Pass through values to fragment shader
     gl_Position = vec4(position, 0.0, 1.0);
-    v_centroid = tile_centroid;
     v_tile_type = tile_type;
+    v_centroid = tile_centroid;
     
+    // Look up pattern data for this tile
     vec2 pattern_data = find_pattern_data(tile_centroid);
     v_pattern_type = pattern_data.x;
     v_blend_factor = pattern_data.y;
