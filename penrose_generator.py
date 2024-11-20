@@ -55,9 +55,10 @@ def setup_window(fullscreen=False):
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
     
-    # Request OpenGL 2.1 context
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+    # Request OpenGL 3.1 context
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
     
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()

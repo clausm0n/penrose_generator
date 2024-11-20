@@ -425,7 +425,11 @@ class OptimizedRenderer:
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         # Bind buffers and set attribute pointers
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBindVertexArray(self.vao)
+        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+        glBindVertexArray(0)
+        
+        glUseProgram(0)
         stride = 5 * ctypes.sizeof(GLfloat)
 
         # Only enable and setup attributes that have valid locations
@@ -458,7 +462,9 @@ def __del__(self):
     if glfw.get_current_context():
         if hasattr(self, 'pattern_texture'):
             glDeleteTextures([self.pattern_texture])
-        if self.vbo is not None:
+        if hasattr(self, 'vao'):
+            glDeleteVertexArrays(1, [self.vao])
+        if hasattr(self, 'vbo'):
             glDeleteBuffers(1, [self.vbo])
-        if self.ebo is not None:
+        if hasattr(self, 'ebo'):
             glDeleteBuffers(1, [self.ebo])
