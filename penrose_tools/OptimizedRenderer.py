@@ -627,8 +627,12 @@ class OptimizedRenderer:
         glBindFramebuffer(GL_FRAMEBUFFER, self.main_framebuffer)
         glClear(GL_COLOR_BUFFER_BIT)
         
-        # Render normal content
+        # Get and verify shader program
         shader_program = self.shader_manager.current_shader_program()
+        if shader_program is None:
+            self.logger.error("No valid shader program available")
+            return
+            
         glUseProgram(shader_program)
         
         shader_name = self.shader_manager.shader_names[self.current_shader_index]
@@ -653,20 +657,24 @@ class OptimizedRenderer:
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        # Use fade shader to render the final result
-        shader_program = self.shader_manager.get_transition_shader()
-        glUseProgram(shader_program)
+        # Use fade shader for the final pass
+        fade_shader = self.shader_manager.get_transition_shader()
+        if fade_shader is None:
+            self.logger.error("No valid fade shader available")
+            return
+            
+        glUseProgram(fade_shader)
         
         # Bind main texture
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.main_texture)
         
         # Set uniforms
-        loc = glGetUniformLocation(shader_program, 'screen_texture')
+        loc = glGetUniformLocation(fade_shader, 'screen_texture')
         if loc != -1:
             glUniform1i(loc, 0)
             
-        loc = glGetUniformLocation(shader_program, 'fade_amount')
+        loc = glGetUniformLocation(fade_shader, 'fade_amount')
         if loc != -1:
             glUniform1f(loc, fade_amount)
         

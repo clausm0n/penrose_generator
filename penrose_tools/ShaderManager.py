@@ -48,15 +48,23 @@ class ShaderManager:
             
             if not os.path.exists(vert_path) or not os.path.exists(frag_path):
                 self.logger.error("Transition shader files not found")
+                self.transition_shader = None
                 return
                 
             self.transition_shader = self.compile_shader_program(vert_path, frag_path)
-            self.logger.info("Successfully loaded transition shader")
+            if self.transition_shader:
+                self.logger.info("Successfully loaded transition shader")
+            else:
+                self.logger.error("Failed to compile transition shader")
+                
         except Exception as e:
             self.logger.error(f"Error loading transition shader: {e}")
+            self.transition_shader = None
 
     def get_transition_shader(self):
         """Get the transition shader program."""
+        if not self.transition_shader:
+            self.logger.warning("No transition shader available")
         return self.transition_shader
 
     def compile_shader(self, source, shader_type, name):
@@ -258,7 +266,8 @@ class ShaderManager:
     def current_shader_program(self):
         """Get the currently active shader program."""
         if not self.shader_programs:
-            raise IndexError("No shader programs available")
+            self.logger.error("No shader programs available")
+            return None
         return self.shader_programs[self.current_shader_index]
 
     def __del__(self):
