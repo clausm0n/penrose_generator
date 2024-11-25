@@ -202,6 +202,8 @@ def main():
             server_thread = Thread(target=run_server, daemon=True)
         
         server_thread.start()
+        cycle_manager = CycleManager(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event)
+        cycle_manager.start()
         logger.info(f"{'Bluetooth' if args.bluetooth else 'HTTP'} server started.")
 
         last_time = glfw.get_time()
@@ -212,9 +214,6 @@ def main():
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(renderer.shader_manager)
             
-            cycle_manager = CycleManager(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event)
-            cycle_manager.start()
-
             renderer.render_tiles(width, height, config_data)
             glfw.swap_buffers(window)
 
