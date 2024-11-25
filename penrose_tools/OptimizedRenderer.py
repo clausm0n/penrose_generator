@@ -540,12 +540,6 @@ class OptimizedRenderer:
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling with fade transitions."""
-        # Check for shader changes
-        if self.current_shader_index != self.shader_manager.current_shader_index:
-            if not self.is_fading:
-                self.start_fade_transition(lambda: self.handle_shader_change())
-                self.logger.info("Starting fade transition for shader change")
-        
         # Calculate cache key
         cache_key = (
             tuple(config_data['gamma']),
@@ -554,10 +548,27 @@ class OptimizedRenderer:
             config_data['scale'],
         )
         
-        # Check if we need to update cache
-        if cache_key not in self.tile_cache and not self.is_fading:
-            self.start_fade_transition(lambda: self.handle_cache_update(cache_key, config_data))
-            self.logger.info("Starting fade transition for cache update")
+        # Check for shader changes
+        if self.current_shader_index != self.shader_manager.current_shader_index:
+            if not self.is_fading:
+                self.start_fade_transition(lambda: self.handle_shader_change())
+                self.logger.info("Starting fade transition for shader change")
+        
+        # Initialize buffers if needed
+        if not hasattr(self, 'indices_array') or cache_key not in self.tile_cache:
+            # Set up initial buffers without fade transition for first render
+            if not hasattr(self, 'indices_array'):
+                self.logger.info("Initializing buffers for first render")
+                tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+                op.calculate_neighbors(tiles)
+                self.tile_cache[cache_key] = tiles
+                self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
+                self.setup_buffers(tiles, width, height, config_data['scale'])
+                self.get_shader_locations()
+            # Start fade transition for subsequent cache updates
+            elif not self.is_fading:
+                self.start_fade_transition(lambda: self.handle_cache_update(cache_key, config_data, width, height))
+                self.logger.info("Starting fade transition for cache update")
         
         # Get current fade amount
         fade_amount = self.update_fade()
@@ -585,10 +596,6 @@ class OptimizedRenderer:
                 self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
             elif shader_name == 'region_blend':
                 self.handle_region_blend(shader_program, cache_key, config_data)
-                # Debug output for color values
-                color1 = np.array(config_data["color1"]) / 255.0
-                color2 = np.array(config_data["color2"]) / 255.0
-                self.logger.debug(f"Color1: {color1}, Color2: {color2}")
             else:
                 self.set_standard_uniforms(shader_program, config_data)
         
@@ -610,27 +617,27 @@ class OptimizedRenderer:
         self.force_refresh()
         self.logger.info("Shader changed, forcing buffer refresh")
 
-    def handle_cache_update(self, cache_key, config_data):
+    def handle_cache_update(self, cache_key, config_data, width, height):
         """Handle cache update after fade transition."""
         self.tile_cache.clear()
         self.pattern_cache.clear()
         
-        tiles = op.tiling(config_data['gamma'], config_data['width'], config_data['height'], config_data['scale'])
+        tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
         op.calculate_neighbors(tiles)
         self.tile_cache[cache_key] = tiles
         
         # Process and cache pattern data
         self.pattern_cache[cache_key] = self.process_patterns(
             tiles, 
-            config_data['width'], 
-            config_data['height'], 
+            width,
+            height,
             config_data['scale']
         )
         
         self.setup_buffers(
-            tiles, 
-            config_data['width'], 
-            config_data['height'], 
+            tiles,
+            width,
+            height,
             config_data['scale']
         )
         self.get_shader_locations()
