@@ -510,106 +510,62 @@ class OptimizedRenderer:
             glUniform1i(loc, self.texture_dimensions[1])
 
     def render_tiles(self, width, height, config_data):
-        """Render the Penrose tiling with shader transitions."""
-        # Check for shader change
-        if self.current_shader_index != self.shader_manager.current_shader_index:
-            # Setup transition buffer if needed
-            self.setup_transition_buffer(width, height)
-            
-            # Capture current state before switching
-            glBindFramebuffer(GL_FRAMEBUFFER, self.transition_framebuffer)
-            glClear(GL_COLOR_BUFFER_BIT)
-            
-            # Render current shader to framebuffer
-            shader_program = self.shader_manager.shader_programs[self.current_shader_index]
+            """Render the Penrose tiling."""
+            if self.current_shader_index != self.shader_manager.current_shader_index:
+                self.current_shader_index = self.shader_manager.current_shader_index
+                self.force_refresh()
+                self.logger.info("Shader changed, forcing buffer refresh")
+
+            cache_key = (
+                tuple(config_data['gamma']),
+                width,
+                height,
+                config_data['scale'],
+            )
+
+            if cache_key not in self.tile_cache:
+                self.tile_cache.clear()
+                self.pattern_cache.clear()
+                tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+                op.calculate_neighbors(tiles)
+                self.tile_cache[cache_key] = tiles
+                
+                # Process and cache pattern data
+                self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
+                
+                self.setup_buffers(tiles, width, height, config_data['scale'])
+                self.get_shader_locations()
+
+            # Use shader program
+            shader_program = self.shader_manager.current_shader_program()
             glUseProgram(shader_program)
-            shader_name = self.shader_manager.shader_names[self.current_shader_index]
             
+            shader_name = self.shader_manager.shader_names[self.current_shader_index]
+
+            # Handle different shader types
             if shader_name == 'pixelation_slideshow':
                 self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
             elif shader_name == 'region_blend':
+                # Pass config_data to handle_region_blend
                 self.handle_region_blend(shader_program, cache_key, config_data)
+                # Debug output for color values
+                color1 = np.array(config_data["color1"]) / 255.0
+                color2 = np.array(config_data["color2"]) / 255.0
+                self.logger.debug(f"Color1: {color1}, Color2: {color2}")
             else:
                 self.set_standard_uniforms(shader_program, config_data)
-                
+
+            # Enable blending
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            # Draw using VAO
             glBindVertexArray(self.vao)
             glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
             glBindVertexArray(0)
             
-            # Reset to default framebuffer
-            glBindFramebuffer(GL_FRAMEBUFFER, 0)
-            
-            # Update shader index and start transition
-            self.current_shader_index = self.shader_manager.current_shader_index
-            self.transition_start_time = glfw.get_time()
-            self.is_transitioning = True
-            self.force_refresh()
-            self.logger.info("Shader changed, starting transition")
-
-        # Setup cache key and check if buffers need updating
-        cache_key = (
-            tuple(config_data['gamma']),
-            width,
-            height,
-            config_data['scale'],
-        )
-
-        if cache_key not in self.tile_cache:
-            self.tile_cache.clear()
-            self.pattern_cache.clear()
-            tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-            op.calculate_neighbors(tiles)
-            self.tile_cache[cache_key] = tiles
-            
-            # Process and cache pattern data
-            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
-            
-            self.setup_buffers(tiles, width, height, config_data['scale'])
-            self.get_shader_locations()
-
-        # Use current shader program
-        shader_program = self.shader_manager.current_shader_program()
-        glUseProgram(shader_program)
-        
-        shader_name = self.shader_manager.shader_names[self.current_shader_index]
-
-        # Handle transition uniforms if transitioning
-        if self.is_transitioning:
-            progress = (glfw.get_time() - self.transition_start_time) / self.transition_duration
-            if progress >= 1.0:
-                self.is_transitioning = False
-            else:
-                glActiveTexture(GL_TEXTURE1)
-                glBindTexture(GL_TEXTURE_2D, self.transition_texture)
-                loc = glGetUniformLocation(shader_program, 'prev_shader_texture')
-                if loc != -1:
-                    glUniform1i(loc, 1)
-                loc = glGetUniformLocation(shader_program, 'transition_progress')
-                if loc != -1:
-                    glUniform1f(loc, progress)
-
-        # Handle different shader types
-        if shader_name == 'pixelation_slideshow':
-            self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
-        elif shader_name == 'region_blend':
-            self.handle_region_blend(shader_program, cache_key, config_data)
-            color1 = np.array(config_data["color1"]) / 255.0
-            color2 = np.array(config_data["color2"]) / 255.0
-            self.logger.debug(f"Color1: {color1}, Color2: {color2}")
-        else:
-            self.set_standard_uniforms(shader_program, config_data)
-
-        # Enable blending
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-
-        # Draw using VAO
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
-        glBindVertexArray(0)
-        
-        # Cleanup
-        glUseProgram(0)
+            # Cleanup
+            glUseProgram(0)
 
 def __del__(self):
     """Clean up OpenGL resources."""
