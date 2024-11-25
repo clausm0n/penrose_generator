@@ -52,17 +52,20 @@ class OptimizedRenderer:
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
     
     def create_texture(self, image_data):
-        """Create OpenGL texture from numpy array."""
+        """Create OpenGL texture with proper parameters."""
         texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, texture)
         
-        # Set texture parameters
+        # Set proper filtering modes
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         
-        # Always use RGB format for images
+        # Ensure proper alignment
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        
+        # Use RGB format consistently
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 
                     image_data.shape[1], image_data.shape[0],
                     0, GL_RGB, GL_UNSIGNED_BYTE, image_data)
@@ -70,22 +73,18 @@ class OptimizedRenderer:
         return texture
 
     def update_image_textures(self, current_image, next_image):
-        """Update the current and next image textures."""
-        if not hasattr(self, 'current_texture'):
-            self.current_texture = self.create_texture(current_image)
-            self.next_texture = self.create_texture(next_image)
-        else:
-            # Update current image
-            glBindTexture(GL_TEXTURE_2D, self.current_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
-                        current_image.shape[1], current_image.shape[0],
-                        0, GL_RGB, GL_UNSIGNED_BYTE, current_image)
-            
-            # Update next image
-            glBindTexture(GL_TEXTURE_2D, self.next_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
-                        next_image.shape[1], next_image.shape[0],
-                        0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
+        """Update the current and next image textures with proper cleanup."""
+        # Delete existing textures if they exist
+        if hasattr(self, 'current_texture'):
+            glDeleteTextures([self.current_texture])
+            glDeleteTextures([self.next_texture])
+        
+        # Create fresh textures
+        self.current_texture = self.create_texture(current_image)
+        self.next_texture = self.create_texture(next_image)
+        
+        # Reset texture bindings
+        glBindTexture(GL_TEXTURE_2D, 0)
             
     def set_image_transform_uniforms(self, shader_program, width, height, current_index):
         """Calculate and set image transformation uniforms."""
@@ -130,15 +129,21 @@ class OptimizedRenderer:
             glUniform4f(loc, scale_x, scale_y, offset_x, offset_y)
 
     def set_texture_uniforms(self, shader_program, transition_progress):
-        """Set texture uniforms for the slideshow shader."""
-        # Set current image texture
+        """Set texture uniforms with proper state management."""
+        # Reset texture units
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glActiveTexture(GL_TEXTURE1)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        
+        # Bind current image
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.current_texture)
         loc = glGetUniformLocation(shader_program, 'current_image')
         if loc != -1:
             glUniform1i(loc, 0)
         
-        # Set next image texture
+        # Bind next image
         glActiveTexture(GL_TEXTURE1)
         glBindTexture(GL_TEXTURE_2D, self.next_texture)
         loc = glGetUniformLocation(shader_program, 'next_image')
@@ -149,6 +154,9 @@ class OptimizedRenderer:
         loc = glGetUniformLocation(shader_program, 'transition_progress')
         if loc != -1:
             glUniform1f(loc, transition_progress)
+        
+        # Reset to texture unit 0
+        glActiveTexture(GL_TEXTURE0)
 
     def setup_buffers(self, tiles, width, height, scale_value):
         """Set up vertex and element buffers for rendering."""
