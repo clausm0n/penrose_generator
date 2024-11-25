@@ -26,6 +26,10 @@ class OptimizedRenderer:
         self.transition_start_time = 0
         self.transition_duration = 1.0
         self.is_transitioning = False
+        self.is_fading = False
+        self.fade_start_time = 0
+        self.fade_duration = 0.5  # seconds
+        self.fade_callback = None
         
         # Verify we have a valid OpenGL context before creating shader manager
         if not glfw.get_current_context():
@@ -37,6 +41,31 @@ class OptimizedRenderer:
         self.vao = glGenVertexArrays(1)
         self.vbo = glGenBuffers(1)
         self.ebo = glGenBuffers(1)
+
+    def start_fade_transition(self, callback=None):
+        """Start a fade transition."""
+        self.is_fading = True
+        self.fade_start_time = glfw.get_time()
+        self.fade_callback = callback
+        
+    def update_fade(self):
+        """Update fade transition state."""
+        if not self.is_fading:
+            return 0.0
+            
+        current_time = glfw.get_time()
+        elapsed = current_time - self.fade_start_time
+        fade_progress = elapsed / self.fade_duration
+        
+        if fade_progress >= 2.0:  # Complete fade out and in
+            self.is_fading = False
+            if self.fade_callback:
+                self.fade_callback()
+                self.fade_callback = None
+            return 0.0
+            
+        # Return fade amount (0->1->0)
+        return 1.0 - abs(1.0 - fade_progress) if fade_progress <= 2.0 else 0.0
 
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache and textures."""
