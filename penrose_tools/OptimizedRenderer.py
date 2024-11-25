@@ -548,12 +548,6 @@ class OptimizedRenderer:
             config_data['scale'],
         )
         
-        # Check for shader changes
-        if self.current_shader_index != self.shader_manager.current_shader_index:
-            if not self.is_fading:
-                self.start_fade_transition(lambda: self.handle_shader_change())
-                self.logger.info("Starting fade transition for shader change")
-        
         # Initialize buffers if needed
         if not hasattr(self, 'indices_array') or cache_key not in self.tile_cache:
             # Set up initial buffers without fade transition for first render
@@ -570,12 +564,39 @@ class OptimizedRenderer:
                 self.start_fade_transition(lambda: self.handle_cache_update(cache_key, config_data, width, height))
                 self.logger.info("Starting fade transition for cache update")
         
+        # Check for shader changes
+        if self.current_shader_index != self.shader_manager.current_shader_index and not self.is_fading:
+            self.start_fade_transition(lambda: self.handle_shader_change())
+            self.logger.info("Starting fade transition for shader change")
+        
         # Get current fade amount
         fade_amount = self.update_fade()
         
-        # Choose and use appropriate shader
+        # Enable blending
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # First render the current state
+        shader_program = self.shader_manager.current_shader_program()
+        glUseProgram(shader_program)
+        
+        shader_name = self.shader_manager.shader_names[self.current_shader_index]
+        
+        # Handle different shader types
+        if shader_name == 'pixelation_slideshow':
+            self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
+        elif shader_name == 'region_blend':
+            self.handle_region_blend(shader_program, cache_key, config_data)
+        else:
+            self.set_standard_uniforms(shader_program, config_data)
+        
+        # Draw base layer
+        glBindVertexArray(self.vao)
+        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+        
+        # If fading, render the fade effect on top
         if fade_amount > 0:
-            # Use transition shader during fade
+            # Use transition shader
             shader_program = self.shader_manager.get_transition_shader()
             glUseProgram(shader_program)
             
@@ -583,32 +604,14 @@ class OptimizedRenderer:
             loc = glGetUniformLocation(shader_program, 'fade_amount')
             if loc != -1:
                 glUniform1f(loc, fade_amount)
+                
+            # Set other standard uniforms
             self.set_standard_uniforms(shader_program, config_data)
-        else:
-            # Use normal shader program
-            shader_program = self.shader_manager.current_shader_program()
-            glUseProgram(shader_program)
             
-            shader_name = self.shader_manager.shader_names[self.current_shader_index]
-            
-            # Handle different shader types
-            if shader_name == 'pixelation_slideshow':
-                self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
-            elif shader_name == 'region_blend':
-                self.handle_region_blend(shader_program, cache_key, config_data)
-            else:
-                self.set_standard_uniforms(shader_program, config_data)
+            # Draw fade layer
+            glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
         
-        # Enable blending
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        # Draw using VAO
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
         glBindVertexArray(0)
-        
-        # Cleanup
         glUseProgram(0)
 
     def handle_shader_change(self):
