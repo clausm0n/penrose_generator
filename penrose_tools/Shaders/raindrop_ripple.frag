@@ -12,9 +12,9 @@ uniform float time;
 
 const int MAX_RIPPLES = 4;
 const float RIPPLE_SPACING = 3.5;
-const float RIPPLE_LIFETIME = 15.0;
-const float MAX_RADIUS = 0.8;
-const float EDGE_THICKNESS = 0.15;  // Increased from 0.05 for thicker borders
+const float RIPPLE_LIFETIME = 25.0;
+const float MAX_RADIUS = 1.8;
+const float EDGE_THICKNESS = 0.15;
 
 float getRippleRadius(float age) {
     return MAX_RADIUS * (1.0 - exp(-age / 5.0));
