@@ -38,13 +38,13 @@ class OptimizedRenderer:
         self.tile_cache.clear()
         self.pattern_cache.clear()
         
-        # Clean up pattern texture if it exists
-        if hasattr(self, 'pattern_texture'):
-            glDeleteTextures([self.pattern_texture])
-            delattr(self, 'pattern_texture')
-        
-        if hasattr(self, 'texture_dimensions'):
-            delattr(self, 'texture_dimensions')
+        # Clean up existing textures properly
+        if hasattr(self, 'current_texture'):
+            glDeleteTextures([self.current_texture])
+            delattr(self, 'current_texture')
+        if hasattr(self, 'next_texture'):
+            glDeleteTextures([self.next_texture])
+            delattr(self, 'next_texture')
 
 
     def transform_to_gl_space(self, x, y, width, height):
@@ -70,22 +70,21 @@ class OptimizedRenderer:
         return texture
 
     def update_image_textures(self, current_image, next_image):
-        """Update the current and next image textures."""
-        if not hasattr(self, 'current_texture'):
-            self.current_texture = self.create_texture(current_image)
-            self.next_texture = self.create_texture(next_image)
-        else:
-            # Update current image
-            glBindTexture(GL_TEXTURE_2D, self.current_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
-                        current_image.shape[1], current_image.shape[0],
-                        0, GL_RGB, GL_UNSIGNED_BYTE, current_image)
-            
-            # Update next image
-            glBindTexture(GL_TEXTURE_2D, self.next_texture)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
-                        next_image.shape[1], next_image.shape[0],
-                        0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
+        # Bind current texture before update to avoid state corruption
+        glBindTexture(GL_TEXTURE_2D, self.current_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+                    current_image.shape[1], current_image.shape[0],
+                    0, GL_RGB, GL_UNSIGNED_BYTE, current_image)
+        
+        # Explicitly unbind before switching
+        glBindTexture(GL_TEXTURE_2D, 0)
+        
+        # Bind next texture
+        glBindTexture(GL_TEXTURE_2D, self.next_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
+                    next_image.shape[1], next_image.shape[0],
+                    0, GL_RGB, GL_UNSIGNED_BYTE, next_image)
+        glBindTexture(GL_TEXTURE_2D, 0)
             
     def set_image_transform_uniforms(self, shader_program, width, height, current_index):
         """Calculate and set image transformation uniforms."""
@@ -399,8 +398,17 @@ class OptimizedRenderer:
         # Calculate transition timings
         total_images = len(self.image_processor.image_data)
         cycle_position = (current_time % (cycle_duration * total_images)) / cycle_duration
+        # Validate image data before use
+        if not self.image_processor.image_data:
+            return
+            
         current_index = int(cycle_position)
         next_index = (current_index + 1) % total_images
+        
+        # Validate indices
+        if (current_index >= len(self.image_processor.image_data) or 
+            next_index >= len(self.image_processor.image_data)):
+            return
         transition_progress = cycle_position - current_index
         
         self.logger.debug(f"Slideshow status: {current_index}->{next_index} ({transition_progress:.2f})")
