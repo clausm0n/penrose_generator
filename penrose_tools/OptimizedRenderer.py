@@ -537,9 +537,62 @@ class OptimizedRenderer:
         loc = glGetUniformLocation(shader_program, 'texture_height')
         if loc != -1:
             glUniform1i(loc, self.texture_dimensions[1])
+    
+    def setup_fade_buffers(self):
+        """Set up framebuffers and fullscreen quad for fade transitions."""
+        # Create framebuffer and texture for main rendering
+        self.main_framebuffer = glGenFramebuffers(1)
+        self.main_texture = glGenTextures(1)
+        
+        # Create fullscreen quad for fade effect
+        self.fade_vao = glGenVertexArrays(1)
+        self.fade_vbo = glGenBuffers(1)
+        
+        # Fullscreen quad vertices
+        quad_vertices = np.array([
+            -1.0, -1.0,
+            1.0, -1.0,
+            -1.0,  1.0,
+            1.0,  1.0,
+        ], dtype=np.float32)
+        
+        # Set up fade VAO
+        glBindVertexArray(self.fade_vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.fade_vbo)
+        glBufferData(GL_ARRAY_BUFFER, quad_vertices.nbytes, quad_vertices, GL_STATIC_DRAW)
+        
+        # Position attribute
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, None)
+        
+        glBindVertexArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def resize_framebuffers(self, width, height):
+        """Resize the framebuffers when the window size changes."""
+        # Configure main texture
+        glBindTexture(GL_TEXTURE_2D, self.main_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        
+        # Attach to framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, self.main_framebuffer)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.main_texture, 0)
+        
+        # Check framebuffer status
+        if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError("Framebuffer is not complete!")
+            
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling with fade transitions."""
+        # Ensure framebuffers are set up
+        if not hasattr(self, 'main_framebuffer'):
+            self.setup_fade_buffers()
+            self.resize_framebuffers(width, height)
+        
         # Calculate cache key
         cache_key = (
             tuple(config_data['gamma']),
@@ -550,7 +603,6 @@ class OptimizedRenderer:
         
         # Initialize buffers if needed
         if not hasattr(self, 'indices_array') or cache_key not in self.tile_cache:
-            # Set up initial buffers without fade transition for first render
             if not hasattr(self, 'indices_array'):
                 self.logger.info("Initializing buffers for first render")
                 tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
@@ -559,7 +611,6 @@ class OptimizedRenderer:
                 self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
                 self.setup_buffers(tiles, width, height, config_data['scale'])
                 self.get_shader_locations()
-            # Start fade transition for subsequent cache updates
             elif not self.is_fading:
                 self.start_fade_transition(lambda: self.handle_cache_update(cache_key, config_data, width, height))
                 self.logger.info("Starting fade transition for cache update")
@@ -572,11 +623,11 @@ class OptimizedRenderer:
         # Get current fade amount
         fade_amount = self.update_fade()
         
-        # Enable blending
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        # Render main content to framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, self.main_framebuffer)
+        glClear(GL_COLOR_BUFFER_BIT)
         
-        # First render the current state
+        # Render normal content
         shader_program = self.shader_manager.current_shader_program()
         glUseProgram(shader_program)
         
@@ -590,27 +641,40 @@ class OptimizedRenderer:
         else:
             self.set_standard_uniforms(shader_program, config_data)
         
-        # Draw base layer
+        # Draw main content
         glBindVertexArray(self.vao)
         glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
         
-        # If fading, render the fade effect on top
-        if fade_amount > 0:
-            # Use transition shader
-            shader_program = self.shader_manager.get_transition_shader()
-            glUseProgram(shader_program)
-            
-            # Set transition uniforms
-            loc = glGetUniformLocation(shader_program, 'fade_amount')
-            if loc != -1:
-                glUniform1f(loc, fade_amount)
-                
-            # Set other standard uniforms
-            self.set_standard_uniforms(shader_program, config_data)
-            
-            # Draw fade layer
-            glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+        # Switch back to default framebuffer for final render
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glClear(GL_COLOR_BUFFER_BIT)
         
+        # Enable blending for fade effect
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Use fade shader to render the final result
+        shader_program = self.shader_manager.get_transition_shader()
+        glUseProgram(shader_program)
+        
+        # Bind main texture
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.main_texture)
+        
+        # Set uniforms
+        loc = glGetUniformLocation(shader_program, 'screen_texture')
+        if loc != -1:
+            glUniform1i(loc, 0)
+            
+        loc = glGetUniformLocation(shader_program, 'fade_amount')
+        if loc != -1:
+            glUniform1f(loc, fade_amount)
+        
+        # Draw fullscreen quad with fade effect
+        glBindVertexArray(self.fade_vao)
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+        
+        # Cleanup
         glBindVertexArray(0)
         glUseProgram(0)
 
@@ -654,6 +718,14 @@ def __del__(self):
             glDeleteTextures([self.current_texture])
         if hasattr(self, 'next_texture'):
             glDeleteTextures([self.next_texture])
+        if hasattr(self, 'main_texture'):
+            glDeleteTextures([self.main_texture])
+        if hasattr(self, 'main_framebuffer'):
+            glDeleteFramebuffers(1, [self.main_framebuffer])
+        if hasattr(self, 'fade_vao'):
+            glDeleteVertexArrays(1, [self.fade_vao])
+        if hasattr(self, 'fade_vbo'):
+            glDeleteBuffers(1, [self.fade_vbo])
         if hasattr(self, 'vao'):
             glDeleteVertexArrays(1, [self.vao])
         if hasattr(self, 'vbo'):
