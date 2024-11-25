@@ -14,7 +14,7 @@ void main() {
     // Oscillate angle between 30 and 60 degrees
     float baseAngle = 0.523599; // 30 degrees
     float angleRange = 0.823599; // 30 degrees
-    float angleSpeed = 0.1;
+    float angleSpeed = 0.3;
     float currentAngle = baseAngle + angleRange * sin(time * angleSpeed);
     
     // Rotate coordinates
@@ -24,14 +24,14 @@ void main() {
     float speedRange = 1.0;
     float baseSpeed = 0.7;
     float currentSpeed = baseSpeed + speedRange * cos(time * angleSpeed);
-    float wave = sin(rotatedX * 2.0 + time * currentSpeed);
+    float wave = sin(rotatedX * 4.0 + time * currentSpeed);
     
     // Softer transition between colors
-    wave = (wave + 1.0) * 0.1;  // Normalize to 0-1
-    wave = smoothstep(0.2, 0.4, wave);  // Wider blend range
+    wave = (wave + 1.0) * 0.5;  // Normalize to 0-1
+    wave = smoothstep(0.2, 0.8, wave);  // Wider blend range
     
     // Add subtle variation based on tile type
-    wave = mix(wave, wave + v_tile_type * 0.1, 0.5);
+    wave = mix(wave, wave + v_tile_type * 0.1, 0.3);
     
     vec3 finalColor = mix(color1, color2, wave);
     fragColor = vec4(finalColor, 1.0);
