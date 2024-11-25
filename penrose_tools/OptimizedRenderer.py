@@ -28,7 +28,7 @@ class OptimizedRenderer:
         self.is_transitioning = False
         self.is_fading = False
         self.fade_start_time = 0
-        self.fade_duration = 1.5  # seconds
+        self.fade_duration = 2.5  # seconds
         self.fade_callback = None
         
         # Verify we have a valid OpenGL context before creating shader manager
