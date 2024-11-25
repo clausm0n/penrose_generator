@@ -623,7 +623,7 @@ class OptimizedRenderer:
         # Get current fade amount
         fade_amount = self.update_fade()
         
-        # Render main content to framebuffer
+        # First pass: Render main content to framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, self.main_framebuffer)
         glClear(GL_COLOR_BUFFER_BIT)
         
@@ -648,37 +648,57 @@ class OptimizedRenderer:
         # Draw main content
         glBindVertexArray(self.vao)
         glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+        glBindVertexArray(0)
+        glUseProgram(0)
         
-        # Switch back to default framebuffer for final render
+        # Second pass: Render to screen
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         glClear(GL_COLOR_BUFFER_BIT)
         
-        # Enable blending for fade effect
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        # Use fade shader for the final pass
-        fade_shader = self.shader_manager.get_transition_shader()
-        if fade_shader is None:
-            self.logger.error("No valid fade shader available")
-            return
+        if fade_amount > 0:
+            # During fade transition
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
-        glUseProgram(fade_shader)
+            fade_shader = self.shader_manager.get_transition_shader()
+            if fade_shader is None:
+                self.logger.error("No valid fade shader available")
+                return
+                
+            glUseProgram(fade_shader)
+            
+            # Set uniforms
+            loc = glGetUniformLocation(fade_shader, 'screen_texture')
+            if loc != -1:
+                glUniform1i(loc, 0)
+                
+            loc = glGetUniformLocation(fade_shader, 'fade_amount')
+            if loc != -1:
+                glUniform1f(loc, fade_amount)
+        else:
+            # Normal rendering
+            glDisable(GL_BLEND)
+            shader_program = self.shader_manager.get_transition_shader()
+            if shader_program is None:
+                self.logger.error("No valid shader program available")
+                return
+                
+            glUseProgram(shader_program)
+            
+            # Set uniforms for normal pass
+            loc = glGetUniformLocation(shader_program, 'screen_texture')
+            if loc != -1:
+                glUniform1i(loc, 0)
+                
+            loc = glGetUniformLocation(shader_program, 'fade_amount')
+            if loc != -1:
+                glUniform1f(loc, 0.0)
         
-        # Bind main texture
+        # Bind the main texture in both cases
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.main_texture)
         
-        # Set uniforms
-        loc = glGetUniformLocation(fade_shader, 'screen_texture')
-        if loc != -1:
-            glUniform1i(loc, 0)
-            
-        loc = glGetUniformLocation(fade_shader, 'fade_amount')
-        if loc != -1:
-            glUniform1f(loc, fade_amount)
-        
-        # Draw fullscreen quad with fade effect
+        # Draw fullscreen quad
         glBindVertexArray(self.fade_vao)
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
         
