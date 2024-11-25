@@ -32,11 +32,32 @@ class ShaderManager:
         self.check_opengl_context()
         
         # Load shaders
+        self.transition_shader = None
         self.load_shaders()
+        self.load_transition_shader()
         
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully.")
             raise RuntimeError("Failed to load any shader programs")
+    
+    def load_transition_shader(self):
+        """Load the transition shader separate from cycling shaders."""
+        try:
+            vert_path = os.path.join(self.shaders_folder, 'fade.vert')
+            frag_path = os.path.join(self.shaders_folder, 'fade.frag')
+            
+            if not os.path.exists(vert_path) or not os.path.exists(frag_path):
+                self.logger.error("Transition shader files not found")
+                return
+                
+            self.transition_shader = self.compile_shader_program(vert_path, frag_path)
+            self.logger.info("Successfully loaded transition shader")
+        except Exception as e:
+            self.logger.error(f"Error loading transition shader: {e}")
+
+    def get_transition_shader(self):
+        """Get the transition shader program."""
+        return self.transition_shader
 
     def compile_shader(self, source, shader_type, name):
         """Compile a shader with detailed error checking."""
@@ -243,6 +264,8 @@ class ShaderManager:
     def __del__(self):
         """Clean up shader programs when the manager is destroyed."""
         if glfw.get_current_context():
+            if self.transition_shader:
+                glDeleteProgram(self.transition_shader)
             for program in self.shader_programs:
                 if program:
                     glDeleteProgram(program)
