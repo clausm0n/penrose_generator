@@ -22,7 +22,7 @@ void main() {
     
     // Smoother wave pattern with dynamic speed
     float speedRange = 1.0;
-    float baseSpeed = 0.1;
+    float baseSpeed = 0.7;
     float currentSpeed = baseSpeed + speedRange * cos(time * angleSpeed);
     float wave = sin(rotatedX * 2.0 + time * currentSpeed);
     
