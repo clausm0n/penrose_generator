@@ -18,7 +18,7 @@ void main() {
     float time_ms = time * 1000.0;
     
     // Wave parameters
-    float wave_speed = 0.000012;
+    float wave_speed = 0.001012;
     float wave_length = 1.0;
     float base_direction = 3.14159 / 4.0;  // pi/4
     float direction_change = 3.14159 / 2.0; // pi/2
