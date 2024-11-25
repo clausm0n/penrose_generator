@@ -11,24 +11,18 @@ uniform float time;
 out vec4 fragColor;
 
 void main() {
-    // Multiple overlapping waves
-    float wave1 = sin(v_centroid.x * 4.0 + time * 2.0) * 0.5;
-    float wave2 = sin(v_centroid.y * 4.0 + time * 1.5) * 0.5;
-    float wave3 = sin((v_centroid.x + v_centroid.y) * 3.0 + time) * 0.5;
+    // Calculate angle for diagonal waves
+    float angle = 0.785398; // 45 degrees in radians
+    float rotatedX = v_centroid.x * cos(angle) - v_centroid.y * sin(angle);
     
-    // Combine waves with different weights
-    float combinedWave = wave1 * 0.4 + wave2 * 0.4 + wave3 * 0.2;
+    // Create diagonal bands with sharp transitions
+    float wave = sin(rotatedX * 6.0 + time * 1.5);
+    wave = smoothstep(-0.2, 0.2, wave);
     
-    // Add tile-based variation
-    float tileOffset = v_tile_type * 0.2;
-    combinedWave += tileOffset;
+    // Add subtle variation based on tile type
+    wave += v_tile_type * 0.1;
     
-    // Sharpen the transition between colors
-    float sharpness = 4.0;
-    float finalWave = pow(0.5 * (combinedWave + 1.0), sharpness);
-    
-    // Interpolate between colors
-    vec3 finalColor = mix(color1, color2, finalWave);
-    
+    // Mix colors
+    vec3 finalColor = mix(color1, color2, wave);
     fragColor = vec4(finalColor, 1.0);
 }
