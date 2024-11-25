@@ -11,21 +11,26 @@ uniform float time;
 out vec4 fragColor;
 
 void main() {
-    float baseAngle = 0.523599;
-    float angleRange = 0.823599;
+    // Oscillate angle between 30 and 60 degrees
+    float baseAngle = 0.523599; // 30 degrees
+    float angleRange = 0.823599; // 30 degrees
     float angleSpeed = 0.1;
     float currentAngle = baseAngle + angleRange * sin(time * angleSpeed);
     
+    // Rotate coordinates
     float rotatedX = v_centroid.x * cos(currentAngle) - v_centroid.y * sin(currentAngle);
     
+    // Smoother wave pattern with dynamic speed
     float speedRange = 1.0;
-    float baseSpeed = 0.1;  // Fixed the double equals
+    float baseSpeed = 0.1;
     float currentSpeed = baseSpeed + speedRange * cos(time * angleSpeed);
     float wave = sin(rotatedX * 2.0 + time * currentSpeed);
     
-    wave = (wave + 1.0) * 0.1;
-    wave = smoothstep(0.2, 0.4, wave);
+    // Softer transition between colors
+    wave = (wave + 1.0) * 0.1;  // Normalize to 0-1
+    wave = smoothstep(0.2, 0.4, wave);  // Wider blend range
     
+    // Add subtle variation based on tile type
     wave = mix(wave, wave + v_tile_type * 0.1, 0.5);
     
     vec3 finalColor = mix(color1, color2, wave);
