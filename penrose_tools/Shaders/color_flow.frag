@@ -11,18 +11,28 @@ uniform float time;
 out vec4 fragColor;
 
 void main() {
-    // Calculate angle for diagonal waves
-    float angle = 0.785398; // 45 degrees in radians
-    float rotatedX = v_centroid.x * cos(angle) - v_centroid.y * sin(angle);
+    // Oscillate angle between 30 and 60 degrees
+    float baseAngle = 0.523599; // 30 degrees
+    float angleRange = 0.523599; // 30 degrees
+    float angleSpeed = 0.5;
+    float currentAngle = baseAngle + angleRange * sin(time * angleSpeed);
     
-    // Create diagonal bands with sharp transitions
-    float wave = sin(rotatedX * 6.0 + time * 1.5);
-    wave = smoothstep(-0.2, 0.2, wave);
+    // Rotate coordinates
+    float rotatedX = v_centroid.x * cos(currentAngle) - v_centroid.y * sin(currentAngle);
+    
+    // Smoother wave pattern with dynamic speed
+    float speedRange = 2.0;
+    float baseSpeed = 1.0;
+    float currentSpeed = baseSpeed + speedRange * cos(time * angleSpeed);
+    float wave = sin(rotatedX * 4.0 + time * currentSpeed);
+    
+    // Softer transition between colors
+    wave = (wave + 1.0) * 0.5;  // Normalize to 0-1
+    wave = smoothstep(0.2, 0.8, wave);  // Wider blend range
     
     // Add subtle variation based on tile type
-    wave += v_tile_type * 0.1;
+    wave = mix(wave, wave + v_tile_type * 0.1, 0.3);
     
-    // Mix colors
     vec3 finalColor = mix(color1, color2, wave);
     fragColor = vec4(finalColor, 1.0);
 }
