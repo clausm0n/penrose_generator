@@ -12,7 +12,9 @@ import signal
 import argparse
 import asyncio
 from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event
-
+from threading import Timer
+import random
+import time
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
@@ -20,7 +22,9 @@ DEFAULT_CONFIG = {
     'scale': 15,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
     'color1': [205, 255, 255],
-    'color2': [0, 0, 255]
+    'color2': [0, 0, 255],
+    'cycle' : [False,False,False],
+    'timer' : 0
 }
 
 op = Operations()
@@ -32,6 +36,68 @@ height = 0
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
 
+class CycleManager:
+    def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event):
+        self.config_path = config_path
+        self.update_event = update_event
+        self.toggle_shader_event = toggle_shader_event
+        self.randomize_colors_event = randomize_colors_event
+        self.timer_thread = None
+        self.running = True
+        
+    def randomize_gamma(self):
+        config = configparser.ConfigParser()
+        config.read(self.config_path)
+        new_gamma = [random.uniform(-1.0, 1.0) for _ in range(5)]
+        config['Settings']['gamma'] = ', '.join(map(str, new_gamma))
+        with open(self.config_path, 'w') as configfile:
+            config.write(configfile)
+        self.update_event.set()
+
+    def check_cycles(self):
+        while self.running:
+            try:
+                config = configparser.ConfigParser()
+                config.read(self.config_path)
+                cycle_str = config['Settings'].get('cycle', '[False, False, False]')
+                timer_str = config['Settings'].get('timer', '30')
+                
+                # Parse cycle settings
+                cycle = eval(cycle_str)  # Safely evaluate string to list
+                timer = int(timer_str)
+                
+                if any(cycle):  # If any cycle is enabled
+                    if cycle[0]:  # Cycle Effects
+                        self.toggle_shader_event.set()
+                    
+                    if cycle[1]:  # Randomize Gamma
+                        self.randomize_gamma()
+                    
+                    if cycle[2]:  # Cycle Colors
+                        self.randomize_colors_event.set()
+                    
+                    # Add offset to prevent all events happening at once
+                    base_sleep = timer
+                    if cycle[1]:  # Gamma offset
+                        base_sleep += 1
+                    if cycle[2]:  # Colors offset
+                        base_sleep += 2
+                
+                time.sleep(max(timer, 5))  # Minimum 5 second delay
+                
+            except Exception as e:
+                logger.error(f"Error in cycle check: {e}")
+                time.sleep(5)  # Wait before retry on error
+
+    def start(self):
+        self.timer_thread = Thread(target=self.check_cycles, daemon=True)
+        self.timer_thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.timer_thread:
+            self.timer_thread.join()
+
 def initialize_config(path):
     if not os.path.isfile(path):
         print("Config file not found. Creating a new one...")
@@ -41,7 +107,9 @@ def initialize_config(path):
             'scale': str(DEFAULT_CONFIG['scale']),
             'gamma': ', '.join(map(str, DEFAULT_CONFIG['gamma'])),
             'color1': ', '.join(map(str, DEFAULT_CONFIG['color1'])),
-            'color2': ', '.join(map(str, DEFAULT_CONFIG['color2']))
+            'color2': ', '.join(map(str, DEFAULT_CONFIG['color2'])),
+            'cycle': ', '.join(map(str, DEFAULT_CONFIG['cycle'])),
+            'timer': str(DEFAULT_CONFIG['timer'])
         }
         with open(path, 'w') as configfile:
             config.write(configfile)
@@ -143,6 +211,9 @@ def main():
 
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(renderer.shader_manager)
+            
+            cycle_manager = CycleManager(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event)
+            cycle_manager.start()
 
             renderer.render_tiles(width, height, config_data)
             glfw.swap_buffers(window)
@@ -157,6 +228,7 @@ def main():
         raise
     finally:
         glfw.terminate()
+        cycle_manager.stop()
         shutdown_event.set()
         logger.info("Application has been terminated.")
 
