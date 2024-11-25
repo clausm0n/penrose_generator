@@ -377,53 +377,43 @@ class OptimizedRenderer:
             glUniform1f(loc, current_time)
 
     def handle_pixelation_slideshow(self, shader_program, width, height, cache_key):
-        """Handle pixelation slideshow shader setup."""
         current_time = glfw.get_time() * 1000.0
         transition_duration = 5000.0
         cycle_duration = 10000.0
         
-        # Initialize image processor if needed
+        # Initialize image processor
         if not hasattr(self, 'image_processor'):
             from .Effects import Effects
             self.image_processor = Effects()
             self.image_processor.load_images_from_folder()
             if self.image_processor.image_files:
                 self.image_processor.load_and_process_images(self.tile_cache[cache_key])
-                self.logger.debug(f"Loaded {len(self.image_processor.image_files)} images")
+                
+                # Create initial textures when loading images
+                if not hasattr(self, 'current_texture'):
+                    self.current_texture = self.create_texture(self.image_processor.image_data[0])
+                    self.next_texture = self.create_texture(self.image_processor.image_data[1 % len(self.image_processor.image_data)])
         
         if not hasattr(self, 'image_processor') or not self.image_processor.image_data:
-            self.logger.warning("No images available for slideshow")
-            return
-        
-        # Calculate transition timings
-        total_images = len(self.image_processor.image_data)
-        cycle_position = (current_time % (cycle_duration * total_images)) / cycle_duration
-        # Validate image data before use
-        if not self.image_processor.image_data:
             return
             
+        total_images = len(self.image_processor.image_data)
+        cycle_position = (current_time % (cycle_duration * total_images)) / cycle_duration
         current_index = int(cycle_position)
         next_index = (current_index + 1) % total_images
         
-        # Validate indices
-        if (current_index >= len(self.image_processor.image_data) or 
-            next_index >= len(self.image_processor.image_data)):
+        if current_index >= len(self.image_processor.image_data) or next_index >= len(self.image_processor.image_data):
             return
+            
         transition_progress = cycle_position - current_index
         
-        self.logger.debug(f"Slideshow status: {current_index}->{next_index} ({transition_progress:.2f})")
-        
         try:
-            # Update textures
             self.update_image_textures(
                 self.image_processor.image_data[current_index],
                 self.image_processor.image_data[next_index]
             )
             
-            # Set transformation uniforms
             self.set_image_transform_uniforms(shader_program, width, height, current_index)
-            
-            # Set texture uniforms
             self.set_texture_uniforms(shader_program, transition_progress)
             
         except Exception as e:
