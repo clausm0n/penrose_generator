@@ -57,15 +57,20 @@ class OptimizedRenderer:
         elapsed = current_time - self.fade_start_time
         fade_progress = elapsed / self.fade_duration
         
-        if fade_progress >= 2.0:  # Complete fade out and in
-            self.is_fading = False
-            if self.fade_callback:
-                self.fade_callback()
-                self.fade_callback = None
-            return 0.0
+        # Split the transition into two phases:
+        # 0.0 -> 1.0: Fade out
+        # 1.0 -> 2.0: Fade in
+        if fade_progress >= 1.0 and fade_progress < 1.1 and self.fade_callback:
+            # Execute callback during the black screen
+            self.fade_callback()
+            self.fade_callback = None
             
-        # Return fade amount (0->1->0)
-        return 1.0 - abs(1.0 - fade_progress) if fade_progress <= 2.0 else 0.0
+        if fade_progress >= 2.0:
+            self.is_fading = False
+            return 0.0
+        
+        # Return 0->1 for fade out, 1->0 for fade in
+        return min(fade_progress, 2.0 - fade_progress)
 
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache and textures."""
@@ -585,6 +590,21 @@ class OptimizedRenderer:
             raise RuntimeError("Framebuffer is not complete!")
             
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    
+    def perform_updates(self, cache_key, config_data, width, height):
+        """Perform all necessary updates at once during the black screen."""
+        if self.current_shader_index != self.shader_manager.current_shader_index:
+            self.current_shader_index = self.shader_manager.current_shader_index
+            self.force_refresh()
+            self.logger.info("Shader changed, forcing buffer refresh")
+        
+        if cache_key not in self.tile_cache:
+            tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+            op.calculate_neighbors(tiles)
+            self.tile_cache[cache_key] = tiles
+            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
+            self.setup_buffers(tiles, width, height, config_data['scale'])
+            self.get_shader_locations()
 
     def render_tiles(self, width, height, config_data):
         """Render the Penrose tiling with fade transitions."""
@@ -602,28 +622,24 @@ class OptimizedRenderer:
         )
         
         # Initialize buffers if needed
-        if not hasattr(self, 'indices_array') or cache_key not in self.tile_cache:
-            if not hasattr(self, 'indices_array'):
-                self.logger.info("Initializing buffers for first render")
-                tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-                op.calculate_neighbors(tiles)
-                self.tile_cache[cache_key] = tiles
-                self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
-                self.setup_buffers(tiles, width, height, config_data['scale'])
-                self.get_shader_locations()
-            elif not self.is_fading:
-                self.start_fade_transition(lambda: self.handle_cache_update(cache_key, config_data, width, height))
-                self.logger.info("Starting fade transition for cache update")
-        
-        # Check for shader changes
-        if self.current_shader_index != self.shader_manager.current_shader_index and not self.is_fading:
-            self.start_fade_transition(lambda: self.handle_shader_change())
-            self.logger.info("Starting fade transition for shader change")
-        
+        if not hasattr(self, 'indices_array'):
+            self.logger.info("Initializing buffers for first render")
+            tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
+            op.calculate_neighbors(tiles)
+            self.tile_cache[cache_key] = tiles
+            self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
+            self.setup_buffers(tiles, width, height, config_data['scale'])
+            self.get_shader_locations()
+        elif not self.is_fading and (cache_key not in self.tile_cache or 
+            self.current_shader_index != self.shader_manager.current_shader_index):
+            # Start fade transition for any updates
+            self.start_fade_transition(lambda: self.perform_updates(cache_key, config_data, width, height))
+            return  # Skip rendering this frame
+
         # Get current fade amount
         fade_amount = self.update_fade()
         
-        # First pass: Render main content to framebuffer
+        # Render main content to framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, self.main_framebuffer)
         glClear(GL_COLOR_BUFFER_BIT)
         
@@ -651,52 +667,32 @@ class OptimizedRenderer:
         glBindVertexArray(0)
         glUseProgram(0)
         
-        # Second pass: Render to screen
+        # Render to screen with fade effect
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         glClear(GL_COLOR_BUFFER_BIT)
         
-        if fade_amount > 0:
-            # During fade transition
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            
-            fade_shader = self.shader_manager.get_transition_shader()
-            if fade_shader is None:
-                self.logger.error("No valid fade shader available")
-                return
-                
-            glUseProgram(fade_shader)
-            
-            # Set uniforms
-            loc = glGetUniformLocation(fade_shader, 'screen_texture')
-            if loc != -1:
-                glUniform1i(loc, 0)
-                
-            loc = glGetUniformLocation(fade_shader, 'fade_amount')
-            if loc != -1:
-                glUniform1f(loc, fade_amount)
-        else:
-            # Normal rendering
-            glDisable(GL_BLEND)
-            shader_program = self.shader_manager.get_transition_shader()
-            if shader_program is None:
-                self.logger.error("No valid shader program available")
-                return
-                
-            glUseProgram(shader_program)
-            
-            # Set uniforms for normal pass
-            loc = glGetUniformLocation(shader_program, 'screen_texture')
-            if loc != -1:
-                glUniform1i(loc, 0)
-                
-            loc = glGetUniformLocation(shader_program, 'fade_amount')
-            if loc != -1:
-                glUniform1f(loc, 0.0)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        # Bind the main texture in both cases
+        fade_shader = self.shader_manager.get_transition_shader()
+        if fade_shader is None:
+            self.logger.error("No valid fade shader available")
+            return
+            
+        glUseProgram(fade_shader)
+        
+        # Bind main texture
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.main_texture)
+        
+        # Set uniforms
+        loc = glGetUniformLocation(fade_shader, 'screen_texture')
+        if loc != -1:
+            glUniform1i(loc, 0)
+            
+        loc = glGetUniformLocation(fade_shader, 'fade_amount')
+        if loc != -1:
+            glUniform1f(loc, fade_amount)
         
         # Draw fullscreen quad
         glBindVertexArray(self.fade_vao)
