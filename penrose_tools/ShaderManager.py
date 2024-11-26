@@ -5,6 +5,7 @@ from OpenGL.GL import *
 from OpenGL.GL import shaders
 import logging
 import glfw
+import configparser
 
 class ShaderManager:
     def __init__(self, shaders_folder='Shaders'):
@@ -256,11 +257,32 @@ class ShaderManager:
         if not self.shader_programs:
             self.logger.warning("No shader programs available to switch to")
             return self.current_shader_index
+
+        # Read config to get shader settings
+        config = configparser.ConfigParser()
+        config.read('config.ini')
+        
+        try:
+            shader_settings = eval(config['Settings'].get('shader_settings', '{}'))
+        except:
+            shader_settings = {}  # Default to empty dict if setting doesn't exist
             
-        old_index = self.current_shader_index
-        self.current_shader_index = (self.current_shader_index + 1) % len(self.shader_programs)
-        self.logger.info(f"Switching shader from {old_index} to {self.current_shader_index}")
-        self.logger.info(f"Current shader: {self.shader_names[self.current_shader_index]}")
+        # Get list of enabled shaders
+        enabled_indices = [
+            i for i, name in enumerate(self.shader_names)
+            if shader_settings.get(name.replace('.vert', ''), True)  # Default to True if not specified
+        ]
+        
+        if not enabled_indices:
+            self.logger.warning("No shaders are enabled in settings")
+            return self.current_shader_index
+            
+        # Find the next enabled shader
+        current_enabled_index = enabled_indices.index(self.current_shader_index) if self.current_shader_index in enabled_indices else -1
+        next_enabled_index = (current_enabled_index + 1) % len(enabled_indices)
+        self.current_shader_index = enabled_indices[next_enabled_index]
+        
+        self.logger.info(f"Switching shader from {self.current_shader_index} to {self.shader_names[self.current_shader_index]}")
         return self.current_shader_index
 
     def current_shader_program(self):

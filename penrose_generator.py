@@ -24,7 +24,17 @@ DEFAULT_CONFIG = {
     'color1': [205, 255, 255],
     'color2': [0, 0, 255],
     'cycle' : [False,False,False],
-    'timer' : 0
+    'timer' : 0,
+    'shader_settings': {
+        'no_effect': True,
+        'shift_effect': True,
+        'color_wave': True,
+        'color_flow': True,
+        'region_blend': True,
+        'raindrop_ripple': True,
+        'koi_pond': True,
+        'pixelation_slideshow': True
+    }
 }
 
 op = Operations()
