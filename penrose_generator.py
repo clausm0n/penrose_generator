@@ -146,6 +146,8 @@ def setup_window(fullscreen=False):
         video_mode = glfw.get_video_mode(primary_monitor)
         width, height = video_mode.size.width, video_mode.size.height
         window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+        # Hide cursor in fullscreen mode
+        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
     else:
         width, height = 1280, 720
         window = glfw.create_window(width, height, "Penrose Tiling", None, None)
