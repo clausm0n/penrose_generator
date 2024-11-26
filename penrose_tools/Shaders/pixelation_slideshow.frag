@@ -19,7 +19,7 @@ vec4 sharpenSample(sampler2D tex, vec2 uv) {
     vec4 left = texture2D(tex, uv + vec2(-offset, 0.0));
     vec4 right = texture2D(tex, uv + vec2(offset, 0.0));
     
-    float strength = 1.5;
+    float strength = 1.0;
     return center * (1.0 + 4.0 * strength) - (up + down + left + right) * strength;
 }
 

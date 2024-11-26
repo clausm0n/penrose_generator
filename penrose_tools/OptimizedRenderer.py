@@ -388,8 +388,8 @@ class OptimizedRenderer:
     def handle_pixelation_slideshow(self, shader_program, width, height, cache_key):
         """Handle pixelation slideshow shader setup."""
         current_time = glfw.get_time() * 1000.0
-        transition_duration = 5000.0
-        cycle_duration = 10000.0
+        transition_duration = 8000.0
+        cycle_duration = 15000.0
         
         # Initialize image processor if needed
         if not hasattr(self, 'image_processor'):
