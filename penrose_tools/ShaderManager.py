@@ -355,13 +355,23 @@ class ShaderManager:
 
     def current_shader_program(self):
         """Get the currently active shader program."""
+        current_time = glfw.get_time()
+        
         # Initial black state
         if not self.reveal_triggered:
             return self.black_shader
             
         # During reveal animation
-        if self.reveal_start_time and (glfw.get_time() - self.reveal_start_time) < self.reveal_duration:
-            return self.curtain_shader
+        if self.reveal_start_time and (current_time - self.reveal_start_time) < self.reveal_duration:
+            # Set up the curtain shader with the correct time
+            program = self.curtain_shader
+            if program:
+                glUseProgram(program)
+                # Set the time uniform relative to when the reveal started
+                time_loc = glGetUniformLocation(program, 'time')
+                if time_loc != -1:
+                    glUniform1f(time_loc, current_time - self.reveal_start_time)
+            return program
             
         # Regular shader cycling
         if not self.shader_programs:
