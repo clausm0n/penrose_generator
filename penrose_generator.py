@@ -119,7 +119,8 @@ def initialize_config(path):
             'color1': ', '.join(map(str, DEFAULT_CONFIG['color1'])),
             'color2': ', '.join(map(str, DEFAULT_CONFIG['color2'])),
             'cycle': ', '.join(map(str, DEFAULT_CONFIG['cycle'])),
-            'timer': str(DEFAULT_CONFIG['timer'])
+            'timer': str(DEFAULT_CONFIG['timer']),
+            'shader_settings': str(DEFAULT_CONFIG['shader_settings'])  # Add shader settings to config
         }
         with open(path, 'w') as configfile:
             config.write(configfile)
