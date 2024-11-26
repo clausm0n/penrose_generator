@@ -1,15 +1,21 @@
 [Unit]
 Description=Penrose Generator Service
-After=network.target graphical.target
+After=network.target graphical.target display-manager.service
 Wants=network.target graphical.target
+# Add a delay to ensure X server is fully ready
+ExecStartPre=/bin/sleep 100
 
 [Service]
 Type=simple
 User=modus
 Group=modus
+# Add proper environment variables for X11
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/modus/.Xauthority
 Environment=HOME=/home/modus
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Add X11 permissions
+ExecStartPre=/bin/sh -c 'xhost +local:modus'
 WorkingDirectory=/home/modus/penrose_generator
 ExecStart=/home/modus/penrose_generator/start_penrose.sh
 Restart=always
