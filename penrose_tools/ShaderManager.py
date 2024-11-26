@@ -20,6 +20,10 @@ class ShaderManager:
         self.shader_names = []
         self.current_shader_index = 0
         self.logger = logging.getLogger('ShaderManager')
+        self.intro_played = False
+        self.intro_start_time = None
+        self.intro_duration = 1.5  # Duration in seconds, matching shader
+        self.intro_shader = None
         
         # Configure logging
         self.logger.setLevel(logging.DEBUG)
@@ -36,10 +40,34 @@ class ShaderManager:
         self.transition_shader = None
         self.load_shaders()
         self.load_transition_shader()
+
+        # Load intro shader
+        self.load_intro_shader()
         
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully.")
             raise RuntimeError("Failed to load any shader programs")
+    
+    def load_intro_shader(self):
+        """Load the special intro curtain shader."""
+        try:
+            vert_path = os.path.join(self.shaders_folder, 'curtain.vert')
+            frag_path = os.path.join(self.shaders_folder, 'curtain.frag')
+            
+            if not os.path.exists(vert_path) or not os.path.exists(frag_path):
+                self.logger.error("Intro shader files not found")
+                self.intro_shader = None
+                return
+                
+            self.intro_shader = self.compile_shader_program(vert_path, frag_path)
+            if self.intro_shader:
+                self.logger.info("Successfully loaded intro curtain shader")
+            else:
+                self.logger.error("Failed to compile intro curtain shader")
+                
+        except Exception as e:
+            self.logger.error(f"Error loading intro curtain shader: {e}")
+            self.intro_shader = None
     
     def load_transition_shader(self):
         """Load the transition shader separate from cycling shaders."""
@@ -254,6 +282,22 @@ class ShaderManager:
 
     def next_shader(self):
         """Switch to the next available shader program."""
+        current_time = glfw.get_time()
+        
+        # Handle first-time intro animation
+        if not self.intro_played:
+            self.intro_played = True
+            self.intro_start_time = current_time
+            return -1  # Special index to indicate intro shader
+            
+        # Check if we're still in intro animation
+        if self.intro_start_time and (current_time - self.intro_start_time) < self.intro_duration:
+            return -1  # Still in intro
+            
+        # Clear intro state after animation completes
+        if self.intro_start_time and (current_time - self.intro_start_time) >= self.intro_duration:
+            self.intro_start_time = None
+
         if not self.shader_programs:
             self.logger.warning("No shader programs available to switch to")
             return self.current_shader_index
@@ -287,6 +331,10 @@ class ShaderManager:
 
     def current_shader_program(self):
         """Get the currently active shader program."""
+        # Check if we're in intro animation
+        if self.intro_start_time and (glfw.get_time() - self.intro_start_time) < self.intro_duration:
+            return self.intro_shader
+            
         if not self.shader_programs:
             self.logger.error("No shader programs available")
             return None
@@ -294,6 +342,9 @@ class ShaderManager:
 
     def __del__(self):
         """Clean up shader programs when the manager is destroyed."""
+        if glfw.get_current_context():
+            if self.intro_shader:
+                glDeleteProgram(self.intro_shader)
         if glfw.get_current_context():
             if self.transition_shader:
                 glDeleteProgram(self.transition_shader)
