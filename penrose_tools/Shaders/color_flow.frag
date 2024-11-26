@@ -14,17 +14,17 @@ void main() {
     // Oscillate angle between 30 and 60 degrees
     float baseAngle = 0.123599; // 30 degrees
     float angleRange = 0.923599; // 30 degrees
-    float angleSpeed = 0.04;
+    float angleSpeed = 0.02;
     float currentAngle = baseAngle + angleRange * sin(time * angleSpeed);
     
     // Rotate coordinates
     float rotatedX = v_centroid.x * cos(currentAngle) - v_centroid.y * sin(currentAngle);
     
     // Smoother wave pattern with dynamic speed
-    float speedRange = 0.5;
+    float speedRange = 0.3;
     float baseSpeed = 0.1;
     float currentSpeed = baseSpeed + speedRange * cos(time * angleSpeed);
-    float wave = sin(rotatedX * 4.0 + time * currentSpeed);
+    float wave = sin(rotatedX * 3.0 + time * currentSpeed);
     
     // Softer transition between colors
     wave = (wave + 1.0) * 0.3;  // Normalize to 0-1
