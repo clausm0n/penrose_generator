@@ -12,6 +12,7 @@ const float TWEEN_DURATION = 1000000.0;
 // Inputs from vertex shader
 in float v_tile_type;
 in vec2 v_position;
+in float v_is_edge;
 
 // Output color
 out vec4 fragColor;
@@ -29,30 +30,23 @@ float atan2(float y, float x) {
 }
 
 void main() {
-    // Calculate the wave parameters
-    float ms_time = time * 1000.0;  // Convert to milliseconds
-    
-    // Calculate time factor exactly like Python version
+    // If this is an edge, render solid black.
+    if (v_is_edge > 0.5) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    // Normal color_wave logic
+    float ms_time = time * 1000.0;
     float time_factor = mod(ms_time, TWEEN_DURATION) / TWEEN_DURATION;
-    
-    // Calculate wave direction
     float wave_direction = BASE_DIRECTION + DIRECTION_CHANGE * sin(time_factor * PI);
-    
-    // Calculate position angle in radians
+
     float pos_angle = atan2(v_position.y, v_position.x);
     float position_magnitude = length(v_position);
-    
-    // Calculate directional influence exactly like Python
     float directional_influence = cos(pos_angle - wave_direction) * position_magnitude;
-    
-    // Calculate phase
     float phase = WAVE_SPEED * ms_time - directional_influence / WAVE_LENGTH;
-    
-    // Calculate wave intensity
     float wave_intensity = (sin(phase) + 1.0) * 0.5;
-    
-    // Interpolate between colors
+
     vec3 final_color = mix(color1, color2, wave_intensity);
-    
     fragColor = vec4(final_color, 1.0);
 }

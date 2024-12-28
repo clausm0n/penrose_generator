@@ -1,11 +1,24 @@
 # penrose_generator.py
+# Only export Bluetooth components if not in local mode
 import os
+if not os.environ.get('PENROSE_LOCAL_MODE'):
+    try:
+        from .PenroseBluetoothServer import run_bluetooth_server
+        __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
+                   'OptimizedRenderer', 'run_bluetooth_server']
+    except ImportError:
+        __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
+                   'OptimizedRenderer']
+else:
+    __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
+               'OptimizedRenderer']
+
 import numpy as np
 import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, Effects, OptimizedRenderer, run_server, run_bluetooth_server
+from penrose_tools import Operations, Tile, OptimizedRenderer, run_server
 import logging
 import configparser
 import signal
@@ -19,12 +32,12 @@ import time
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
     'size': 15,
-    'scale': 15,
+    'scale': 20,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
     'color1': [205, 255, 255],
     'color2': [0, 0, 255],
     'cycle' : [False,False,False],
-    'timer' : 0,
+    'timer' : 10,
     'shader_settings': {
         'no_effect': True,
         'shift_effect': True,
@@ -34,7 +47,8 @@ DEFAULT_CONFIG = {
         'raindrop_ripple': True,
         'koi_pond': True,
         'pixelation_slideshow': True
-    }
+    },
+    'vertex_offset': 0.0001
 }
 
 op = Operations()
@@ -113,18 +127,26 @@ def initialize_config(path):
         print("Config file not found. Creating a new one...")
         config = configparser.ConfigParser()
         config['Settings'] = {
-            'size': str(DEFAULT_CONFIG['size']),
-            'scale': str(DEFAULT_CONFIG['scale']),
+            'size': str(int(DEFAULT_CONFIG['size'])),  # Ensure size is integer
+            'scale': str(int(DEFAULT_CONFIG['scale'])),  # Convert scale to integer
             'gamma': ', '.join(map(str, DEFAULT_CONFIG['gamma'])),
             'color1': ', '.join(map(str, DEFAULT_CONFIG['color1'])),
             'color2': ', '.join(map(str, DEFAULT_CONFIG['color2'])),
             'cycle': ', '.join(map(str, DEFAULT_CONFIG['cycle'])),
             'timer': str(DEFAULT_CONFIG['timer']),
-            'shader_settings': str(DEFAULT_CONFIG['shader_settings'])  # Add shader settings to config
+            'shader_settings': str(DEFAULT_CONFIG['shader_settings']),
+            'vertex_offset': str(DEFAULT_CONFIG['vertex_offset'])
         }
         with open(path, 'w') as configfile:
             config.write(configfile)
-    return op.read_config_file(path)
+    
+    # Load config and ensure proper types
+    config_data = op.read_config_file(path)
+    if 'vertex_offset' not in config_data:
+        config_data['vertex_offset'] = DEFAULT_CONFIG['vertex_offset']
+    else:
+        config_data['vertex_offset'] = float(config_data['vertex_offset'])
+    return config_data
 
 config_data = initialize_config(CONFIG_PATH)
 tiles_cache = OrderedDict()
@@ -156,7 +178,17 @@ def setup_window(fullscreen=False):
         glfw.terminate()
         raise Exception("GLFW window can't be created")
     
+    # Register key callback
+    glfw.set_key_callback(window, key_callback)
+    
     glfw.make_context_current(window)
+    
+    # Enable MSAA (Multi-Sample Anti-Aliasing)
+    glfw.window_hint(glfw.SAMPLES, 4)
+    
+    # After creating the window:
+    glDisable(GL_MULTISAMPLE)
+    
     return window
 
 def update_toggles(shaders):
@@ -183,13 +215,88 @@ def update_toggles(shaders):
         running = False
         return False
 
+def key_callback(window, key, scancode, action, mods):
+    global config_data
+    if action == glfw.PRESS or action == glfw.REPEAT:
+        if key == glfw.KEY_ESCAPE:
+            glfw.set_window_should_close(window, True)
+        elif key == glfw.KEY_LEFT_BRACKET:  # Decrease vertex offset
+            config_data['vertex_offset'] = f"{max(-0.1, float(config_data['vertex_offset']) - 0.0003):.6f}"
+            op.update_config_file(CONFIG_PATH, **config_data)
+            logger.debug(f"Vertex offset decreased to {config_data['vertex_offset']}")
+            update_event.set()
+        elif key == glfw.KEY_RIGHT_BRACKET:  # Increase vertex offset
+            config_data['vertex_offset'] = f"{min(0.1, float(config_data['vertex_offset']) + 0.0003):.6f}"
+            op.update_config_file(CONFIG_PATH, **config_data)
+            logger.debug(f"Vertex offset increased to {config_data['vertex_offset']}")
+            update_event.set()
+    if action == glfw.PRESS:
+        if key == glfw.KEY_SPACE:
+            # Toggle shader effect
+            toggle_shader_event.set()
+        elif key == glfw.KEY_R:
+            # Randomize colors
+            randomize_colors_event.set()
+        elif key == glfw.KEY_G:
+            # Randomize gamma values
+            config_data['gamma'] = [random.uniform(-1.0, 1.0) for _ in range(5)]
+            op.update_config_file(CONFIG_PATH, **config_data)
+            update_event.set()
+        elif key == glfw.KEY_UP:
+            # Increase scale
+            config_data['scale'] = min(config_data['scale'] + 3, 60)  # Cap at 30
+            op.update_config_file(CONFIG_PATH, **config_data)
+            update_event.set()
+        elif key == glfw.KEY_DOWN:
+            # Decrease scale
+            config_data['scale'] = max(config_data['scale'] - 3, 30)  # Minimum of 5
+            op.update_config_file(CONFIG_PATH, **config_data)
+            update_event.set()
+        elif key in [glfw.KEY_1, glfw.KEY_2, glfw.KEY_3]:
+            # Ensure cycle exists in config_data
+            if 'cycle' not in config_data:
+                config_data['cycle'] = '[False, False, False]'
+            
+            # Convert string to list
+            try:
+                cycle_list = eval(config_data['cycle'])
+                if not isinstance(cycle_list, list) or len(cycle_list) != 3:
+                    cycle_list = [False, False, False]
+            except:
+                cycle_list = [False, False, False]
+            
+            # Toggle appropriate index
+            if key == glfw.KEY_1:
+                cycle_list[0] = not cycle_list[0]  # Effects cycle
+            elif key == glfw.KEY_2:
+                cycle_list[1] = not cycle_list[1]  # Gamma cycle
+            elif key == glfw.KEY_3:
+                cycle_list[2] = not cycle_list[2]  # Colors cycle
+            
+            # Update config
+            config_data['cycle'] = str(cycle_list)
+            op.update_config_file(CONFIG_PATH, **config_data)
+            update_event.set()
+            logger.info(f"Cycle settings updated to: {config_data['cycle']}")
+
 def main():
     global width, height, config_data
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
+    parser.add_argument('--local', action='store_true', help='Run in local mode without server components')
     args = parser.parse_args()
+
+    # Set environment variable for local mode
+    if args.local:
+        os.environ['PENROSE_LOCAL_MODE'] = '1'
+    
+    # Check if bluetooth was requested but not available
+    if args.bluetooth and not BLUETOOTH_AVAILABLE:
+        logger.warning("Bluetooth support not available. Running in local mode.")
+        args.local = True
+        args.bluetooth = False
 
     try:
         logger.info("Starting the penrose generator script.")
@@ -206,18 +313,22 @@ def main():
         # Initialize renderer after OpenGL context is created
         renderer = OptimizedRenderer()
         
-        if args.bluetooth:
-            server_thread = Thread(target=run_bluetooth_server, 
-                                args=(CONFIG_PATH, update_event, toggle_shader_event,
-                                     randomize_colors_event, shutdown_event),
-                                daemon=True)
+        # Initialize server only if not in local mode
+        if not args.local:
+            if args.bluetooth:
+                server_thread = Thread(target=run_bluetooth_server, 
+                                    args=(CONFIG_PATH, update_event, toggle_shader_event,
+                                         randomize_colors_event, shutdown_event),
+                                    daemon=True)
+            else:
+                server_thread = Thread(target=run_server, daemon=True)
+            
+            server_thread.start()
+            cycle_manager = CycleManager(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event)
+            cycle_manager.start()
+            logger.info(f"{'Bluetooth' if args.bluetooth else 'HTTP'} server started.")
         else:
-            server_thread = Thread(target=run_server, daemon=True)
-        
-        server_thread.start()
-        cycle_manager = CycleManager(CONFIG_PATH, update_event, toggle_shader_event, randomize_colors_event)
-        cycle_manager.start()
-        logger.info(f"{'Bluetooth' if args.bluetooth else 'HTTP'} server started.")
+            logger.info("Running in local mode - no server components initialized")
 
         last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:
@@ -240,7 +351,8 @@ def main():
         raise
     finally:
         glfw.terminate()
-        cycle_manager.stop()
+        if not args.local:
+            cycle_manager.stop()
         shutdown_event.set()
         logger.info("Application has been terminated.")
 

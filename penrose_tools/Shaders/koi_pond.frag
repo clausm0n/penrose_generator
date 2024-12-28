@@ -5,6 +5,7 @@
 in vec2 v_position;
 in float v_tile_type;
 in vec2 v_tile_centroid;
+in float v_is_edge;
 
 // Output
 out vec4 fragColor;
@@ -86,6 +87,12 @@ float calculateRipple(vec2 center, vec2 position, float time, float intensity) {
 }
 
 void main() {
+    // If this is an edge, render solid black.
+    if (v_is_edge > 0.5) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     vec3 finalColor = color1;
     Koi koi[MAX_KOI];
     

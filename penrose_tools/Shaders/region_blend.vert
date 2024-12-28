@@ -11,11 +11,13 @@ out float v_tile_type;
 out vec2 v_centroid;
 out float v_blend_factor;
 out float v_pattern_type;
+out float v_is_edge;
 
 // Uniforms
 uniform sampler2D pattern_texture;
 uniform int texture_width;
 uniform int texture_height;
+uniform float vertex_offset;
 
 vec2 find_pattern_data(vec2 center_pos) {
     vec2 tex_size = vec2(float(texture_width), float(texture_height));
@@ -49,11 +51,18 @@ vec2 find_pattern_data(vec2 center_pos) {
 }
 
 void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
+    vec2 direction = position - tile_centroid;
+    vec2 offset = normalize(direction) * vertex_offset;
+    gl_Position = vec4(position + offset, 0.0, 1.0);
+
     v_tile_type = tile_type;
     v_centroid = tile_centroid;
     
+    // Look up pattern data for region logic
     vec2 pattern_data = find_pattern_data(tile_centroid);
     v_pattern_type = pattern_data.x;
     v_blend_factor = pattern_data.y;
+
+    // Mark edges
+    v_is_edge = (tile_type == 0.0 && tile_centroid == vec2(0.0, 0.0)) ? 1.0 : 0.0;
 }

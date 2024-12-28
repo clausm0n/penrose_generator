@@ -30,8 +30,8 @@ class Tile:
         """Ensure all color values are within the legal RGB range."""
         return tuple(max(0, min(255, int(c))) for c in color)
     
-    def clamp_vertices(self, vertices, precision=3):
-        """Clamp vertices to a specified precision."""
+    def clamp_vertices(self, vertices, precision=12):
+        """Clamp vertices to a higher precision."""
         return [complex(round(v.real, precision), round(v.imag, precision)) for v in vertices]
     
     def calculate_angles(self):
@@ -54,9 +54,11 @@ class Tile:
         # Assuming specific angle criteria to differentiate kites and darts
         return all(angle < (2 * cmath.pi / 3) for angle in self.angles)  # Placeholder condition
 
-    def normalized_edge(self,vertex1, vertex2):
+    def normalized_edge(self, vertex1, vertex2):
         """Sort vertices based on their real parts first, and then imaginary parts if real parts are equal."""
-        return (vertex1, vertex2) if (vertex1.real, vertex1.imag) < (vertex2.real, vertex2.imag) else (vertex2, vertex1)
+        v1 = complex(round(vertex1.real, 8), round(vertex1.imag, 8))
+        v2 = complex(round(vertex2.real, 8), round(vertex2.imag, 8))
+        return (v1, v2) if (v1.real, v1.imag) < (v2.real, v2.imag) else (v2, v1)
     
     def edges(self):
         """ Generate normalized edges for better comparison efficiency. """

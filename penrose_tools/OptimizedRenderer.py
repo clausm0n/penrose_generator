@@ -6,6 +6,7 @@ import glfw
 from .Operations import Operations
 from .ShaderManager import ShaderManager
 import logging
+import time
 
 op = Operations()
 
@@ -33,6 +34,25 @@ class OptimizedRenderer:
         self.vbo = glGenBuffers(1)
         self.ebo = glGenBuffers(1)
 
+        # Enable line smoothing and proper blending
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Enable polygon smoothing
+        # glEnable(GL_POLYGON_SMOOTH)
+        # glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST)
+
+        # Enable polygon offset
+        glEnable(GL_POLYGON_OFFSET_FILL)
+        glPolygonOffset(-1.0, -1.0)  # Adjust these values if needed
+
+        # Configure multi-sampling
+        glEnable(GL_MULTISAMPLE)
+        # Request 8x MSAA
+        glfw.window_hint(glfw.SAMPLES, 8)
+
     def force_refresh(self):
         """Force a refresh of the buffers by clearing the tile cache and textures."""
         self.tile_cache.clear()
@@ -49,6 +69,9 @@ class OptimizedRenderer:
 
     def transform_to_gl_space(self, x, y, width, height):
         """Transform screen coordinates to OpenGL coordinate space."""
+        # Snap to pixel boundaries
+        x = round(x)
+        y = round(y)
         return (2.0 * x / width - 1.0, 1.0 - 2.0 * y / height)
     
     def create_texture(self, image_data):
@@ -158,74 +181,123 @@ class OptimizedRenderer:
         # Reset to texture unit 0
         glActiveTexture(GL_TEXTURE0)
 
-    def setup_buffers(self, tiles, width, height, scale_value):
-        """Set up vertex and element buffers for rendering."""
-        vertices = []
-        indices = []
-        offset = 0
+    def setup_buffers(self, tiles, edge_map, width, height, scale_value):
+        """
+        Set up separate buffers for fills (triangles) and edges (lines).
+        Modified to shrink edges slightly to avoid black overdraw at star-vertices.
+        """
+        # ------------ 1) Build Fill Buffers (unchanged) ------------
+        fill_vertices = []
+        fill_indices = []
+        vertex_offset = 0
         center = complex(width / 2, height / 2)
 
-        # Process each tile
         for tile in tiles:
-            screen_verts = op.to_canvas(tile.vertices, scale_value, center, 3)
-            transformed_verts = [self.transform_to_gl_space(x, y, width, height) 
-                            for x, y in screen_verts]
+            # Transform tile vertices to screen->GL space
+            screen_verts = op.to_canvas(tile.vertices, scale_value, center, shrink_factor=1.0)
+            transformed_verts = [
+                self.transform_to_gl_space(x, y, width, height)
+                for (x, y) in screen_verts
+            ]
 
             centroid = sum(tile.vertices) / len(tile.vertices)
-            screen_centroid = op.to_canvas([centroid], scale_value, center, 3)[0]
+            screen_centroid = op.to_canvas([centroid], scale_value, center, 1.0)[0]
             gl_centroid = self.transform_to_gl_space(screen_centroid[0], screen_centroid[1], width, height)
 
             for vert in transformed_verts:
-                vertices.extend([
-                    vert[0], vert[1],          # position
-                    1.0 if tile.is_kite else 0.0,  # tile_type
+                fill_vertices.extend([
+                    vert[0], vert[1],               # position
+                    1.0 if tile.is_kite else 0.0,   # tile_type
                     gl_centroid[0], gl_centroid[1]  # centroid
                 ])
 
-            num_verts = len(transformed_verts)
-            for i in range(1, num_verts - 1):
-                indices.extend([offset, offset + i, offset + i + 1])
+            # Triangulate
+            n = len(transformed_verts)
+            for i in range(1, n - 1):
+                fill_indices.extend([vertex_offset, vertex_offset + i, vertex_offset + i + 1])
+            vertex_offset += n
 
-            offset += num_verts
+        self.vertices_array = np.array(fill_vertices, dtype=np.float32)
+        self.fill_indices_array = np.array(fill_indices, dtype=np.uint32)
 
-        self.vertices_array = np.array(vertices, dtype=np.float32)
-        self.indices_array = np.array(indices, dtype=np.uint32)
-
-        # First bind the VAO
         glBindVertexArray(self.vao)
-
-        # Then bind and set up the VBO
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, 
-                    self.vertices_array, GL_STATIC_DRAW)
-
-        # Then bind and set up the EBO
+        glBufferData(GL_ARRAY_BUFFER, self.vertices_array.nbytes, self.vertices_array, GL_STATIC_DRAW)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices_array.nbytes, 
-                    self.indices_array, GL_STATIC_DRAW)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.fill_indices_array.nbytes, self.fill_indices_array, GL_STATIC_DRAW)
 
-        # Set up vertex attributes (with VBO still bound)
         stride = 5 * ctypes.sizeof(GLfloat)
         offset = ctypes.c_void_p(0)
-        
-        # Position attribute (location 0)
+
+        # position -> location 0
         glEnableVertexAttribArray(0)
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, offset)
-        
-        # Tile type attribute (location 1)
-        glEnableVertexAttribArray(1)
-        glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, 
-                            ctypes.c_void_p(2 * ctypes.sizeof(GLfloat)))
-        
-        # Centroid attribute (location 2)
-        glEnableVertexAttribArray(2)
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, 
-                            ctypes.c_void_p(3 * ctypes.sizeof(GLfloat)))
 
-        # Unbind VAO first, then VBO and EBO
+        # tile_type -> location 1
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(
+            1, 1, GL_FLOAT, GL_FALSE, stride,
+            ctypes.c_void_p(2 * ctypes.sizeof(GLfloat))
+        )
+
+        # centroid -> location 2
+        glEnableVertexAttribArray(2)
+        glVertexAttribPointer(
+            2, 2, GL_FLOAT, GL_FALSE, stride,
+            ctypes.c_void_p(3 * ctypes.sizeof(GLfloat))
+        )
+
         glBindVertexArray(0)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+
+        # ------------ 2) Build Edges, but apply a slight 'shrink_factor' ------------
+        edge_vertices = []
+        edge_indices = []
+        edge_offset = 0
+
+        self.edges_vao = glGenVertexArrays(1)
+        self.edges_vbo = glGenBuffers(1)
+        self.edges_ebo = glGenBuffers(1)
+
+        glBindVertexArray(self.edges_vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.edges_vbo)
+
+        # Shrink edges a tiny bit to avoid black overdraw
+        edge_shrink_factor = 0.99
+
+        for (v1, v2), shared_tiles in edge_map.items():
+            # Notice the edge_shrink_factor below:
+            s1 = op.to_canvas([v1], scale_value, center, edge_shrink_factor)[0]
+            gl_v1 = self.transform_to_gl_space(s1[0], s1[1], width, height)
+
+            s2 = op.to_canvas([v2], scale_value, center, edge_shrink_factor)[0]
+            gl_v2 = self.transform_to_gl_space(s2[0], s2[1], width, height)
+
+            # We'll store a dummy tile_type=0, dummy centroid=0
+            edge_vertices.extend([
+                gl_v1[0], gl_v1[1], 0.0, 0.0, 0.0,
+                gl_v2[0], gl_v2[1], 0.0, 0.0, 0.0
+            ])
+
+            # Indices for the line
+            edge_indices.extend([edge_offset, edge_offset + 1])
+            edge_offset += 2
+
+        self.edge_vertices_array = np.array(edge_vertices, dtype=np.float32)
+        self.edge_indices_array = np.array(edge_indices, dtype=np.uint32)
+
+        glBufferData(GL_ARRAY_BUFFER, self.edge_vertices_array.nbytes,
+                     self.edge_vertices_array, GL_STATIC_DRAW)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.edges_ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.edge_indices_array.nbytes,
+                     self.edge_indices_array, GL_STATIC_DRAW)
+
+        stride = 5 * ctypes.sizeof(GLfloat)
+        offset = ctypes.c_void_p(0)
+
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, offset)
+
+        glBindVertexArray(0)
 
 
     def get_shader_locations(self):
@@ -368,38 +440,49 @@ class OptimizedRenderer:
         return {'tile_patterns': pattern_array}
 
     def set_standard_uniforms(self, shader_program, config_data):
-        """Set standard uniforms for basic shaders."""
-        color1 = np.array(config_data["color1"]) / 255.0
-        color2 = np.array(config_data["color2"]) / 255.0
-        current_time = glfw.get_time()
-        
-        loc = glGetUniformLocation(shader_program, "color1")
+        """Set standard uniforms for all shaders."""
+        # Set color uniforms
+        loc = glGetUniformLocation(shader_program, 'color1')
         if loc != -1:
-            glUniform3f(loc, *color1)
+            glUniform3f(loc, 
+                        config_data['color1'][0] / 255.0,
+                        config_data['color1'][1] / 255.0, 
+                        config_data['color1'][2] / 255.0)
         
-        loc = glGetUniformLocation(shader_program, "color2")
+        loc = glGetUniformLocation(shader_program, 'color2')
         if loc != -1:
-            glUniform3f(loc, *color2)
+            glUniform3f(loc, 
+                        config_data['color2'][0] / 255.0,
+                        config_data['color2'][1] / 255.0, 
+                        config_data['color2'][2] / 255.0)
         
-        loc = glGetUniformLocation(shader_program, "time")
+        # Set time uniform
+        loc = glGetUniformLocation(shader_program, 'time')
         if loc != -1:
-            glUniform1f(loc, current_time)
+            glUniform1f(loc, glfw.get_time())
+        
+        # Set vertex_offset uniform
+        loc = glGetUniformLocation(shader_program, 'vertex_offset')
+        if loc != -1:
+            glUniform1f(loc, float(config_data['vertex_offset']))
 
     def handle_pixelation_slideshow(self, shader_program, width, height, cache_key):
-        """Handle pixelation slideshow shader setup."""
+        """Handle the pixelation slideshow shader setup and image processing."""
+        tiles, _ = self.tile_cache[cache_key]  # Unpack only the tiles from the cache
+        
+        if not hasattr(self, 'image_processor'):
+            self.image_processor = Operations()
+        
+        if not hasattr(self, 'last_image_update') or time.time() - self.last_image_update > 0.1:
+            self.image_processor.load_and_process_images(tiles)  # Pass only the tiles
+            self.image_processor.create_tile_to_pixel_map(tiles)
+            self.last_image_update = time.time()
+        
         current_time = glfw.get_time() * 1000.0
         transition_duration = 8000.0
         cycle_duration = 15000.0
         
         # Initialize image processor if needed
-        if not hasattr(self, 'image_processor'):
-            from .Effects import Effects
-            self.image_processor = Effects()
-            self.image_processor.load_images_from_folder()
-            if self.image_processor.image_files:
-                self.image_processor.load_and_process_images(self.tile_cache[cache_key])
-                self.logger.debug(f"Loaded {len(self.image_processor.image_files)} images")
-        
         if not hasattr(self, 'image_processor') or not self.image_processor.image_data:
             self.logger.warning("No images available for slideshow")
             return
@@ -500,12 +583,12 @@ class OptimizedRenderer:
             glUniform1i(loc, self.texture_dimensions[1])
 
     def render_tiles(self, width, height, config_data):
-        """Render the Penrose tiling."""
         if self.current_shader_index != self.shader_manager.current_shader_index:
             self.current_shader_index = self.shader_manager.current_shader_index
             self.force_refresh()
             self.logger.info("Shader changed, forcing buffer refresh")
 
+        # Use a cache key to avoid regenerating every frame...
         cache_key = (
             tuple(config_data['gamma']),
             width,
@@ -516,61 +599,87 @@ class OptimizedRenderer:
         if cache_key not in self.tile_cache:
             self.tile_cache.clear()
             self.pattern_cache.clear()
+
+            # 1) Generate tiles
             tiles = op.tiling(config_data['gamma'], width, height, config_data['scale'])
-            op.calculate_neighbors(tiles)
-            self.tile_cache[cache_key] = tiles
-            
-            # Process and cache pattern data
+
+            # 2) Get the edge map
+            edge_map = op.calculate_neighbors(tiles)  # <-- returns edge_map now!
+
+            # 3) Store in cache
+            self.tile_cache[cache_key] = (tiles, edge_map)
+
+            # 4) Build patterns if you want
             self.pattern_cache[cache_key] = self.process_patterns(tiles, width, height, config_data['scale'])
-            
-            self.setup_buffers(tiles, width, height, config_data['scale'])
+
+            # 5) Create buffers
+            self.setup_buffers(tiles, edge_map, width, height, config_data['scale'])
             self.get_shader_locations()
 
-        # Use shader program
+        else:
+            tiles, edge_map = self.tile_cache[cache_key]
+
+        # Select + use the current shader
         shader_program = self.shader_manager.current_shader_program()
         glUseProgram(shader_program)
-        
-        # Special handling for intro shaders
-        if not self.shader_manager.reveal_triggered:
-            # Black shader doesn't need any uniforms
-            pass
-        elif self.shader_manager.reveal_start_time and (glfw.get_time() - self.shader_manager.reveal_start_time) < self.shader_manager.reveal_duration:
-            # Curtain shader needs color and time uniforms
-            self.set_standard_uniforms(shader_program, config_data)
-        else:
-            # Regular shader handling
-            shader_name = self.shader_manager.shader_names[self.current_shader_index]
-            if shader_name == 'pixelation_slideshow':
-                self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
-            elif shader_name == 'region_blend':
-                self.handle_region_blend(shader_program, cache_key, config_data)
-            else:
-                self.set_standard_uniforms(shader_program, config_data)
 
-        # Enable blending
+        # Set standard uniforms, etc.
+        shader_name = self.shader_manager.shader_names[self.current_shader_index]
+        if shader_name == 'pixelation_slideshow':
+            self.handle_pixelation_slideshow(shader_program, width, height, cache_key)
+        elif shader_name == 'region_blend':
+            self.handle_region_blend(shader_program, cache_key, config_data)
+        else:
+            self.set_standard_uniforms(shader_program, config_data)
+
+        # ---------- PASS 1: Fill Polygons ----------
+        glBindVertexArray(self.vao)   # our fill VAO
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glBlendEquation(GL_FUNC_ADD)
 
-        # Draw using VAO
-        glBindVertexArray(self.vao)
-        glDrawElements(GL_TRIANGLES, len(self.indices_array), GL_UNSIGNED_INT, None)
+        glDrawElements(GL_TRIANGLES, len(self.fill_indices_array), GL_UNSIGNED_INT, None)
+
         glBindVertexArray(0)
-        
+
+        # ---------- PASS 2: Draw Unique Edges ----------
+        glBindVertexArray(self.edges_vao)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.edges_ebo)
+
+        # Set edge color to black
+        loc = glGetUniformLocation(shader_program, 'edge_color')
+        if loc != -1:
+            glUniform3f(loc, 0.0, 0.0, 0.0)  # RGB black
+
+        glLineWidth(1.0)
+        glDrawElements(GL_LINES, len(self.edge_indices_array), GL_UNSIGNED_INT, None)
+
+
         # Cleanup
+        glBindVertexArray(0)
         glUseProgram(0)
 
-def __del__(self):
-    """Clean up OpenGL resources."""
-    if glfw.get_current_context():
-        if hasattr(self, 'pattern_texture'):
-            glDeleteTextures([self.pattern_texture])
-        if hasattr(self, 'current_texture'):
-            glDeleteTextures([self.current_texture])
-        if hasattr(self, 'next_texture'):
-            glDeleteTextures([self.next_texture])
-        if hasattr(self, 'vao'):
-            glDeleteVertexArrays(1, [self.vao])
-        if hasattr(self, 'vbo'):
-            glDeleteBuffers(1, [self.vbo])
-        if hasattr(self, 'ebo'):
-            glDeleteBuffers(1, [self.ebo])
+    def resize(self, width, height):
+        glViewport(0, 1, width, height)  # Offset viewport by 1 pixel vertically
+
+    def __del__(self):
+        """Clean up OpenGL resources."""
+        if glfw.get_current_context():
+            if hasattr(self, 'pattern_texture'):
+                glDeleteTextures([self.pattern_texture])
+            if hasattr(self, 'current_texture'):
+                glDeleteTextures([self.current_texture])
+            if hasattr(self, 'next_texture'):
+                glDeleteTextures([self.next_texture])
+            if hasattr(self, 'vao'):
+                glDeleteVertexArrays(1, [self.vao])
+            if hasattr(self, 'vbo'):
+                glDeleteBuffers(1, [self.vbo])
+            if hasattr(self, 'ebo'):
+                glDeleteBuffers(1, [self.ebo])
+            if hasattr(self, 'edge_ebo'):
+                glDeleteBuffers(1, [self.edge_ebo])
+

@@ -9,27 +9,44 @@ import cmath
 import os
 import configparser
 from penrose_tools.Tile import Tile
+from PIL import Image
 
 class Operations:
+
+
     def __init__(self):
         # Fifth roots of unity.
         self.zeta = [cmath.exp(2j * cmath.pi * i / 5) for i in range(5)]
         self.config = configparser.ConfigParser()
+        self.current_image_data = None
+        self.next_image_data = None
+        self.tile_to_pixel_map = None
+        self.image_files = []
+        self.image_data = []
+        self.current_image_index = 0
+        self.next_image_index = 1
+        self.transition_start_time = 0
+        self.transition_duration = 5000  # 5 seconds for transition
+        self.time_between_transitions = 10000  # 10 seconds between transitions
+        self.is_transitioning = False
+        self.tile_interpolation = {}  # To track interpolation state of tiles
 
-    def write_config_file(self, scale, size, gamma, color1, color2):
-        # Write complete configuration to file
+    def write_config_file(self, scale, size, gamma, color1, color2, vertex_offset=0.00009):
+        """Write complete configuration to file."""
         self.filename = 'config.ini'
         self.config['Settings'] = {
             'scale': str(scale),
             'size': str(size),
             'gamma': ','.join(map(str, gamma)),
             'color1': f"({','.join(map(str, color1))})",
-            'color2': f"({','.join(map(str, color2))})"
+            'color2': f"({','.join(map(str, color2))})",
+            'vertex_offset': f"{float(vertex_offset):.6f}"
         }
         with open(self.filename, 'w') as configfile:
             self.config.write(configfile)
 
     def read_config_file(self, config_path):
+        """Read and parse the configuration file."""
         self.config.read(config_path)
         settings = {
             'scale': self.config.getint('Settings', 'scale'),
@@ -38,27 +55,43 @@ class Operations:
             'color1': self.parse_color(self.config.get('Settings', 'color1')),
             'color2': self.parse_color(self.config.get('Settings', 'color2'))
         }
+        
+        # Handle vertex_offset with proper parsing
+        try:
+            settings['vertex_offset'] = float(self.config.get('Settings', 'vertex_offset'))
+        except (configparser.NoOptionError, ValueError):
+            settings['vertex_offset'] = 0.00009  # Default value if not present or invalid
+        
         return settings
 
     def parse_color(self, color_string):
+        """Parse color string from config file."""
         # Remove parentheses and split by comma
         color_values = color_string.strip('()').split(',')
         return [int(x.strip()) for x in color_values]
 
     def update_config_file(self, config_path, **kwargs):
+        """Update the configuration file with new values."""
         # Ensure the configparser instance is set to the correct file
         self.config.read(config_path)
+        
+        if 'Settings' not in self.config:
+            self.config['Settings'] = {}
+        
         for key, value in kwargs.items():
-            if isinstance(value, list):
+            if key == 'vertex_offset':
+                # Format vertex_offset with fixed decimal places
+                self.config.set('Settings', key, f"{float(value):.6f}")
+            elif isinstance(value, list):
                 if key in ['color1', 'color2']:
                     # Format color lists as tuples
-                    cleaned_value = f"({', '.join(str(v) for v in value)})"
+                    self.config.set('Settings', key, f"({', '.join(str(v) for v in value)})")
                 else:
                     # For other lists (like gamma), join with commas
-                    cleaned_value = ', '.join(str(v) for v in value)
-                self.config.set('Settings', key, cleaned_value)
+                    self.config.set('Settings', key, ', '.join(str(v) for v in value))
             else:
                 self.config.set('Settings', key, str(value))
+        
         with open(config_path, 'w') as configfile:
             self.config.write(configfile)
 
@@ -99,9 +132,9 @@ class Operations:
             p1x, p1y = p2x, p2y
         return inside
 
-    def calculate_neighbors(self,tiles, grid_size=100):
+    def calculate_neighbors(self, tiles, grid_size=100):
         grid = {}
-        edge_map = {}  # Use a dictionary to map edges to tiles
+        edge_map = {}  # Map edges to tiles
 
         # Hash tiles into grid cells and record edges
         for tile in tiles:
@@ -110,19 +143,38 @@ class Operations:
                 if cell not in grid:
                     grid[cell] = []
                 grid[cell].append(tile)
-            for edge in tile.edges():
+            
+            # Record edges with more precise vertex comparison
+            for i in range(len(tile.vertices)):
+                v1 = tile.vertices[i]
+                v2 = tile.vertices[(i + 1) % len(tile.vertices)]
+                
+                # Create a normalized edge key with higher precision
+                edge = (
+                    complex(round(v1.real, 8), round(v1.imag, 8)),
+                    complex(round(v2.real, 8), round(v2.imag, 8))
+                )
+                edge = tuple(sorted([edge[0], edge[1]], key=lambda x: (x.real, x.imag)))
+                
                 if edge not in edge_map:
-                    edge_map[edge] = []
-                edge_map[edge].append(tile)
+                    edge_map[edge] = set()
+                edge_map[edge].add(tile)
 
-        # Find neighbors via shared edges
-        for edge, tiles_sharing_edge in edge_map.items():
-            for i, tile_a in enumerate(tiles_sharing_edge):
-                for tile_b in tiles_sharing_edge[i+1:]:
-                    tile_a.add_neighbor(tile_b)
-                    tile_b.add_neighbor(tile_a)
+        # Filter out non-shared edges
+        shared_edges = {edge: tiles for edge, tiles in edge_map.items() if len(tiles) == 2}
+        
+        # Clear existing neighbors
+        for tile in tiles:
+            tile.neighbors = []
 
-        print(f"Tiles processed: {len(tiles)}, Edge pairs registered: {len(edge_map)}")
+        # Only connect tiles that actually share an edge
+        for tiles_sharing_edge in shared_edges.values():
+            tiles_list = list(tiles_sharing_edge)
+            if len(tiles_list) == 2:
+                tiles_list[0].add_neighbor(tiles_list[1])
+                tiles_list[1].add_neighbor(tiles_list[0])
+
+        return shared_edges
 
     def find_connected_components(self,tiles):
         # Using a dictionary to map tiles to component IDs
@@ -157,11 +209,18 @@ class Operations:
         valid_tiles = [tile for comp in components.values() if len(comp) >= min_size for tile in comp]
         return valid_tiles
 
-    def rhombus_at_intersection(self,gamma, r, s, kr, ks):
-        z0 = 1j*(self.zeta[r]*(ks-gamma[s]) - self.zeta[s]*(kr-gamma[r])) / (self.zeta[s-r].imag)
-        k = [0--((z0/t).real+p)//1 for t, p in zip(self.zeta, gamma)]
+    def rhombus_at_intersection(self, gamma, r, s, kr, ks):
+        # Intersection point, higher precision
+        z0 = 1j * (self.zeta[r]*(ks-gamma[s]) - self.zeta[s]*(kr-gamma[r])) / (self.zeta[s-r].imag)
+        z0 = complex(round(z0.real, 5), round(z0.imag, 5))
+        
+        # Compute k-values
+        k = [0--(complex(z0/t).real + p)//1 for t, p in zip(self.zeta, gamma)]
+        
         for k[r], k[s] in [(kr, ks), (kr+1, ks), (kr+1, ks+1), (kr, ks+1)]:
-            yield sum(x*t for t, x in zip(self.zeta, k))
+            vertex = sum(x*t for t, x in zip(self.zeta, k))
+            yield complex(round(vertex.real, 5), round(vertex.imag, 5))
+
 
     def tiling(self, gamma, width, height, scale):
         
@@ -187,11 +246,13 @@ class Operations:
         screen_vertices = self.to_canvas(tile.vertices, scale, center)
         return any(0 <= x <= width and 0 <= y <= height for x, y in screen_vertices)
 
-    def to_canvas(self,vertices, scale, center, shrink_factor=5):
+    def to_canvas(self, vertices, scale, center, shrink_factor=1.0):
         centroid = sum(vertices) / len(vertices)
         result = []
         for z in vertices:
-            w = center + scale * (z - shrink_factor * (z - centroid) / scale)
+            # No shrink
+            adjusted = z  # or z - (z - centroid) / (scale * shrink_factor) if needed
+            w = center + scale * adjusted
             result.append((w.real, w.imag))
         return result
 
@@ -294,3 +355,76 @@ class Operations:
         """ Check if a dart has exactly two darts as neighbors. """
         dart_neighbors = [neighbor for neighbor in tile.neighbors if not neighbor.is_kite]
         return len(dart_neighbors) == 2
+    
+    def load_images_from_folder(self, folder_path='uploaded_images'):
+        self.image_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        if not self.image_files:
+            print(f"Error: No image files found in {folder_path}")
+        else:
+            print(f"Loaded {len(self.image_files)} images from {folder_path}")
+
+    def load_and_process_images(self, tiles):
+        if not self.image_files:
+            self.load_images_from_folder()
+        
+        # Calculate the bounding box of the tile array
+        all_vertices = np.array([(v.real, v.imag) for tile in tiles for v in tile.vertices])
+        min_x, min_y = np.min(all_vertices, axis=0)
+        max_x, max_y = np.max(all_vertices, axis=0)
+        tile_width = max_x - min_x
+        tile_height = max_y - min_y
+        tile_ratio = tile_width / tile_height
+
+        self.image_data = []
+        self.image_scales = []  # Store scaling info for each image
+        for image_file in self.image_files:
+            image_path = os.path.join('uploaded_images', image_file)
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')  # Ensure consistent color format
+                
+                # Calculate aspect ratios
+                img_ratio = img.width / img.height
+                
+                if img_ratio > tile_ratio:  # Image is wider
+                    scale = tile_width / img.width
+                    new_width = int(tile_width)
+                    new_height = int(img.height * scale)
+                    offset_x = 0
+                    offset_y = (tile_height - new_height) / 2
+                else:  # Image is taller
+                    scale = tile_height / img.height
+                    new_height = int(tile_height)
+                    new_width = int(img.width * scale)
+                    offset_x = (tile_width - new_width) / 2
+                    offset_y = 0
+                
+                # Resize image
+                img_resized = img.resize((new_width, new_height), Image.LANCZOS)
+                
+                # Create a black background of tile array size
+                background = Image.new('RGB', (int(tile_width), int(tile_height)), (0, 0, 0))
+                
+                # Paste the resized image onto the background
+                background.paste(img_resized, (int(offset_x), int(offset_y)))
+                
+                self.image_data.append(np.array(background))
+                self.image_scales.append((scale, offset_x, offset_y, new_width, new_height))
+        
+        if not self.image_data:
+            self.image_data = [np.full((int(tile_height), int(tile_width), 3), 128, dtype=np.uint8)]  # Gray image as fallback
+            self.image_scales = [(1, 0, 0, int(tile_width), int(tile_height))]
+
+        # Store tile array dimensions for mapping
+        self.tile_dimensions = (min_x, min_y, max_x, max_y)
+
+    def create_tile_to_pixel_map(self, tiles):
+        min_x, min_y, max_x, max_y = self.tile_dimensions
+        tile_width = max_x - min_x
+        tile_height = max_y - min_y
+
+        self.tile_to_pixel_map = {}
+        for tile in tiles:
+            centroid = self.calculate_centroid(tile.vertices)
+            x = (centroid.real - min_x) / tile_width
+            y = (centroid.imag - min_y) / tile_height
+            self.tile_to_pixel_map[tile] = (x, y)  # Store normalized coordinates

@@ -20,17 +20,6 @@ class ShaderManager:
         self.shader_names = []
         self.current_shader_index = 0
         self.logger = logging.getLogger('ShaderManager')
-        self.intro_played = False
-        self.intro_start_time = None
-        self.intro_duration = 1.5  # Duration in seconds, matching shader
-        self.intro_shader = None
-
-        # Intro state tracking
-        self.reveal_triggered = False
-        self.reveal_start_time = None
-        self.reveal_duration = 1.5  # Duration in seconds
-        self.black_shader = None
-        self.curtain_shader = None
         
         # Configure logging
         self.logger.setLevel(logging.DEBUG)
@@ -40,82 +29,12 @@ class ShaderManager:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
         
-        # Check OpenGL context capabilities
-        self.check_opengl_context()
-        
         # Load shaders
-        self.transition_shader = None
         self.load_shaders()
-        self.load_transition_shader()
 
-        # Load intro shader
-        self.load_intro_shaders()
-        
         if not self.shader_programs:
             self.logger.critical("No shaders were loaded successfully.")
             raise RuntimeError("Failed to load any shader programs")
-    
-    def load_intro_shaders(self):
-        """Load the black and curtain reveal shaders."""
-        try:
-            # Load black shader
-            black_vert = os.path.join(self.shaders_folder, 'black.vert')
-            black_frag = os.path.join(self.shaders_folder, 'black.frag')
-            
-            if not os.path.exists(black_vert) or not os.path.exists(black_frag):
-                self.logger.error("Black shader files not found")
-                self.black_shader = None
-                return
-                
-            self.black_shader = self.compile_shader_program(black_vert, black_frag)
-            
-            # Load curtain shader
-            curtain_vert = os.path.join(self.shaders_folder, 'curtain.vert')
-            curtain_frag = os.path.join(self.shaders_folder, 'curtain.frag')
-            
-            if not os.path.exists(curtain_vert) or not os.path.exists(curtain_frag):
-                self.logger.error("Curtain shader files not found")
-                self.curtain_shader = None
-                return
-                
-            self.curtain_shader = self.compile_shader_program(curtain_vert, curtain_frag)
-            
-            if self.black_shader and self.curtain_shader:
-                self.logger.info("Successfully loaded intro shaders")
-            else:
-                self.logger.error("Failed to compile intro shaders")
-                
-        except Exception as e:
-            self.logger.error(f"Error loading intro shaders: {e}")
-            self.black_shader = None
-            self.curtain_shader = None
-    
-    def load_transition_shader(self):
-        """Load the transition shader separate from cycling shaders."""
-        try:
-            vert_path = os.path.join(self.shaders_folder, 'fade.vert')
-            frag_path = os.path.join(self.shaders_folder, 'fade.frag')
-            
-            if not os.path.exists(vert_path) or not os.path.exists(frag_path):
-                self.logger.error("Transition shader files not found")
-                self.transition_shader = None
-                return
-                
-            self.transition_shader = self.compile_shader_program(vert_path, frag_path)
-            if self.transition_shader:
-                self.logger.info("Successfully loaded transition shader")
-            else:
-                self.logger.error("Failed to compile transition shader")
-                
-        except Exception as e:
-            self.logger.error(f"Error loading transition shader: {e}")
-            self.transition_shader = None
-
-    def get_transition_shader(self):
-        """Get the transition shader program."""
-        if not self.transition_shader:
-            self.logger.warning("No transition shader available")
-        return self.transition_shader
 
     def compile_shader(self, source, shader_type, name):
         """Compile a shader with detailed error checking."""
@@ -181,21 +100,24 @@ class ShaderManager:
             for location, name in attributes.items():
                 glBindAttribLocation(program, location, name)
             
+            # Link program
             glLinkProgram(program)
+            if not glGetProgramiv(program, GL_LINK_STATUS):
+                self.logger.error(f"Linking failed: {glGetProgramInfoLog(program)}")
+                glDeleteProgram(program)
+                return None
+
+            # Now the program is linked, we can use it to set uniforms
+            glUseProgram(program)
             
-            # Check linking status
-            link_status = glGetProgramiv(program, GL_LINK_STATUS)
-            if not link_status:
-                log = glGetProgramInfoLog(program)
-                raise RuntimeError(f"Shader program linking failed: {log}")
-
-            # Validate program
-            glValidateProgram(program)
-            validate_status = glGetProgramiv(program, GL_VALIDATE_STATUS)
-            if not validate_status:
-                log = glGetProgramInfoLog(program)
-                raise RuntimeError(f"Shader program validation failed: {log}")
-
+            # Add vertex offset uniform
+            loc = glGetUniformLocation(program, "vertex_offset")
+            if loc != -1:
+                glUniform1f(loc, 0.0001)
+            
+            # Cleanup
+            glUseProgram(0)
+            
             return program
             
         except Exception as e:
@@ -303,26 +225,6 @@ class ShaderManager:
 
     def next_shader(self):
         """Switch to the next available shader program."""
-        current_time = glfw.get_time()
-        
-        # First toggle triggers the reveal
-        if not self.reveal_triggered:
-            self.reveal_triggered = True
-            self.reveal_start_time = current_time
-            return -2  # Special index for curtain reveal
-            
-        # Check if we're still in reveal animation
-        if self.reveal_start_time and (current_time - self.reveal_start_time) < self.reveal_duration:
-            return -2  # Still in reveal
-            
-        # Clear reveal state after animation completes and proceed to first regular shader
-        if self.reveal_start_time and (current_time - self.reveal_start_time) >= self.reveal_duration:
-            self.reveal_start_time = None
-            # Reset to start of regular shaders
-            self.current_shader_index = 0
-            return self.current_shader_index
-
-        # Continue with normal shader cycling logic...
         if not self.shader_programs:
             self.logger.warning("No shader programs available to switch to")
             return self.current_shader_index
@@ -339,7 +241,7 @@ class ShaderManager:
         # Get list of enabled shaders
         enabled_indices = [
             i for i, name in enumerate(self.shader_names)
-            if shader_settings.get(name.replace('.vert', ''), True)  # Default to True if not specified
+            if shader_settings.get(name, True)  # Default to True if not specified
         ]
         
         if not enabled_indices:
@@ -355,25 +257,6 @@ class ShaderManager:
 
     def current_shader_program(self):
         """Get the currently active shader program."""
-        current_time = glfw.get_time()
-        
-        # Initial black state
-        if not self.reveal_triggered:
-            return self.black_shader
-            
-        # During reveal animation
-        if self.reveal_start_time and (current_time - self.reveal_start_time) < self.reveal_duration:
-            # Set up the curtain shader with the correct time
-            program = self.curtain_shader
-            if program:
-                glUseProgram(program)
-                # Set the time uniform relative to when the reveal started
-                time_loc = glGetUniformLocation(program, 'time')
-                if time_loc != -1:
-                    glUniform1f(time_loc, current_time - self.reveal_start_time)
-            return program
-            
-        # Regular shader cycling
         if not self.shader_programs:
             self.logger.error("No shader programs available")
             return None
@@ -382,12 +265,6 @@ class ShaderManager:
     def __del__(self):
         """Clean up shader programs when the manager is destroyed."""
         if glfw.get_current_context():
-            if self.black_shader:
-                glDeleteProgram(self.black_shader)
-            if self.curtain_shader:
-                glDeleteProgram(self.curtain_shader)
-            if self.transition_shader:
-                glDeleteProgram(self.transition_shader)
             for program in self.shader_programs:
                 if program:
                     glDeleteProgram(program)
