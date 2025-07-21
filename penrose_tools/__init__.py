@@ -4,8 +4,9 @@ from .Server import run_server
 from .Tile import Tile
 from .OptimizedRenderer import OptimizedRenderer
 from .ShaderManager import ShaderManager
+from .GUIOverlay import GUIOverlay
 from .events import (
-    update_event, toggle_shader_event, randomize_colors_event, 
+    update_event, toggle_shader_event, randomize_colors_event,
     shutdown_event, toggle_regions_event, toggle_gui_event
 )
 

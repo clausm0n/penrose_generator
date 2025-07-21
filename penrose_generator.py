@@ -18,7 +18,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, OptimizedRenderer, run_server
+from penrose_tools import Operations, Tile, OptimizedRenderer, run_server, GUIOverlay
 import logging
 import configparser
 import signal
@@ -53,9 +53,18 @@ DEFAULT_CONFIG = {
 
 op = Operations()
 gui_visible = False
+fullscreen_mode = False
 running = True
 width = 0
 height = 0
+gui_overlay = None
+
+# Check if Bluetooth is available
+try:
+    from penrose_tools.PenroseBluetoothServer import run_bluetooth_server
+    BLUETOOTH_AVAILABLE = True
+except ImportError:
+    BLUETOOTH_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -191,6 +200,32 @@ def setup_window(fullscreen=False):
     
     return window
 
+def toggle_fullscreen(window):
+    """Toggle between fullscreen and windowed mode."""
+    global fullscreen_mode, width, height
+
+    # Get the primary monitor
+    primary_monitor = glfw.get_primary_monitor()
+
+    if not fullscreen_mode:
+        # Switch to fullscreen
+        video_mode = glfw.get_video_mode(primary_monitor)
+        width, height = video_mode.size.width, video_mode.size.height
+        glfw.set_window_monitor(window, primary_monitor, 0, 0, width, height, video_mode.refresh_rate)
+        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
+        fullscreen_mode = True
+        logger.info("Switched to fullscreen mode")
+    else:
+        # Switch to windowed mode
+        width, height = 1280, 720
+        glfw.set_window_monitor(window, None, 100, 100, width, height, 0)
+        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
+        fullscreen_mode = False
+        logger.info("Switched to windowed mode")
+
+    # Update viewport
+    glViewport(0, 0, width, height)
+
 def update_toggles(shaders):
     global config_data, running
     logger.debug("Checking for events...")
@@ -216,7 +251,7 @@ def update_toggles(shaders):
         return False
 
 def key_callback(window, key, scancode, action, mods):
-    global config_data
+    global config_data, gui_overlay, fullscreen_mode, width, height
     if action == glfw.PRESS or action == glfw.REPEAT:
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
@@ -231,6 +266,12 @@ def key_callback(window, key, scancode, action, mods):
             logger.debug(f"Vertex offset increased to {config_data['vertex_offset']}")
             update_event.set()
     if action == glfw.PRESS:
+        if key == glfw.KEY_F1:
+            # Toggle GUI overlay
+            gui_overlay.toggle_visibility()
+        elif key == glfw.KEY_F11:
+            # Toggle fullscreen mode
+            toggle_fullscreen(window)
         if key == glfw.KEY_SPACE:
             # Toggle shader effect
             toggle_shader_event.set()
@@ -280,7 +321,7 @@ def key_callback(window, key, scancode, action, mods):
             logger.info(f"Cycle settings updated to: {config_data['cycle']}")
 
 def main():
-    global width, height, config_data
+    global width, height, config_data, gui_overlay, fullscreen_mode
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
@@ -291,7 +332,7 @@ def main():
     # Set environment variable for local mode
     if args.local:
         os.environ['PENROSE_LOCAL_MODE'] = '1'
-    
+
     # Check if bluetooth was requested but not available
     if args.bluetooth and not BLUETOOTH_AVAILABLE:
         logger.warning("Bluetooth support not available. Running in local mode.")
@@ -301,17 +342,25 @@ def main():
     try:
         logger.info("Starting the penrose generator script.")
         window = setup_window(fullscreen=args.fullscreen)
-        
+
+        # Set initial fullscreen state
+        fullscreen_mode = args.fullscreen
+
         # Initialize OpenGL settings
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(0, 0, 0, 1)
-        
+
         # Setup viewport only - no more matrix mode operations
         glViewport(0, 0, width, height)
-        
+
         # Initialize renderer after OpenGL context is created
         renderer = OptimizedRenderer()
+
+        # Initialize GUI overlay
+        gui_overlay = GUIOverlay()
+        # Initialize OpenGL resources immediately while context is available
+        gui_overlay.initialize_gl_resources()
         
         # Initialize server only if not in local mode
         if not args.local:
@@ -337,8 +386,13 @@ def main():
 
             if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
                 update_toggles(renderer.shader_manager)
-            
+
+            # Render the Penrose tiles
             renderer.render_tiles(width, height, config_data)
+
+            # Render the GUI overlay on top
+            gui_overlay.render(width, height, config_data, renderer.shader_manager)
+
             glfw.swap_buffers(window)
 
             # Frame rate limiting
@@ -350,6 +404,9 @@ def main():
         logger.error(f"An error occurred: {e}")
         raise
     finally:
+        # Clean up GUI overlay
+        if gui_overlay:
+            gui_overlay.cleanup()
         glfw.terminate()
         if not args.local:
             cycle_manager.stop()
