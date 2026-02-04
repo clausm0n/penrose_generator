@@ -3,6 +3,7 @@ from .Server import run_server
 # from .Effects import Effects
 from .Tile import Tile
 from .OptimizedRenderer import OptimizedRenderer
+from .ProceduralRenderer import ProceduralRenderer
 from .ShaderManager import ShaderManager
 from .GUIOverlay import GUIOverlay
 from .events import (
@@ -16,10 +17,10 @@ if not os.environ.get('PENROSE_LOCAL_MODE'):
     try:
         from .PenroseBluetoothServer import run_bluetooth_server
         __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
-                   'OptimizedRenderer', 'run_bluetooth_server']
+                   'OptimizedRenderer', 'ProceduralRenderer', 'run_bluetooth_server']
     except ImportError:
         __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
-                   'OptimizedRenderer']
+                   'OptimizedRenderer', 'ProceduralRenderer']
 else:
     __all__ = ['Operations', 'run_server', 'Effects', 'Tile', 
-               'OptimizedRenderer']
+               'OptimizedRenderer', 'ProceduralRenderer']

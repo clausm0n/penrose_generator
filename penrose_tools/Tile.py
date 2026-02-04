@@ -16,6 +16,11 @@ class Tile:
         self.is_kite = self.is_kite()
         #invert color for highlinghted tiles
         self.highlighted_color = self.clamp_color(tuple(255 - c for c in self.color))
+        # Pentagrid parameters (set by Operations.tiling if available)
+        self.r: int | None = None
+        self.s: int | None = None
+        self.kr: int | None = None
+        self.ks: int | None = None
 
     def __hash__(self):
         # Hash based on a tuple of vertices and color

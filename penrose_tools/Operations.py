@@ -222,24 +222,46 @@ class Operations:
             yield complex(round(vertex.real, 5), round(vertex.imag, 5))
 
 
-    def tiling(self, gamma, width, height, scale):
-        
+    def tiling(self, gamma, width, height, scale, camera_offset=None):
+        """
+        Generate Penrose tiling.
+
+        Args:
+            gamma: Penrose tiling parameter
+            width: Screen width in pixels
+            height: Screen height in pixels
+            scale: Scale factor (higher = fewer tiles)
+            camera_offset: Optional complex number for camera offset in world space
+        """
         size = max(width, height) // (scale * 3)
         tiles = []
         center = complex(width // 2, height // 2)
-        
+
+        # If camera offset is provided, adjust the center point
+        # camera_offset is in world space, need to convert to screen space
+        if camera_offset is not None:
+            # Camera offset is in world space (ribbon space scaled by 0.1)
+            # Convert to screen space by multiplying by scale
+            center = center - complex(camera_offset.real * scale * 10, camera_offset.imag * scale * 10)
+
         for r in range(5):
             for s in range(r+1, 5):
                 for kr in range(-size, size+1):
                     for ks in range(-size, size+1):
                         vertices = list(self.rhombus_at_intersection(gamma, r, s, kr, ks))
                         screen_vertices = self.to_canvas(vertices, scale, center)
-                        
+
                         # Check if any vertex is within the screen bounds
                         if any(0 <= x <= width and 0 <= y <= height for x, y in screen_vertices):
                             color = (0, 255, 255) if (r-s)**2 % 5 == 1 else (0, 255, 0)
-                            tiles.append(Tile(vertices, color))
-        
+                            tile = Tile(vertices, color)
+                            # Store pentagrid parameters for matching with procedural shader
+                            tile.r = r
+                            tile.s = s
+                            tile.kr = kr
+                            tile.ks = ks
+                            tiles.append(tile)
+
         return tiles
 
     def is_tile_visible(self, tile, width, height, scale, center):

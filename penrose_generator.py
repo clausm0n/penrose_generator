@@ -19,6 +19,7 @@ from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
 from penrose_tools import Operations, Tile, OptimizedRenderer, run_server, GUIOverlay
+from penrose_tools.ProceduralRenderer import ProceduralRenderer
 import logging
 import configparser
 import signal
@@ -58,6 +59,8 @@ running = True
 width = 0
 height = 0
 gui_overlay = None
+renderer = None  # Global renderer reference
+use_procedural = False  # Track renderer mode
 
 # Check if Bluetooth is available
 try:
@@ -190,6 +193,9 @@ def setup_window(fullscreen=False):
     # Register key callback
     glfw.set_key_callback(window, key_callback)
     
+    # Register scroll callback for zoom
+    glfw.set_scroll_callback(window, scroll_callback)
+    
     glfw.make_context_current(window)
     
     # Enable MSAA (Multi-Sample Anti-Aliasing)
@@ -250,88 +256,117 @@ def update_toggles(shaders):
         running = False
         return False
 
+def scroll_callback(window, xoffset, yoffset):
+    """Handle mouse scroll for zoom in procedural mode."""
+    global renderer, use_procedural
+    if use_procedural and renderer:
+        if yoffset > 0:
+            renderer.zoom_by(1.15)  # Zoom in
+        elif yoffset < 0:
+            renderer.zoom_by(0.85)  # Zoom out
+
 def key_callback(window, key, scancode, action, mods):
-    global config_data, gui_overlay, fullscreen_mode, width, height
+    global config_data, gui_overlay, fullscreen_mode, width, height, renderer, use_procedural
     if action == glfw.PRESS or action == glfw.REPEAT:
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
-        elif key == glfw.KEY_LEFT_BRACKET:  # Decrease vertex offset
-            config_data['vertex_offset'] = f"{max(-0.1, float(config_data['vertex_offset']) - 0.0003):.6f}"
-            op.update_config_file(CONFIG_PATH, **config_data)
-            logger.debug(f"Vertex offset decreased to {config_data['vertex_offset']}")
-            update_event.set()
-        elif key == glfw.KEY_RIGHT_BRACKET:  # Increase vertex offset
-            config_data['vertex_offset'] = f"{min(0.1, float(config_data['vertex_offset']) + 0.0003):.6f}"
-            op.update_config_file(CONFIG_PATH, **config_data)
-            logger.debug(f"Vertex offset increased to {config_data['vertex_offset']}")
-            update_event.set()
+        elif key == glfw.KEY_LEFT_BRACKET:
+            if use_procedural and renderer:
+                renderer.set_edge_thickness(renderer.edge_thickness - 0.1)
+            else:
+                config_data['vertex_offset'] = f"{max(-0.1, float(config_data['vertex_offset']) - 0.0003):.6f}"
+                op.update_config_file(CONFIG_PATH, **config_data)
+                update_event.set()
+        elif key == glfw.KEY_RIGHT_BRACKET:
+            if use_procedural and renderer:
+                renderer.set_edge_thickness(renderer.edge_thickness + 0.1)
+            else:
+                config_data['vertex_offset'] = f"{min(0.1, float(config_data['vertex_offset']) + 0.0003):.6f}"
+                op.update_config_file(CONFIG_PATH, **config_data)
+                update_event.set()
+        # Camera controls for procedural mode
+        elif use_procedural and renderer:
+            if key == glfw.KEY_W:
+                renderer.move_direction(0, 1)
+            elif key == glfw.KEY_S:
+                renderer.move_direction(0, -1)
+            elif key == glfw.KEY_A:
+                renderer.move_direction(-1, 0)
+            elif key == glfw.KEY_D:
+                renderer.move_direction(1, 0)
+            elif key == glfw.KEY_PAGE_UP:
+                renderer.zoom_by(1.1)
+            elif key == glfw.KEY_PAGE_DOWN:
+                renderer.zoom_by(0.9)
+            elif key == glfw.KEY_HOME:
+                renderer.reset()
     if action == glfw.PRESS:
         if key == glfw.KEY_F1:
-            # Toggle GUI overlay
-            gui_overlay.toggle_visibility()
+            if gui_overlay:
+                gui_overlay.toggle_visibility()
         elif key == glfw.KEY_F11:
-            # Toggle fullscreen mode
             toggle_fullscreen(window)
         if key == glfw.KEY_SPACE:
-            # Toggle shader effect
-            toggle_shader_event.set()
+            if use_procedural and renderer:
+                renderer.next_effect()
+            else:
+                toggle_shader_event.set()
         elif key == glfw.KEY_R:
-            # Randomize colors
             randomize_colors_event.set()
         elif key == glfw.KEY_G:
-            # Randomize gamma values
-            config_data['gamma'] = [random.uniform(-1.0, 1.0) for _ in range(5)]
-            op.update_config_file(CONFIG_PATH, **config_data)
-            update_event.set()
+            if use_procedural and renderer:
+                new_gamma = renderer.randomize_gamma()
+                config_data['gamma'] = new_gamma
+                op.update_config_file(CONFIG_PATH, **config_data)
+                logger.info(f"Gamma randomized: {new_gamma}")
+            else:
+                config_data['gamma'] = [random.uniform(-1.0, 1.0) for _ in range(5)]
+                op.update_config_file(CONFIG_PATH, **config_data)
+                update_event.set()
         elif key == glfw.KEY_UP:
-            # Increase scale
-            config_data['scale'] = min(config_data['scale'] + 3, 60)  # Cap at 30
+            config_data['scale'] = min(config_data['scale'] + 3, 60)
             op.update_config_file(CONFIG_PATH, **config_data)
             update_event.set()
         elif key == glfw.KEY_DOWN:
-            # Decrease scale
-            config_data['scale'] = max(config_data['scale'] - 3, 30)  # Minimum of 5
+            config_data['scale'] = max(config_data['scale'] - 3, 30)
             op.update_config_file(CONFIG_PATH, **config_data)
             update_event.set()
         elif key in [glfw.KEY_1, glfw.KEY_2, glfw.KEY_3]:
-            # Ensure cycle exists in config_data
             if 'cycle' not in config_data:
                 config_data['cycle'] = '[False, False, False]'
-            
-            # Convert string to list
             try:
                 cycle_list = eval(config_data['cycle'])
                 if not isinstance(cycle_list, list) or len(cycle_list) != 3:
                     cycle_list = [False, False, False]
             except:
                 cycle_list = [False, False, False]
-            
-            # Toggle appropriate index
             if key == glfw.KEY_1:
-                cycle_list[0] = not cycle_list[0]  # Effects cycle
+                cycle_list[0] = not cycle_list[0]
             elif key == glfw.KEY_2:
-                cycle_list[1] = not cycle_list[1]  # Gamma cycle
+                cycle_list[1] = not cycle_list[1]
             elif key == glfw.KEY_3:
-                cycle_list[2] = not cycle_list[2]  # Colors cycle
-            
-            # Update config
+                cycle_list[2] = not cycle_list[2]
             config_data['cycle'] = str(cycle_list)
             op.update_config_file(CONFIG_PATH, **config_data)
             update_event.set()
             logger.info(f"Cycle settings updated to: {config_data['cycle']}")
 
 def main():
-    global width, height, config_data, gui_overlay, fullscreen_mode
+    global width, height, config_data, gui_overlay, fullscreen_mode, renderer, use_procedural
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
     parser.add_argument('--local', action='store_true', help='Run in local mode without server components')
+    parser.add_argument('-p', '--procedural', action='store_true', help='Use GPU procedural renderer (infinite zoom)')
     args = parser.parse_args()
 
     # Set environment variable for local mode
     if args.local:
         os.environ['PENROSE_LOCAL_MODE'] = '1'
+
+    # Track renderer mode
+    use_procedural = args.procedural
 
     # Check if bluetooth was requested but not available
     if args.bluetooth and not BLUETOOTH_AVAILABLE:
@@ -341,6 +376,8 @@ def main():
 
     try:
         logger.info("Starting the penrose generator script.")
+        if use_procedural:
+            logger.info("Using GPU procedural renderer (infinite mode)")
         window = setup_window(fullscreen=args.fullscreen)
 
         # Set initial fullscreen state
@@ -355,7 +392,10 @@ def main():
         glViewport(0, 0, width, height)
 
         # Initialize renderer after OpenGL context is created
-        renderer = OptimizedRenderer()
+        if use_procedural:
+            renderer = ProceduralRenderer()
+        else:
+            renderer = OptimizedRenderer()
 
         # Initialize GUI overlay
         gui_overlay = GUIOverlay()
@@ -379,19 +419,34 @@ def main():
         else:
             logger.info("Running in local mode - no server components initialized")
 
+        if use_procedural:
+            logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors")
+
         last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
             glClear(GL_COLOR_BUFFER_BIT)
 
-            if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
-                update_toggles(renderer.shader_manager)
-
-            # Render the Penrose tiles
-            renderer.render_tiles(width, height, config_data)
-
-            # Render the GUI overlay on top
-            gui_overlay.render(width, height, config_data, renderer.shader_manager)
+            # Handle events
+            if use_procedural:
+                if randomize_colors_event.is_set():
+                    randomize_colors_event.clear()
+                    for i in range(3):
+                        config_data['color1'][i] = np.random.randint(0, 256)
+                        config_data['color2'][i] = np.random.randint(0, 256)
+                    op.update_config_file(CONFIG_PATH, **config_data)
+                if update_event.is_set():
+                    update_event.clear()
+                    config_data = op.read_config_file(CONFIG_PATH)
+                # Render procedural tiling
+                renderer.render(width, height, config_data)
+            else:
+                if any(event.is_set() for event in [update_event, toggle_shader_event, randomize_colors_event]):
+                    update_toggles(renderer.shader_manager)
+                # Render traditional tiles
+                renderer.render_tiles(width, height, config_data)
+                # Render GUI overlay (only for traditional mode)
+                gui_overlay.render(width, height, config_data, renderer.shader_manager)
 
             glfw.swap_buffers(window)
 
