@@ -16,6 +16,7 @@ uniform vec3 u_color1;
 uniform vec3 u_color2;
 uniform float u_edge_thickness;
 uniform float u_time;
+uniform float u_overlay_mode; // 0 = primary (opaque), 1 = interaction-only (alpha)
 
 // Edge distance computation in world space
 float distToSegment(vec2 p, vec2 a, vec2 b) {
@@ -78,6 +79,51 @@ void main() {
         tileColor = mix(tileColor, vec3(1.0, 1.0, 1.0), 0.15);
     }
 
+    // Determine overlay alpha — fully opaque for region_blend tiles,
+    // transparent unless there's an active interaction (hover/select/anim)
+    float interactionAlpha = 0.0;
+    if (selected > 0.5) interactionAlpha = max(interactionAlpha, 0.35);
+    if (hovered > 0.5) interactionAlpha = max(interactionAlpha, 0.2);
+
+    // Animation effects contribute alpha
+    if (anim_type > 0.5) {
+        // Flip animation (type 1): pulse brightness
+        if (anim_type < 1.5) {
+            float flip = sin(anim_phase * 3.14159);
+            tileColor = mix(tileColor, vec3(1.0), flip * 0.5);
+            interactionAlpha = max(interactionAlpha, flip * 0.6);
+        }
+        // Cascade animation (type 2): rotational color shift
+        else if (anim_type < 2.5) {
+            float wave = sin(anim_phase * 3.14159);
+            float hueShift = anim_phase * 0.5 + tile_id;
+            vec3 cascadeColor = vec3(
+                0.5 + 0.5 * sin(hueShift * 6.28318),
+                0.5 + 0.5 * sin(hueShift * 6.28318 + 2.094),
+                0.5 + 0.5 * sin(hueShift * 6.28318 + 4.189)
+            );
+            tileColor = mix(tileColor, cascadeColor, wave * 0.7);
+            interactionAlpha = max(interactionAlpha, wave * 0.7);
+        }
+        // Ripple animation (type 3): radial pulse
+        else if (anim_type < 3.5) {
+            float ripple = sin(anim_phase * 3.14159) * (1.0 - anim_phase);
+            tileColor = mix(tileColor, vec3(0.8, 0.9, 1.0), ripple * 0.6);
+            interactionAlpha = max(interactionAlpha, ripple * 0.5);
+        }
+    }
+
+    // For tiles that are part of pattern rendering (region_blend mode),
+    // they should be fully opaque. Use u_overlay_mode to decide:
+    // Mode 0 (primary/region_blend): all tiles fully opaque
+    // Mode 1 (interaction-only): only tiles with active interactions are visible
+    float finalAlpha;
+    if (u_overlay_mode < 0.5) {
+        finalAlpha = 1.0;  // Primary mode: fully opaque
+    } else {
+        finalAlpha = interactionAlpha;  // Interaction-only: transparent unless interacted
+    }
+
     // Edge rendering in camera space (vertices converted from ribbon via (rb - offset) / 2.5)
     // Procedural shader uses edgeWidth = 0.012 in ribbon space
     // Camera space = ribbon / 2.5, so edgeWidth = 0.012 / 2.5 = 0.0048
@@ -88,6 +134,8 @@ void main() {
     vec3 edgeColor = tileColor * 0.15;
     vec3 finalColor = mix(edgeColor, tileColor, edgeFactor);
 
-    fragColor = vec4(finalColor, 1.0);
+    // Use finalAlpha for compositing — fully opaque for region_blend primary rendering,
+    // semi-transparent for interaction-only overlay on other effects
+    fragColor = vec4(finalColor, finalAlpha);
 }
 

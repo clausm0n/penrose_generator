@@ -14,6 +14,7 @@ from penrose_tools.Operations import Operations
 from penrose_tools.Tile import Tile
 from penrose_tools.TileDataManager import TileDataManager
 from penrose_tools.OverlayRenderer import OverlayRenderer
+from penrose_tools.InteractionManager import InteractionManager
 
 
 class ProceduralRenderer:
@@ -60,6 +61,7 @@ class ProceduralRenderer:
 
         # Time tracking for frame-independent smoothing
         self.last_update_time = glfw.get_time()
+        self._last_render_time = glfw.get_time()
 
         # Shader programs - one per effect
         self.shader_programs = []
@@ -84,14 +86,18 @@ class ProceduralRenderer:
         self.pattern_texture = None
         self.last_pattern_params = None  # (camera_x, camera_y, zoom, width, height, gamma)
 
-        # Overlay system for effects that need per-tile data (region_blend, etc.)
-        self.tile_manager = None      # Created after GL context verified
-        self.overlay_renderer = None  # Created after GL context verified
+        # Overlay system — always-on for interaction support across all effects
+        self.tile_manager = None
+        self.overlay_renderer = None
+        self.interaction_manager = None
         self.overlay_needs_upload = False
         self._last_gamma_for_overlay = None
 
-        # Effects that use overlay rendering instead of pure procedural
+        # Effects that use the overlay for their primary rendering (opaque overlay)
         self.OVERLAY_EFFECTS = {'region_blend'}
+
+        # Interaction overlay enabled — draws interaction visuals on top of any effect
+        self.interaction_overlay_enabled = True
 
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
@@ -99,15 +105,17 @@ class ProceduralRenderer:
         self._load_all_shaders()
         self._create_quad()
 
-        # Initialize overlay system
+        # Initialize overlay + interaction system (always-on)
         try:
             self.tile_manager = TileDataManager()
             self.overlay_renderer = OverlayRenderer()
-            self.logger.info("Overlay system initialized")
+            self.interaction_manager = InteractionManager(self.tile_manager)
+            self.logger.info("Overlay + interaction system initialized")
         except Exception as e:
             self.logger.error(f"Overlay system init failed (falling back to texture): {e}")
             self.tile_manager = None
             self.overlay_renderer = None
+            self.interaction_manager = None
 
         self.logger.info(f"ProceduralRenderer initialized with {len(self.shader_programs)} effect shaders")
 
@@ -242,10 +250,17 @@ class ProceduralRenderer:
         glBindVertexArray(0)
     
     def _use_overlay(self):
-        """Check if current effect should use the overlay rendering path."""
+        """Check if current effect should use the overlay as its primary rendering path."""
         return (self.EFFECT_NAMES[self.effect_mode] in self.OVERLAY_EFFECTS
                 and self.tile_manager is not None
                 and self.overlay_renderer is not None)
+
+    def _has_interaction_overlay(self):
+        """Check if the interaction overlay system is available and enabled."""
+        return (self.interaction_overlay_enabled
+                and self.tile_manager is not None
+                and self.overlay_renderer is not None
+                and self.interaction_manager is not None)
 
     def render(self, width, height, config_data):
         """Render the Penrose tiling with the current effect shader."""
@@ -255,6 +270,16 @@ class ProceduralRenderer:
         gamma = config_data.get('gamma', self.gamma)
         current_effect = self.EFFECT_NAMES[self.effect_mode]
         use_overlay = self._use_overlay()
+        has_interaction = self._has_interaction_overlay()
+
+        # --- Tick animations (always, regardless of effect) ---
+        if has_interaction:
+            dt = glfw.get_time() - self._last_render_time
+            self._last_render_time = glfw.get_time()
+            dt = max(0.0, min(dt, 0.1))  # clamp
+            self.interaction_manager.update_animations(dt)
+            # Partial GPU upload for changed tiles only
+            self._flush_interaction_dirty()
 
         # --- PASS 1: Procedural base layer ---
         # For overlay effects, render a simple base (no_effect) as the safety net;
@@ -312,9 +337,13 @@ class ProceduralRenderer:
         glBindVertexArray(0)
         glUseProgram(0)
 
-        # --- PASS 2: Overlay layer (for effects that need per-tile data) ---
+        # --- PASS 2: Overlay layer ---
+        # For region_blend: full opaque overlay (primary rendering)
+        # For all other effects: interaction-only overlay (hover/select/anim visuals)
         if use_overlay:
             self._update_overlay(width, height, gamma, config_data)
+        elif has_interaction:
+            self._update_interaction_overlay(width, height, gamma, config_data)
 
     def _update_overlay(self, width, height, gamma, config_data):
         """Manage overlay tile lifecycle and render overlay on top of base."""
@@ -325,6 +354,9 @@ class ProceduralRenderer:
         # _generation_in_progress is cleared and comfort_bounds are up-to-date
         if self.tile_manager.poll_results():
             self.overlay_needs_upload = True
+            # New tile set — old interaction state is invalid
+            if self.interaction_manager:
+                self.interaction_manager.on_tiles_regenerated()
 
         # Upload new tile data to GPU if ready
         if self.overlay_needs_upload and self.tile_manager.gpu_vertices is not None:
@@ -347,11 +379,90 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect, gamma,
                 self.velocity_x, self.velocity_y)
 
-        # Render overlay tiles on top of procedural base
+        # Render overlay tiles on top of procedural base (primary mode = opaque)
         self.overlay_renderer.render(
             self.camera_x, self.camera_y, self.zoom,
             width, height, config_data,
-            self.edge_thickness, glfw.get_time())
+            self.edge_thickness, glfw.get_time(), overlay_mode=0)
+
+    def _update_interaction_overlay(self, width, height, gamma, config_data):
+        """Manage tile lifecycle for interaction overlay (non-region_blend effects).
+        Same tile generation logic, but renders with alpha blending so the
+        procedural base shows through — only interaction visuals are drawn."""
+        aspect = float(width) / float(height)
+
+        # Poll for completed background generation
+        if self.tile_manager.poll_results():
+            self.overlay_needs_upload = True
+            # New tile set — old interaction state is invalid
+            if self.interaction_manager:
+                self.interaction_manager.on_tiles_regenerated()
+
+        # Upload new tile data to GPU if ready
+        if self.overlay_needs_upload and self.tile_manager.gpu_vertices is not None:
+            self.overlay_renderer.upload_tile_data(
+                self.tile_manager.gpu_vertices,
+                self.tile_manager.gpu_tile_data,
+                self.tile_manager.tile_count)
+            self.overlay_needs_upload = False
+            self.tile_manager.gpu_data_dirty = False
+
+        # Check if gamma changed or camera moved outside comfort zone
+        gamma_tuple = tuple(round(g, 4) for g in gamma)
+        gamma_changed = (gamma_tuple != self._last_gamma_for_overlay)
+
+        if gamma_changed or self.tile_manager.needs_regeneration(
+                self.camera_x, self.camera_y, self.zoom, aspect):
+            self._last_gamma_for_overlay = gamma_tuple
+            self.tile_manager.request_generation(
+                self.camera_x, self.camera_y, self.zoom, aspect, gamma,
+                self.velocity_x, self.velocity_y)
+
+        # Only render overlay if there are active interactions to show
+        if self._has_active_interactions():
+            self.overlay_renderer.render(
+                self.camera_x, self.camera_y, self.zoom,
+                width, height, config_data,
+                self.edge_thickness, glfw.get_time(), overlay_mode=1)
+
+    def _has_active_interactions(self):
+        """Check if there are any active interactions worth rendering."""
+        if self.interaction_manager is None:
+            return False
+        return (self.interaction_manager._hovered_index >= 0
+                or len(self.interaction_manager._selected_indices) > 0
+                or len(self.interaction_manager._animations) > 0)
+
+    def _flush_interaction_dirty(self):
+        """Upload only the dirty tile range to GPU (partial buffer update)."""
+        if not self.interaction_manager or not self.overlay_renderer:
+            return
+        offset, count = self.interaction_manager.get_dirty_range()
+        if count > 0 and self.tile_manager.gpu_tile_data is not None:
+            self.overlay_renderer.upload_tile_data_partial(
+                self.tile_manager.gpu_tile_data, offset, count)
+            self.tile_manager.gpu_data_dirty = False
+
+    def screen_to_pentagrid(self, screen_x, screen_y, window_width, window_height):
+        """Convert screen pixel coordinates to pentagrid/camera space.
+
+        The procedural vertex shader maps:
+            p = clip * 0.5 * vec2(aspect, 1) * (3/zoom) + camera
+        where clip = (screen / resolution) * 2 - 1
+
+        Returns (pentagrid_x, pentagrid_y).
+        """
+        aspect = float(window_width) / float(window_height)
+
+        # Screen pixels → NDC clip space [-1, 1]
+        clip_x = (screen_x / window_width) * 2.0 - 1.0
+        clip_y = 1.0 - (screen_y / window_height) * 2.0  # flip Y
+
+        # NDC → pentagrid/camera space (invert the procedural shader transform)
+        pentagrid_x = clip_x * 0.5 * aspect * (3.0 / self.zoom) + self.camera_x
+        pentagrid_y = clip_y * 0.5 * (3.0 / self.zoom) + self.camera_y
+
+        return pentagrid_x, pentagrid_y
     
     # Camera controls
     def move(self, dx, dy):
@@ -691,7 +802,11 @@ class ProceduralRenderer:
         return self.camera_y
     
     def __del__(self):
+        if self.tile_manager:
+            self.tile_manager.shutdown()
         if glfw.get_current_context():
+            if hasattr(self, 'overlay_renderer') and self.overlay_renderer:
+                self.overlay_renderer.cleanup()
             if hasattr(self, 'vao'):
                 glDeleteVertexArrays(1, [self.vao])
             if hasattr(self, 'vbo'):

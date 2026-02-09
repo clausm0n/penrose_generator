@@ -91,6 +91,7 @@ class OverlayRenderer:
             'u_color2': glGetUniformLocation(self.shader_program, 'u_color2'),
             'u_edge_thickness': glGetUniformLocation(self.shader_program, 'u_edge_thickness'),
             'u_time': glGetUniformLocation(self.shader_program, 'u_time'),
+            'u_overlay_mode': glGetUniformLocation(self.shader_program, 'u_overlay_mode'),
         }
         glUseProgram(0)
         self.logger.info("Overlay shader compiled and linked")
@@ -184,8 +185,10 @@ class OverlayRenderer:
     # -------------------------------------------------------------------------
 
     def render(self, camera_x, camera_y, zoom, width, height,
-               config_data, edge_thickness, time_val):
-        """Draw all tile instances."""
+               config_data, edge_thickness, time_val, overlay_mode=0):
+        """Draw all tile instances.
+        overlay_mode: 0 = primary (opaque, region_blend), 1 = interaction-only (alpha blended)
+        """
         if self.tile_count == 0 or self.shader_program is None:
             return
 
@@ -199,13 +202,18 @@ class OverlayRenderer:
         glUniform1f(self.uniforms['u_aspect'], aspect)
         glUniform1f(self.uniforms['u_time'], time_val)
         glUniform1f(self.uniforms['u_edge_thickness'], edge_thickness)
+        if self.uniforms.get('u_overlay_mode', -1) != -1:
+            glUniform1f(self.uniforms['u_overlay_mode'], float(overlay_mode))
 
         c1 = config_data.get('color1', [255, 255, 255])
         c2 = config_data.get('color2', [0, 0, 255])
         glUniform3f(self.uniforms['u_color1'], c1[0] / 255.0, c1[1] / 255.0, c1[2] / 255.0)
         glUniform3f(self.uniforms['u_color2'], c2[0] / 255.0, c2[1] / 255.0, c2[2] / 255.0)
 
-        # Instanced draw
+        # Instanced draw with alpha blending for interaction overlay compositing
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
         glBindVertexArray(self.vao)
         glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None, self.tile_count)
         glBindVertexArray(0)

@@ -195,6 +195,11 @@ def setup_window(fullscreen=False):
     
     # Register scroll callback for zoom
     glfw.set_scroll_callback(window, scroll_callback)
+
+    # Register mouse callbacks for tile interaction
+    glfw.set_mouse_button_callback(window, mouse_button_callback)
+    glfw.set_cursor_pos_callback(window, cursor_position_callback)
+    glfw.set_cursor_enter_callback(window, cursor_enter_callback)
     
     glfw.make_context_current(window)
     
@@ -265,6 +270,29 @@ def scroll_callback(window, xoffset, yoffset):
         elif yoffset < 0:
             renderer.zoom_by(0.85)  # Zoom out
 
+def mouse_button_callback(window, button, action, mods):
+    """Handle mouse clicks for tile interaction."""
+    global renderer, width, height
+    if renderer and renderer.interaction_manager and action == glfw.PRESS:
+        if button == glfw.MOUSE_BUTTON_LEFT:
+            mx, my = glfw.get_cursor_pos(window)
+            px, py = renderer.screen_to_pentagrid(mx, my, width, height)
+            renderer.interaction_manager.handle_click(px, py)
+
+def cursor_position_callback(window, xpos, ypos):
+    """Handle cursor movement for tile hover."""
+    global renderer, width, height
+    if renderer and renderer.interaction_manager:
+        px, py = renderer.screen_to_pentagrid(xpos, ypos, width, height)
+        renderer.interaction_manager.update_hover(px, py)
+        # Dirty tracking handles GPU upload — no full re-upload needed here
+
+def cursor_enter_callback(window, entered):
+    """Clear hover when cursor leaves the window."""
+    global renderer
+    if not entered and renderer and renderer.interaction_manager:
+        renderer.interaction_manager.clear_hover()
+
 def key_callback(window, key, scancode, action, mods):
     global config_data, gui_overlay, fullscreen_mode, width, height, renderer
     if action == glfw.PRESS or action == glfw.REPEAT:
@@ -301,6 +329,17 @@ def key_callback(window, key, scancode, action, mods):
         if key == glfw.KEY_SPACE:
             if renderer:
                 renderer.next_effect()
+        elif key == glfw.KEY_TAB:
+            # Cycle interaction mode: select → flip → cascade → ripple
+            if renderer and renderer.interaction_manager:
+                mode = renderer.interaction_manager.cycle_click_mode()
+                mode_names = ['select', 'flip', 'cascade', 'ripple']
+                logger.info(f"Interaction mode: {mode_names[mode]}")
+        elif key == glfw.KEY_C:
+            # Clear all interaction state
+            if renderer and renderer.interaction_manager:
+                renderer.interaction_manager.clear_all()
+                logger.info("Cleared all interactions")
         elif key == glfw.KEY_R:
             randomize_colors_event.set()
         elif key == glfw.KEY_G:
@@ -402,6 +441,7 @@ def main():
             logger.info("Running in local mode - no server components initialized")
 
         logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors")
+        logger.info("Interaction: Click=interact, TAB=cycle mode (select/flip/cascade/ripple), C=clear")
 
         last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:

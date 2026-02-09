@@ -32,6 +32,7 @@ class TileDataManager:
         # Current tile set keyed by (r, s, kr, ks)
         self.tiles = {}          # dict[tuple, OverlayTile]
         self.tile_list = []      # ordered list for GPU buffer packing
+        self._tile_index_map = {}  # id(tile) → index for O(1) lookup
 
         # Viewport zones (in world/ribbon space)
         self.gen_bounds = None   # (min_x, min_y, max_x, max_y) - generation zone
@@ -180,6 +181,9 @@ class TileDataManager:
         self.starburst_count = bursts
         self.tile_count = len(tile_list)
         self._current_gamma = gamma
+
+        # Build O(1) tile→index lookup (used by InteractionManager for neighbor traversal)
+        self._tile_index_map = {id(tile): i for i, tile in enumerate(tile_list)}
 
         self._pack_gpu_buffers()
         self.gpu_data_dirty = True
@@ -552,28 +556,40 @@ class TileDataManager:
         """
         Find which tile contains the given pentagrid-space point.
         Returns tile index or -1 if no tile found.
-        Uses point-in-quad test against GPU vertex data (in pentagrid space).
+        Vectorized numpy point-in-quad test against GPU vertex data.
         """
         if self.gpu_vertices is None or self.tile_count == 0:
             return -1
 
+        n = self.tile_count
+        v = self.gpu_vertices[:n]  # (N, 4, 2)
         p = np.array([pentagrid_x, pentagrid_y], dtype=np.float32)
 
-        for i in range(self.tile_count):
-            v = self.gpu_vertices[i]  # (4, 2)
-            # Cross product winding test
-            inside = True
-            sign = 0
-            for j in range(4):
-                e = v[(j + 1) % 4] - v[j]
-                w = p - v[j]
-                cross = e[0] * w[1] - e[1] * w[0]
-                if sign == 0:
-                    sign = 1 if cross >= 0 else -1
-                elif (sign > 0 and cross < 0) or (sign < 0 and cross > 0):
-                    inside = False
-                    break
-            if inside:
-                return i
+        # Compute cross products for all 4 edges of all tiles at once
+        # Edge vectors: v[next] - v[current] for each of 4 edges
+        v0 = v[:, 0]  # (N, 2)
+        v1 = v[:, 1]
+        v2 = v[:, 2]
+        v3 = v[:, 3]
 
+        def cross2d(edge, w):
+            return edge[:, 0] * w[:, 1] - edge[:, 1] * w[:, 0]
+
+        c0 = cross2d(v1 - v0, p - v0)
+        c1 = cross2d(v2 - v1, p - v1)
+        c2 = cross2d(v3 - v2, p - v2)
+        c3 = cross2d(v0 - v3, p - v3)
+
+        # Point is inside if all cross products have the same sign
+        all_pos = (c0 >= 0) & (c1 >= 0) & (c2 >= 0) & (c3 >= 0)
+        all_neg = (c0 <= 0) & (c1 <= 0) & (c2 <= 0) & (c3 <= 0)
+        inside = all_pos | all_neg
+
+        hits = np.where(inside)[0]
+        if len(hits) > 0:
+            return int(hits[0])
         return -1
+
+    def get_tile_index(self, tile):
+        """O(1) lookup of a tile's index in tile_list. Returns -1 if not found."""
+        return self._tile_index_map.get(id(tile), -1)
