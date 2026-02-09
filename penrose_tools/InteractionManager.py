@@ -5,6 +5,7 @@ neighbor-based effect propagation. Decoupled from rendering — works
 across all shader effects as a system-level layer.
 """
 import logging
+import math
 import time
 
 
@@ -47,10 +48,10 @@ class InteractionManager:
         self.anim_speed = 2.0
 
         # Cascade propagation depth (how many neighbor rings)
-        self.cascade_depth = 3
+        self.cascade_depth = 20
 
         # Cascade stagger delay in seconds per ring
-        self.cascade_stagger = 0.08
+        self.cascade_stagger = 0.1
 
         # Dirty tracking — indices of tiles whose gpu_tile_data changed since last upload
         self._dirty_indices = set()
@@ -218,13 +219,9 @@ class InteractionManager:
     # -------------------------------------------------------------------------
 
     def _add_animation(self, tile_index, anim_type, speed=2.0, delay=0.0):
-        """Schedule an animation on a tile. Replaces any existing animation on that tile."""
-        # Remove existing animation for this tile using dict-style lookup
-        for i in range(len(self._animations) - 1, -1, -1):
-            if self._animations[i]['tile_index'] == tile_index:
-                self._animations.pop(i)
-                break  # at most one per tile
-
+        """Schedule an animation on a tile. Multiple animations can coexist
+        on the same tile — the one with the highest visual intensity wins
+        the GPU slot each frame."""
         self._animations.append({
             'tile_index': tile_index,
             'anim_type': anim_type,
@@ -234,44 +231,62 @@ class InteractionManager:
             'start_time': time.monotonic(),
         })
 
-        # Set anim_type on the tile immediately (phase stays 0 until delay expires)
-        self.tile_manager.update_tile_interaction(
-            tile_index, anim_type=anim_type, anim_phase=0.0)
-        self._mark_dirty(tile_index)
-
     def update_animations(self, dt):
         """Advance all active animations by dt seconds.
+        Multiple animations can exist per tile — the one with the highest
+        visual intensity (based on sin(phase * pi)) wins the GPU slot.
         Returns True if any tile data changed."""
         if not self._animations:
             return False
 
         now = time.monotonic()
         changed = False
-        # Process in reverse so we can pop completed entries without index shifting
-        i = len(self._animations) - 1
-        while i >= 0:
+
+        # Phase 1: advance all animations, collect completed indices
+        completed = []
+        for i in range(len(self._animations) - 1, -1, -1):
             anim = self._animations[i]
             elapsed = now - anim['start_time']
             if elapsed < anim['delay']:
-                i -= 1
                 continue  # Still waiting for stagger delay
 
-            # Advance phase
             anim['phase'] += anim['speed'] * dt
-            idx = anim['tile_index']
-
             if anim['phase'] >= 1.0:
-                # Animation complete — reset tile
+                completed.append(i)
+
+        # Phase 2: remove completed animations, track which tiles lost an animation
+        tiles_with_completed = set()
+        for i in sorted(completed, reverse=True):
+            tiles_with_completed.add(self._animations[i]['tile_index'])
+            self._animations.pop(i)
+
+        # Phase 3: for each remaining animation, pick the strongest per tile
+        tile_best = {}  # tile_index → (intensity, anim_type, phase)
+        for anim in self._animations:
+            idx = anim['tile_index']
+            phase = anim['phase']
+            if phase <= 0.0:
+                continue  # hasn't started yet (still in delay)
+            phase_clamped = min(phase, 1.0)
+            intensity = math.sin(phase_clamped * math.pi)
+            prev = tile_best.get(idx)
+            if prev is None or intensity > prev[0]:
+                tile_best[idx] = (intensity, anim['anim_type'], phase_clamped)
+
+        # Phase 4: write winning animation state to GPU for each affected tile
+        for idx, (intensity, anim_type, phase) in tile_best.items():
+            self.tile_manager.update_tile_interaction(
+                idx, anim_type=anim_type, anim_phase=phase)
+            self._mark_dirty(idx)
+            changed = True
+
+        # Phase 5: reset tiles that had completions and have no remaining animations
+        for idx in tiles_with_completed:
+            if idx not in tile_best:
                 self.tile_manager.update_tile_interaction(
                     idx, anim_type=self.ANIM_NONE, anim_phase=0.0)
                 self._mark_dirty(idx)
-                self._animations.pop(i)
-            else:
-                self.tile_manager.update_tile_interaction(
-                    idx, anim_phase=anim['phase'])
-                self._mark_dirty(idx)
-            changed = True
-            i -= 1
+                changed = True
 
         return changed
 
