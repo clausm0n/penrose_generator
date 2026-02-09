@@ -12,6 +12,8 @@ import os
 import re
 from penrose_tools.Operations import Operations
 from penrose_tools.Tile import Tile
+from penrose_tools.TileDataManager import TileDataManager
+from penrose_tools.OverlayRenderer import OverlayRenderer
 
 
 class ProceduralRenderer:
@@ -82,11 +84,30 @@ class ProceduralRenderer:
         self.pattern_texture = None
         self.last_pattern_params = None  # (camera_x, camera_y, zoom, width, height, gamma)
 
+        # Overlay system for effects that need per-tile data (region_blend, etc.)
+        self.tile_manager = None      # Created after GL context verified
+        self.overlay_renderer = None  # Created after GL context verified
+        self.overlay_needs_upload = False
+        self._last_gamma_for_overlay = None
+
+        # Effects that use overlay rendering instead of pure procedural
+        self.OVERLAY_EFFECTS = {'region_blend'}
+
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
 
         self._load_all_shaders()
         self._create_quad()
+
+        # Initialize overlay system
+        try:
+            self.tile_manager = TileDataManager()
+            self.overlay_renderer = OverlayRenderer()
+            self.logger.info("Overlay system initialized")
+        except Exception as e:
+            self.logger.error(f"Overlay system init failed (falling back to texture): {e}")
+            self.tile_manager = None
+            self.overlay_renderer = None
 
         self.logger.info(f"ProceduralRenderer initialized with {len(self.shader_programs)} effect shaders")
 
@@ -220,29 +241,43 @@ class ProceduralRenderer:
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, None)
         glBindVertexArray(0)
     
+    def _use_overlay(self):
+        """Check if current effect should use the overlay rendering path."""
+        return (self.EFFECT_NAMES[self.effect_mode] in self.OVERLAY_EFFECTS
+                and self.tile_manager is not None
+                and self.overlay_renderer is not None)
+
     def render(self, width, height, config_data):
         """Render the Penrose tiling with the current effect shader."""
         # Update camera smoothing before rendering
         self.update()
 
-        # Get current shader program and uniforms
-        program = self.shader_programs[self.effect_mode]
+        gamma = config_data.get('gamma', self.gamma)
+        current_effect = self.EFFECT_NAMES[self.effect_mode]
+        use_overlay = self._use_overlay()
+
+        # --- PASS 1: Procedural base layer ---
+        # For overlay effects, render a simple base (no_effect) as the safety net;
+        # for non-overlay effects, render the normal procedural shader.
+        if use_overlay:
+            base_index = 0  # no_effect as base
+        else:
+            base_index = self.effect_mode
+
+        program = self.shader_programs[base_index]
         if program is None:
-            # Fallback to first available shader
             for i, p in enumerate(self.shader_programs):
                 if p is not None:
                     program = p
-                    self.effect_mode = i
+                    base_index = i
                     break
             if program is None:
                 self.logger.error("No valid shader programs available")
                 return
 
-        uniforms = self.uniform_locations[self.effect_mode]
-
+        uniforms = self.uniform_locations[base_index]
         glUseProgram(program)
 
-        # Set uniforms
         if uniforms.get('u_resolution', -1) != -1:
             glUniform2f(uniforms['u_resolution'], float(width), float(height))
         if uniforms.get('u_camera', -1) != -1:
@@ -260,28 +295,62 @@ class ProceduralRenderer:
             glUniform3f(uniforms['u_color2'], c2[0]/255.0, c2[1]/255.0, c2[2]/255.0)
         if uniforms.get('u_edge_thickness', -1) != -1:
             glUniform1f(uniforms['u_edge_thickness'], self.edge_thickness)
-
-        # Use gamma from config or instance
-        gamma = config_data.get('gamma', self.gamma)
         if uniforms.get('u_gamma', -1) != -1:
             gamma_array = (GLfloat * 5)(*gamma)
             glUniform1fv(uniforms['u_gamma'], 5, gamma_array)
 
-        # For region_blend effect, update pattern data and bind texture
-        if self.EFFECT_NAMES[self.effect_mode] == 'region_blend':
+        # Old texture-based region_blend fallback (used when overlay isn't available)
+        if current_effect == 'region_blend' and not use_overlay:
             self._update_pattern_data_if_needed(width, height, gamma)
-
             if self.pattern_texture is not None and uniforms.get('u_pattern_texture', -1) != -1:
                 glActiveTexture(GL_TEXTURE0)
                 glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
                 glUniform1i(uniforms['u_pattern_texture'], 0)
-            else:
-                self.logger.warning(f"Pattern texture not available: texture={self.pattern_texture}, uniform={uniforms.get('u_pattern_texture', -1)}")
 
         glBindVertexArray(self.vao)
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
         glBindVertexArray(0)
         glUseProgram(0)
+
+        # --- PASS 2: Overlay layer (for effects that need per-tile data) ---
+        if use_overlay:
+            self._update_overlay(width, height, gamma, config_data)
+
+    def _update_overlay(self, width, height, gamma, config_data):
+        """Manage overlay tile lifecycle and render overlay on top of base."""
+        aspect = float(width) / float(height)
+
+        # Poll for completed background generation FIRST
+        # This must happen before needs_regeneration check so that
+        # _generation_in_progress is cleared and comfort_bounds are up-to-date
+        if self.tile_manager.poll_results():
+            self.overlay_needs_upload = True
+
+        # Upload new tile data to GPU if ready
+        if self.overlay_needs_upload and self.tile_manager.gpu_vertices is not None:
+            self.overlay_renderer.upload_tile_data(
+                self.tile_manager.gpu_vertices,
+                self.tile_manager.gpu_tile_data,
+                self.tile_manager.tile_count)
+            self.overlay_needs_upload = False
+            self.tile_manager.gpu_data_dirty = False
+
+        # Check if gamma changed (requires full regeneration)
+        gamma_tuple = tuple(round(g, 4) for g in gamma)
+        gamma_changed = (gamma_tuple != self._last_gamma_for_overlay)
+
+        # Check if camera moved outside comfort zone
+        if gamma_changed or self.tile_manager.needs_regeneration(
+                self.camera_x, self.camera_y, self.zoom, aspect):
+            self._last_gamma_for_overlay = gamma_tuple
+            self.tile_manager.request_generation(
+                self.camera_x, self.camera_y, self.zoom, aspect, gamma)
+
+        # Render overlay tiles on top of procedural base
+        self.overlay_renderer.render(
+            self.camera_x, self.camera_y, self.zoom,
+            width, height, config_data,
+            self.edge_thickness, glfw.get_time())
     
     # Camera controls
     def move(self, dx, dy):
