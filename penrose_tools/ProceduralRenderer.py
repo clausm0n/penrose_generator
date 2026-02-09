@@ -344,7 +344,8 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect):
             self._last_gamma_for_overlay = gamma_tuple
             self.tile_manager.request_generation(
-                self.camera_x, self.camera_y, self.zoom, aspect, gamma)
+                self.camera_x, self.camera_y, self.zoom, aspect, gamma,
+                self.velocity_x, self.velocity_y)
 
         # Render overlay tiles on top of procedural base
         self.overlay_renderer.render(
@@ -366,8 +367,12 @@ class ProceduralRenderer:
         self.velocity_y += dy * accel
 
     def set_zoom(self, z):
-        """Set target zoom level (smooth interpolation applied in update)."""
-        self.target_zoom = max(0.01, min(100.0, z))
+        """Set target zoom level (smooth interpolation applied in update).
+
+        Clamped to [0.3, 100.0]. Below 0.3 the tile count explodes and
+        performance degrades; above 100 there's nothing useful to see.
+        """
+        self.target_zoom = max(0.1, min(100.0, z))
 
     def zoom_by(self, factor):
         """Zoom by a factor (smooth interpolation applied in update)."""

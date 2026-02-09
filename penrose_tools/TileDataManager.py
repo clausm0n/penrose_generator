@@ -9,6 +9,7 @@ Manages tile lifecycle for the overlay rendering system.
 """
 import cmath
 import logging
+import math
 import threading
 import time
 import numpy as np
@@ -82,30 +83,53 @@ class TileDataManager:
         return (view_min_x < cmin_x or view_max_x > cmax_x or
                 view_min_y < cmin_y or view_max_y > cmax_y)
 
-    def _compute_zones(self, camera_x, camera_y, zoom, aspect):
-        """Compute generation zone (30% oversized) and comfort zone (15% oversized)."""
+    def _compute_zones(self, camera_x, camera_y, zoom, aspect,
+                        velocity_x=0.0, velocity_y=0.0):
+        """Compute generation zone and comfort zone.
+
+        The generation zone is 100% oversized and biased in the direction of
+        camera velocity so tiles are ready before the user pans into view.
+        The comfort zone is 50% oversized — regen triggers when the viewport
+        edge crosses it, giving plenty of runway.
+        """
         half_h = 3.0 / zoom
         half_w = half_h * aspect
 
-        # Generation zone: 30% larger than viewport
-        gen_margin_w = half_w * 0.3
-        gen_margin_h = half_h * 0.3
+        # Velocity-based bias: shift the zones ahead of movement direction.
+        # Scale velocity to a fraction of the viewport so the bias is meaningful
+        # but capped to avoid generating an absurdly large area.
+        speed = (velocity_x ** 2 + velocity_y ** 2) ** 0.5
+        if speed > 0.0001:
+            # Bias up to 40% of viewport in the movement direction
+            bias_scale = min(0.4, speed * 3.0)
+            bias_x = (velocity_x / speed) * half_w * bias_scale
+            bias_y = (velocity_y / speed) * half_h * bias_scale
+        else:
+            bias_x = 0.0
+            bias_y = 0.0
+
+        cx = camera_x + bias_x
+        cy = camera_y + bias_y
+
+        # Generation zone: 80% larger than viewport
+        gen_margin_w = half_w * 0.8
+        gen_margin_h = half_h * 0.8
         gen_bounds = (
-            camera_x - half_w - gen_margin_w,
-            camera_y - half_h - gen_margin_h,
-            camera_x + half_w + gen_margin_w,
-            camera_y + half_h + gen_margin_h,
+            cx - half_w - gen_margin_w,
+            cy - half_h - gen_margin_h,
+            cx + half_w + gen_margin_w,
+            cy + half_h + gen_margin_h,
         )
 
-        # Comfort zone: 15% larger than viewport
-        # User can pan within this without triggering regen
-        comfort_margin_w = half_w * 0.15
-        comfort_margin_h = half_h * 0.15
+        # Comfort zone: 40% larger than viewport
+        # Regen triggers when the viewport edge crosses this boundary
+        comfort_margin_w = half_w * 0.4
+        comfort_margin_h = half_h * 0.4
         comfort_bounds = (
-            camera_x - half_w - comfort_margin_w,
-            camera_y - half_h - comfort_margin_h,
-            camera_x + half_w + comfort_margin_w,
-            camera_y + half_h + comfort_margin_h,
+            cx - half_w - comfort_margin_w,
+            cy - half_h - comfort_margin_h,
+            cx + half_w + comfort_margin_w,
+            cy + half_h + comfort_margin_h,
         )
 
         return gen_bounds, comfort_bounds
@@ -114,7 +138,8 @@ class TileDataManager:
     # Public API: request generation (non-blocking)
     # -------------------------------------------------------------------------
 
-    def request_generation(self, camera_x, camera_y, zoom, aspect, gamma):
+    def request_generation(self, camera_x, camera_y, zoom, aspect, gamma,
+                           velocity_x=0.0, velocity_y=0.0):
         """
         Request tile generation for the given viewport.
         Runs on a background thread. Non-blocking.
@@ -123,7 +148,8 @@ class TileDataManager:
         if self._generation_in_progress:
             return  # Already working on it
 
-        gen_bounds, comfort_bounds = self._compute_zones(camera_x, camera_y, zoom, aspect)
+        gen_bounds, comfort_bounds = self._compute_zones(
+            camera_x, camera_y, zoom, aspect, velocity_x, velocity_y)
 
         self._generation_in_progress = True
         self._worker_thread = threading.Thread(
@@ -222,25 +248,49 @@ class TileDataManager:
         - gen_bounds are in camera/pentagrid space (same as procedural shader's p)
         - Tile vertices from _rhombus_vertices are in ribbon space
         - ribbon = 2.5 * p + shift_offset, so p = (ribbon - shift_offset) / 2.5
+
+        The grid index for direction k at camera-space point p is:
+            pindex[k] = dot(p, grid[k]) + gamma[k]
+        We center the kr/ks search around the viewport center's grid indices
+        instead of around 0, so we only visit tiles near the camera.
         """
         min_x, min_y, max_x, max_y = gen_bounds
 
         # Compute shift_offset = Σ zeta[k] * gamma[k]
         shift_offset = sum(z * g for z, g in zip(self.zeta, gamma))
 
-        # Estimate grid index range needed to cover the generation zone.
-        # Camera space viewport is roughly (max - min). In ribbon space that's 2.5x larger.
-        # Tile edge length in ribbon space is ~1 unit, so we need size ≈ 2.5 * viewport_size / 2
-        world_w = max_x - min_x
-        world_h = max_y - min_y
-        size = int(max(world_w, world_h) * 2.5) + 2
+        # Viewport center in camera space
+        cx = (min_x + max_x) * 0.5
+        cy = (min_y + max_y) * 0.5
+
+        # Viewport half-size determines search radius
+        hw = (max_x - min_x) * 0.5
+        hh = (max_y - min_y) * 0.5
+        viewport_radius = max(hw, hh)
+
+        # Compute the pentagrid index at the viewport center for each direction.
+        # grid[k] = (cos(2πk/5), sin(2πk/5)), same as zeta[k] = exp(2πik/5)
+        # pindex[k] = cx * cos(θk) + cy * sin(θk) + gamma[k]
+        center_indices = []
+        for k in range(5):
+            theta = 2.0 * math.pi * k / 5.0
+            pindex = cx * math.cos(theta) + cy * math.sin(theta) + gamma[k]
+            center_indices.append(pindex)
+
+        # Search radius in grid-index space.
+        # A tile edge in ribbon space is ~1 unit. In camera space that's ~1/2.5 = 0.4.
+        # The grid index changes by ~1 per 0.4 camera-space units in that direction.
+        # So the number of grid lines crossing the viewport is ~ viewport_radius / 0.4 = 2.5 * viewport_radius.
+        search_radius = int(viewport_radius * 2.5) + 3
 
         tiles_dict = {}
 
         for r in range(5):
+            kr_center = int(round(center_indices[r]))
             for s in range(r + 1, 5):
-                for kr in range(-size, size + 1):
-                    for ks in range(-size, size + 1):
+                ks_center = int(round(center_indices[s]))
+                for kr in range(kr_center - search_radius, kr_center + search_radius + 1):
+                    for ks in range(ks_center - search_radius, ks_center + search_radius + 1):
                         key = (r, s, kr, ks)
                         if key in tiles_dict:
                             continue
