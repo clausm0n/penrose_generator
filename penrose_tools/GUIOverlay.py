@@ -374,13 +374,19 @@ class GUIOverlay:
         glEnable(GL_DEPTH_TEST)  # Restore depth testing
         glDisable(GL_BLEND)
     
-    def get_formatted_controls(self, config_data, shader_manager):
+    def get_formatted_controls(self, config_data, renderer):
         """Get formatted control text with current values."""
         # Prepare control text with current values
         current_shader = "Unknown"
-        if hasattr(shader_manager, 'shader_names') and hasattr(shader_manager, 'current_shader_index'):
-            if 0 <= shader_manager.current_shader_index < len(shader_manager.shader_names):
-                current_shader = shader_manager.shader_names[shader_manager.current_shader_index]
+        # Support both ProceduralRenderer (new) and legacy shader_manager (for compatibility)
+        if hasattr(renderer, 'EFFECT_NAMES') and hasattr(renderer, 'effect_mode'):
+            # ProceduralRenderer
+            if 0 <= renderer.effect_mode < len(renderer.EFFECT_NAMES):
+                current_shader = renderer.EFFECT_NAMES[renderer.effect_mode]
+        elif hasattr(renderer, 'shader_names') and hasattr(renderer, 'current_shader_index'):
+            # Legacy shader_manager (for backward compatibility)
+            if 0 <= renderer.current_shader_index < len(renderer.shader_names):
+                current_shader = renderer.shader_names[renderer.current_shader_index]
 
         # Format control text with current values
         formatted_controls = []
@@ -469,7 +475,7 @@ class GUIOverlay:
             self.logger.error(f"Failed to create text texture: {e}")
             return False
 
-    def render_text_overlay(self, width, height, config_data, shader_manager):
+    def render_text_overlay(self, width, height, config_data, renderer):
         """Render text overlay using texture-based rendering."""
         if not self.visible:
             return
@@ -485,7 +491,7 @@ class GUIOverlay:
             return
 
         # Get formatted text
-        formatted_controls = self.get_formatted_controls(config_data, shader_manager)
+        formatted_controls = self.get_formatted_controls(config_data, renderer)
 
         # Create text texture if needed
         if self.text_texture is None:
@@ -532,13 +538,13 @@ class GUIOverlay:
         glEnable(GL_DEPTH_TEST)  # Restore depth testing
         glDisable(GL_BLEND)
 
-    def render_text_simple(self, width, height, config_data, shader_manager):
+    def render_text_simple(self, width, height, config_data, renderer):
         """Render text using simple OpenGL calls - disabled for OpenGL 3.1+."""
         # This method is disabled because the application uses OpenGL 3.1 forward compatible
         self.logger.debug("Simple text rendering not available in OpenGL 3.1+ forward compatible mode")
         return False
 
-    def render(self, width, height, config_data, shader_manager):
+    def render(self, width, height, config_data, renderer):
         """Render the complete GUI overlay."""
         if not self.visible:
             # Ensure we don't interfere with main rendering when hidden
@@ -556,7 +562,7 @@ class GUIOverlay:
             self.render_background_panel(width, height)
 
             # Render text overlay (texture-based for OpenGL 3.1+)
-            self.render_text_overlay(width, height, config_data, shader_manager)
+            self.render_text_overlay(width, height, config_data, renderer)
         finally:
             # Restore OpenGL state
             glUseProgram(current_program)

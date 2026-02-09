@@ -1,32 +1,46 @@
-// shift_effect.frag
+// shift_effect.frag - Procedural Penrose with shifting brightness
 #version 140
 
-// Inputs from vertex shader
-in float v_tile_type;
-in vec2 v_tile_centroid;
-in float v_is_edge;
-
-// Output color
+in vec2 v_uv;
 out vec4 fragColor;
 
-// Uniforms
-uniform vec3 color1;
-uniform vec3 color2;
-uniform float time;
+uniform vec2 u_resolution;
+uniform vec2 u_camera;
+uniform float u_zoom;
+uniform float u_time;
+uniform vec3 u_color1;
+uniform vec3 u_color2;
+uniform float u_edge_thickness;
+uniform float u_gamma[5];
+
+#include "pentagrid_common.glsl"
 
 void main() {
-    // If this is an edge, render solid black.
-    if (v_is_edge > 0.5) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    vec2 uv = v_uv - 0.5;
+    uv.x *= u_resolution.x / u_resolution.y;
+    
+    float gSc = 3.0 / u_zoom;
+    vec2 p = uv * gSc + u_camera;
+    
+    float gamma[5];
+    for (int i = 0; i < 5; i++) gamma[i] = u_gamma[i];
+    
+    TileData tile = findTile(p, gamma);
+    
+    if (!tile.found) {
+        fragColor = vec4(0.1, 0.1, 0.1, 1.0);
         return;
     }
-
-    // Otherwise, do your normal shift_effect logic
-    vec3 base_color = v_tile_type > 0.5 ? color1 : color2;
-
-    vec2 scaled_centroid = v_tile_centroid * 1000.0;
-    float time_factor = sin(time + scaled_centroid.x * scaled_centroid.y) * 0.5 + 0.5;
-
-    vec3 final_color = base_color * time_factor;
-    fragColor = vec4(final_color, 1.0);
+    
+    vec3 baseColor = tile.isFat ? u_color1 : u_color2;
+    
+    // Shift effect: brightness varies based on tile position and time
+    vec2 sc = tile.tileCentroid * 1000.0;
+    float timeFactor = sin(u_time + sc.x * sc.y) * 0.5 + 0.5;
+    vec3 tileColor = baseColor * timeFactor;
+    
+    vec3 finalColor = applyEdge(tileColor, tile.edgeDist, u_edge_thickness);
+    
+    fragColor = vec4(finalColor, 1.0);
 }
+

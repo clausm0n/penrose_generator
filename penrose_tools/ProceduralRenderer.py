@@ -160,13 +160,16 @@ class ProceduralRenderer:
         return uniforms
 
     def _load_all_shaders(self):
-        """Load all effect shaders from the procedural directory."""
-        shader_dir = os.path.join(os.path.dirname(__file__), 'Shaders', 'procedural')
+        """Load all effect shaders from the Shaders directory."""
+        shader_dir = os.path.join(os.path.dirname(__file__), 'Shaders')
         vert_path = os.path.join(shader_dir, 'procedural.vert')
 
         self.logger.info(f"Loading procedural shaders from: {shader_dir}")
 
         # Load shared vertex shader
+        if not os.path.exists(vert_path):
+            raise FileNotFoundError(f"Shared vertex shader not found: {vert_path}")
+
         with open(vert_path, 'r') as f:
             vert_src = f.read()
 
@@ -175,9 +178,8 @@ class ProceduralRenderer:
             frag_path = os.path.join(shader_dir, f'{effect_name}.frag')
 
             if not os.path.exists(frag_path):
-                self.logger.warning(f"Effect shader not found: {frag_path}")
-                # Use no_effect as fallback
-                frag_path = os.path.join(shader_dir, 'no_effect.frag')
+                self.logger.warning(f"Effect shader not found: {frag_path}, skipping")
+                continue
 
             with open(frag_path, 'r') as f:
                 frag_src = f.read()

@@ -1,6 +1,6 @@
-glfw==2.7.0
-numpy==1.26.4
-packaging==24.0
-pillow==11.0.0
-PyOpenGL==3.1.7
-typing_extensions==4.12.2 
+glfw==2.10.0  # Updated for better OpenGL 3.2+ support
+numpy>=2.4.2  # Latest version with Python 3.14 support
+packaging>=24.0
+pillow>=12.1.0  # Latest version
+PyOpenGL>=3.1.10  # Latest version with better OpenGL 3.2+ support
+typing_extensions>=4.12.2
