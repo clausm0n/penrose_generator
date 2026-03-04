@@ -90,6 +90,9 @@ class ProceduralRenderer:
         self.overlay_needs_upload = False
         self._last_gamma_for_overlay = None
 
+        # Generation tracking for two-pass pipeline
+        self._chunk_gen_id = 0           # generation ID to match geometry with patterns
+
         # Effects that use the overlay for their primary rendering (opaque overlay)
         self.OVERLAY_EFFECTS = {'region_blend'}
 
@@ -105,6 +108,8 @@ class ProceduralRenderer:
         self._depth_coverage = 0.0   # Fraction of depth pixels active (0-1)
         self._depth_centroid = (0.5, 0.5)  # UV centroid of depth data
         self._depth_data_available = False
+        self._depth_motion = 0.0  # Smoothed centroid motion magnitude (0-1)
+        self._prev_depth_centroid = (0.5, 0.5)  # Previous frame centroid for motion detection
 
         # Interaction overlay enabled — draws interaction visuals on top of any effect
         self.interaction_overlay_enabled = True
@@ -200,6 +205,7 @@ class ProceduralRenderer:
             'u_depth_enabled': glGetUniformLocation(program, 'u_depth_enabled'),
             'u_depth_coverage': glGetUniformLocation(program, 'u_depth_coverage'),
             'u_depth_centroid': glGetUniformLocation(program, 'u_depth_centroid'),
+            'u_depth_motion': glGetUniformLocation(program, 'u_depth_motion'),
         }
         glUseProgram(0)
         return uniforms
@@ -349,6 +355,8 @@ class ProceduralRenderer:
                 glUniform1f(uniforms['u_depth_coverage'], self._depth_coverage)
                 glUniform2f(uniforms['u_depth_centroid'],
                             self._depth_centroid[0], self._depth_centroid[1])
+                if uniforms.get('u_depth_motion', -1) != -1:
+                    glUniform1f(uniforms['u_depth_motion'], self._depth_motion)
                 if uniforms.get('u_depth_texture', -1) != -1:
                     glActiveTexture(GL_TEXTURE1)
                     glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
@@ -357,6 +365,8 @@ class ProceduralRenderer:
                 glUniform1f(uniforms['u_depth_enabled'], 0.0)
                 glUniform1f(uniforms['u_depth_coverage'], 0.3)
                 glUniform2f(uniforms['u_depth_centroid'], 0.5, 0.5)
+                if uniforms.get('u_depth_motion', -1) != -1:
+                    glUniform1f(uniforms['u_depth_motion'], 0.0)
 
         # Old texture-based region_blend fallback (used when overlay isn't available)
         if current_effect == 'region_blend' and not use_overlay:
@@ -386,33 +396,54 @@ class ProceduralRenderer:
         elif has_interaction:
             self._update_interaction_overlay(width, height, gamma, config_data)
 
-    def _update_overlay(self, width, height, gamma, config_data):
-        """Manage overlay tile lifecycle and render overlay on top of base."""
-        aspect = float(width) / float(height)
+    def _process_overlay_updates(self, gamma, aspect):
+        """Poll for background generation results and upload to GPU.
 
-        # Poll for completed background generation FIRST
-        # This must happen before needs_regeneration check so that
-        # _generation_in_progress is cleared and comfort_bounds are up-to-date
-        if self.tile_manager.poll_results():
-            self.overlay_needs_upload = True
-            # New tile set — old interaction state is invalid
+        Two-pass pipeline: geometry arrives first (tiles render with default
+        pattern values), pattern data arrives shortly after and is patched in.
+        The heavy NumPy packing runs on the background thread — the render
+        thread only does the fast GL upload (~1-2ms).
+        """
+        # --- Poll for new geometry (Pass 1 result) ---
+        geo_result = self.tile_manager.poll_geometry()
+        if geo_result is not None:
+            gpu_verts, gpu_data, tile_count, gen_id = geo_result
+            self._chunk_gen_id = gen_id
+
             if self.interaction_manager:
                 self.interaction_manager.on_tiles_regenerated()
 
-        # Upload new tile data to GPU if ready
-        if self.overlay_needs_upload and self.tile_manager.gpu_vertices is not None:
-            self.overlay_renderer.upload_tile_data(
-                self.tile_manager.gpu_vertices,
-                self.tile_manager.gpu_tile_data,
-                self.tile_manager.tile_count)
+            # Single full upload — fast since arrays are pre-packed on bg thread
+            self.overlay_renderer.upload_tile_data(gpu_verts, gpu_data, tile_count)
             self.overlay_needs_upload = False
             self.tile_manager.gpu_data_dirty = False
+            # Allow new generation requests while patterns are still computing
+            self.tile_manager._generation_in_progress = False
 
-        # Check if gamma changed (requires full regeneration)
+        # --- Poll for pattern data (Pass 2 result) ---
+        pat_result = self.tile_manager.poll_patterns()
+        if pat_result is not None:
+            pattern_type_col, blend_factor_col, stars, bursts, gen_id = pat_result
+
+            if gen_id == self._chunk_gen_id and self.tile_manager.gpu_tile_data is not None:
+                self.tile_manager.star_count = stars
+                self.tile_manager.starburst_count = bursts
+
+                # Patch pattern columns into the live gpu_tile_data array
+                n = len(pattern_type_col)
+                self.tile_manager.gpu_tile_data[:n, 1] = pattern_type_col
+                self.tile_manager.gpu_tile_data[:n, 2] = blend_factor_col
+
+                # Re-upload the data VBO with updated patterns
+                self.overlay_renderer.upload_tile_data(
+                    self.tile_manager.gpu_vertices,
+                    self.tile_manager.gpu_tile_data,
+                    self.tile_manager.tile_count)
+
+        # --- Request new generation if camera left comfort zone ---
         gamma_tuple = tuple(round(g, 4) for g in gamma)
         gamma_changed = (gamma_tuple != self._last_gamma_for_overlay)
 
-        # Check if camera moved outside comfort zone
         if gamma_changed or self.tile_manager.needs_regeneration(
                 self.camera_x, self.camera_y, self.zoom, aspect):
             self._last_gamma_for_overlay = gamma_tuple
@@ -420,7 +451,7 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect, gamma,
                 self.velocity_x, self.velocity_y)
 
-        # Depth mask management — enable/disable mask on the overlay renderer
+        # --- Depth mask management (unchanged) ---
         mask_stamp_active = (self.interaction_manager
                              and self.interaction_manager._mask_stamp_active)
         if self.depth_mask_enabled and not mask_stamp_active:
@@ -428,6 +459,11 @@ class ProceduralRenderer:
         elif not mask_stamp_active:
             if self.overlay_renderer:
                 self.overlay_renderer.set_mask_enabled(False)
+
+    def _update_overlay(self, width, height, gamma, config_data):
+        """Manage overlay tile lifecycle and render overlay on top of base."""
+        aspect = float(width) / float(height)
+        self._process_overlay_updates(gamma, aspect)
 
         # Render overlay tiles on top of procedural base (primary mode = opaque)
         self.overlay_renderer.render(
@@ -436,46 +472,9 @@ class ProceduralRenderer:
             self.edge_thickness, glfw.get_time(), overlay_mode=0)
 
     def _update_interaction_overlay(self, width, height, gamma, config_data):
-        """Manage tile lifecycle for interaction overlay (non-region_blend effects).
-        Same tile generation logic, but renders with alpha blending so the
-        procedural base shows through. Includes depth mask modulation layer."""
+        """Manage tile lifecycle for interaction overlay (non-region_blend effects)."""
         aspect = float(width) / float(height)
-
-        # Poll for completed background generation
-        if self.tile_manager.poll_results():
-            self.overlay_needs_upload = True
-            # New tile set — old interaction state is invalid
-            if self.interaction_manager:
-                self.interaction_manager.on_tiles_regenerated()
-
-        # Upload new tile data to GPU if ready
-        if self.overlay_needs_upload and self.tile_manager.gpu_vertices is not None:
-            self.overlay_renderer.upload_tile_data(
-                self.tile_manager.gpu_vertices,
-                self.tile_manager.gpu_tile_data,
-                self.tile_manager.tile_count)
-            self.overlay_needs_upload = False
-            self.tile_manager.gpu_data_dirty = False
-
-        # Check if gamma changed or camera moved outside comfort zone
-        gamma_tuple = tuple(round(g, 4) for g in gamma)
-        gamma_changed = (gamma_tuple != self._last_gamma_for_overlay)
-
-        if gamma_changed or self.tile_manager.needs_regeneration(
-                self.camera_x, self.camera_y, self.zoom, aspect):
-            self._last_gamma_for_overlay = gamma_tuple
-            self.tile_manager.request_generation(
-                self.camera_x, self.camera_y, self.zoom, aspect, gamma,
-                self.velocity_x, self.velocity_y)
-
-        # Depth mask management — enable/disable mask on the overlay renderer
-        mask_stamp_active = (self.interaction_manager
-                             and self.interaction_manager._mask_stamp_active)
-        if self.depth_mask_enabled and not mask_stamp_active:
-            self._update_depth_mask()
-        elif not mask_stamp_active:
-            if self.overlay_renderer:
-                self.overlay_renderer.set_mask_enabled(False)
+        self._process_overlay_updates(gamma, aspect)
 
         # Render overlay if there are active interactions or depth mask to show
         if self._has_active_interactions():
@@ -681,6 +680,18 @@ class ProceduralRenderer:
                 self._depth_centroid = (0.5, 0.5)
         else:
             self._depth_centroid = (0.5, 0.5)
+
+        # Motion detection: distance the centroid moved since last frame
+        dx = self._depth_centroid[0] - self._prev_depth_centroid[0]
+        dy = self._depth_centroid[1] - self._prev_depth_centroid[1]
+        raw_motion = (dx * dx + dy * dy) ** 0.5
+        # Smooth: ramp up fast, decay very slowly
+        # UV-space movements are tiny (0.001-0.05), so scale up aggressively
+        if raw_motion > 0.002:
+            self._depth_motion = min(1.0, self._depth_motion + raw_motion * 40.0)
+        else:
+            self._depth_motion = max(0.0, self._depth_motion * 0.995)
+        self._prev_depth_centroid = self._depth_centroid
 
         self._depth_data_available = True
 

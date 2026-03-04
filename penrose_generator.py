@@ -539,8 +539,12 @@ def main():
 
             glfw.swap_buffers(window)
 
-            # Frame rate limiting
-            while glfw.get_time() < last_time + 1.0 / 60.0:
+            # Frame rate limiting — sleep to yield CPU to background threads
+            frame_target = last_time + 1.0 / 60.0
+            remaining = frame_target - glfw.get_time()
+            if remaining > 0.001:
+                time.sleep(remaining - 0.001)  # sleep most of the wait
+            while glfw.get_time() < frame_target:  # spin only the last ~1ms for accuracy
                 pass
             last_time = glfw.get_time()
 

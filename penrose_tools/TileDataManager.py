@@ -55,8 +55,22 @@ class TileDataManager:
         self.star_count = 0
         self.starburst_count = 0
 
-        # Current gamma (needed for ribbon→camera space conversion in _pack_gpu_buffers)
+        # Current gamma (needed for ribbon->camera space conversion in _pack_gpu_buffers)
         self._current_gamma = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+        # Tile geometry cache: reuse tiles across regenerations when gamma is unchanged.
+        # Keyed by (r, s, kr, ks) -> OverlayTile with valid vertices.
+        self._tile_cache = {}         # dict[tuple, OverlayTile]
+        self._cache_gamma = None      # gamma tuple the cache was built with
+
+        # Two-pass staged results for incremental loading
+        self._staged_geometry = None   # (tiles_dict, tile_list, gpu_verts, gpu_data,
+                                       #  gen_bounds, comfort_bounds, gamma, gen_id)
+        self._staged_patterns = None   # (pattern_type_col, blend_factor_col, stars, bursts, gen_id)
+
+        # Generation ID for interruption handling
+        self._generation_id = 0
+        self._active_generation_id = 0
 
     def shutdown(self):
         """Signal background thread to stop."""
@@ -144,7 +158,7 @@ class TileDataManager:
         """
         Request tile generation for the given viewport.
         Runs on a background thread. Non-blocking.
-        Returns immediately; call poll_results() each frame to check for completion.
+        Returns immediately; poll poll_geometry()/poll_patterns() each frame.
         """
         if self._generation_in_progress:
             return  # Already working on it
@@ -152,76 +166,147 @@ class TileDataManager:
         gen_bounds, comfort_bounds = self._compute_zones(
             camera_x, camera_y, zoom, aspect, velocity_x, velocity_y)
 
+        self._generation_id += 1
+        self._active_generation_id = self._generation_id
         self._generation_in_progress = True
         self._worker_thread = threading.Thread(
             target=self._generate_worker,
-            args=(gen_bounds, comfort_bounds, gamma),
+            args=(gen_bounds, comfort_bounds, gamma, self._generation_id),
             daemon=True
         )
         self._worker_thread.start()
 
-    def poll_results(self):
+    def poll_geometry(self):
+        """Check if Pass 1 (geometry + GPU arrays) results are ready.
+        If so, swap in tile data and return staged GPU arrays.
+        Returns (gpu_vertices, gpu_tile_data, tile_count, generation_id) or None.
         """
-        Check if background generation is complete.
-        If so, swap in the new tile data and mark GPU buffers dirty.
-        Returns True if new data was swapped in.
-        """
-        if self._pending_result is None:
-            return False
+        if self._staged_geometry is None:
+            return None
 
         with self._lock:
-            tiles_dict, tile_list, gen_bounds, comfort_bounds, stars, bursts, gamma = self._pending_result
-            self._pending_result = None
+            staged = self._staged_geometry
+            self._staged_geometry = None
+
+        (tiles_dict, tile_list, gpu_vertices, gpu_tile_data,
+         gen_bounds, comfort_bounds, gamma, generation_id) = staged
 
         self.tiles = tiles_dict
         self.tile_list = tile_list
         self.gen_bounds = gen_bounds
         self.comfort_bounds = comfort_bounds
-        self.star_count = stars
-        self.starburst_count = bursts
         self.tile_count = len(tile_list)
         self._current_gamma = gamma
+        self.gpu_vertices = gpu_vertices
+        self.gpu_tile_data = gpu_tile_data
 
-        # Build O(1) tile→index lookup (used by InteractionManager for neighbor traversal)
+        # Build O(1) tile->index lookup
         self._tile_index_map = {id(tile): i for i, tile in enumerate(tile_list)}
 
-        self._pack_gpu_buffers()
+        self.logger.info(f"Geometry ready: {self.tile_count} tiles (gen_id={generation_id})")
+        return (gpu_vertices, gpu_tile_data, self.tile_count, generation_id)
+
+    def poll_patterns(self):
+        """Check if Pass 2 (pattern detection) results are ready.
+        Returns (pattern_type_col, blend_factor_col, stars, bursts, generation_id) or None.
+        """
+        if self._staged_patterns is None:
+            return None
+
+        with self._lock:
+            staged = self._staged_patterns
+            self._staged_patterns = None
+
+        return staged
+
+    def poll_results(self):
+        """Legacy compatibility shim. Prefer poll_geometry()/poll_patterns()."""
+        geo = self.poll_geometry()
+        if geo is None:
+            return False
+        # Also consume patterns if ready
+        pat = self.poll_patterns()
+        if pat is not None:
+            pattern_type_col, blend_factor_col, stars, bursts, gen_id = pat
+            self.gpu_tile_data[:len(pattern_type_col), 1] = pattern_type_col
+            self.gpu_tile_data[:len(blend_factor_col), 2] = blend_factor_col
+            self.star_count = stars
+            self.starburst_count = bursts
         self.gpu_data_dirty = True
         self._generation_in_progress = False
-
-        self.logger.info(
-            f"Tile data ready: {self.tile_count} tiles, "
-            f"{self.star_count} stars, {self.starburst_count} starbursts"
-        )
         return True
 
     # -------------------------------------------------------------------------
     # Background worker
     # -------------------------------------------------------------------------
 
-    def _generate_worker(self, gen_bounds, comfort_bounds, gamma):
-        """Background thread: generate tiles, neighbors, patterns."""
+    def _generate_worker(self, gen_bounds, comfort_bounds, gamma, generation_id):
+        """Background thread: two-pass generation.
+        Pass 1: tiles + GPU buffer packing (geometry only, default patterns).
+        Pass 2: neighbors + patterns -> pattern patch columns.
+        """
         try:
             t0 = time.perf_counter()
+
+            # Check if gamma changed — invalidate tile cache
+            gamma_tuple = tuple(round(g, 6) for g in gamma)
+            if self._cache_gamma != gamma_tuple:
+                self._tile_cache = {}
+                self._cache_gamma = gamma_tuple
 
             tiles_dict = self._generate_tiles(gen_bounds, gamma)
             tile_list = list(tiles_dict.values())
             t1 = time.perf_counter()
 
-            self._calculate_neighbors(tile_list)
+            # Pack GPU arrays with default pattern values (runs on background thread)
+            gpu_vertices, gpu_tile_data = self._pack_gpu_buffers_staged(tile_list, gamma)
             t2 = time.perf_counter()
 
-            stars, bursts = self._detect_patterns(tile_list)
-            t3 = time.perf_counter()
-
-            self.logger.debug(
-                f"Generation: {len(tile_list)} tiles in {(t1-t0)*1000:.1f}ms, "
-                f"neighbors {(t2-t1)*1000:.1f}ms, patterns {(t3-t2)*1000:.1f}ms, "
-                f"total {(t3-t0)*1000:.1f}ms"
-            )
+            # Check for interruption before posting Pass 1
+            if self._shutdown or generation_id != self._active_generation_id:
+                self._generation_in_progress = False
+                return
 
             with self._lock:
-                self._pending_result = (tiles_dict, tile_list, gen_bounds, comfort_bounds, stars, bursts, gamma)
+                self._staged_geometry = (
+                    tiles_dict, tile_list, gpu_vertices, gpu_tile_data,
+                    gen_bounds, comfort_bounds, gamma, generation_id
+                )
+
+            self.logger.debug(
+                f"Pass 1: {len(tile_list)} tiles in {(t1-t0)*1000:.1f}ms, "
+                f"pack {(t2-t1)*1000:.1f}ms"
+            )
+
+            # --- Pass 2: Neighbors + pattern detection ---
+            self._calculate_neighbors(tile_list)
+            t3 = time.perf_counter()
+
+            stars, bursts = self._detect_patterns(tile_list)
+            t4 = time.perf_counter()
+
+            # Build pattern patch: the two columns that changed
+            n = len(tile_list)
+            pattern_type_col = np.array([t.pattern_type for t in tile_list], dtype=np.float32)
+            blend_factor_col = np.array([t.blend_factor for t in tile_list], dtype=np.float32)
+
+            # Check for interruption before posting Pass 2
+            if self._shutdown or generation_id != self._active_generation_id:
+                self._generation_in_progress = False
+                return
+
+            with self._lock:
+                self._staged_patterns = (
+                    pattern_type_col, blend_factor_col, stars, bursts, generation_id
+                )
+
+            # Update tile cache
+            self._tile_cache = tiles_dict
+
+            self.logger.debug(
+                f"Pass 2: neighbors {(t3-t2)*1000:.1f}ms, "
+                f"patterns {(t4-t3)*1000:.1f}ms"
+            )
 
         except Exception as e:
             self.logger.error(f"Tile generation failed: {e}", exc_info=True)
@@ -232,7 +317,9 @@ class TileDataManager:
     # -------------------------------------------------------------------------
 
     def _rhombus_vertices(self, gamma, r, s, kr, ks):
-        """Compute 4 vertices of a rhombus at grid intersection (r,s,kr,ks)."""
+        """Compute 4 vertices of a rhombus at grid intersection (r,s,kr,ks).
+        Scalar fallback — only used outside the vectorized path.
+        """
         z0 = 1j * (self.zeta[r] * (ks - gamma[s]) - self.zeta[s] * (kr - gamma[r])) / self.zeta[s - r].imag
         z0 = complex(round(z0.real, 5), round(z0.imag, 5))
 
@@ -246,76 +333,125 @@ class TileDataManager:
         return verts
 
     def _generate_tiles(self, gen_bounds, gamma):
-        """Generate OverlayTile objects covering the generation zone.
+        """Generate OverlayTile objects covering the generation zone (vectorized).
 
-        Coordinate spaces:
-        - gen_bounds are in camera/pentagrid space (same as procedural shader's p)
-        - Tile vertices from _rhombus_vertices are in ribbon space
-        - ribbon = 2.5 * p + shift_offset, so p = (ribbon - shift_offset) / 2.5
-
-        The grid index for direction k at camera-space point p is:
-            pindex[k] = dot(p, grid[k]) + gamma[k]
-        We center the kr/ks search around the viewport center's grid indices
-        instead of around 0, so we only visit tiles near the camera.
+        For each (r, s) direction pair, all (kr, ks) grid intersections are
+        computed in bulk using NumPy, then bounds-checked with vectorized ops.
+        Only the surviving tiles are constructed as OverlayTile objects.
         """
         min_x, min_y, max_x, max_y = gen_bounds
 
-        # Compute shift_offset = Σ zeta[k] * gamma[k]
-        shift_offset = sum(z * g for z, g in zip(self.zeta, gamma))
+        # Precompute zeta as numpy complex128 array
+        zeta = np.array(self.zeta, dtype=np.complex128)      # (5,)
+        gamma_arr = np.array(gamma, dtype=np.float64)         # (5,)
 
-        # Viewport center in camera space
+        # shift_offset for ribbon -> camera conversion
+        shift_offset = np.sum(zeta * gamma_arr)
+        inv_2_5 = 1.0 / 2.5
+
+        # Precompute zeta reciprocals for the k-vector floor computation
+        # k[d] = ceil(Re(z0 / zeta[d]) + gamma[d])  (the 0 - -x // 1 trick)
+        zeta_inv = 1.0 / zeta  # (5,) complex
+
+        # Viewport center and search radius
         cx = (min_x + max_x) * 0.5
         cy = (min_y + max_y) * 0.5
-
-        # Viewport half-size determines search radius
         hw = (max_x - min_x) * 0.5
         hh = (max_y - min_y) * 0.5
         viewport_radius = max(hw, hh)
 
-        # Compute the pentagrid index at the viewport center for each direction.
-        # grid[k] = (cos(2πk/5), sin(2πk/5)), same as zeta[k] = exp(2πik/5)
-        # pindex[k] = cx * cos(θk) + cy * sin(θk) + gamma[k]
-        center_indices = []
-        for k in range(5):
-            theta = 2.0 * math.pi * k / 5.0
-            pindex = cx * math.cos(theta) + cy * math.sin(theta) + gamma[k]
-            center_indices.append(pindex)
-
-        # Search radius in grid-index space.
-        # A tile edge in ribbon space is ~1 unit. In camera space that's ~1/2.5 = 0.4.
-        # The grid index changes by ~1 per 0.4 camera-space units in that direction.
-        # So the number of grid lines crossing the viewport is ~ viewport_radius / 0.4 = 2.5 * viewport_radius.
+        # Center indices for each pentagrid direction
+        thetas = 2.0 * math.pi * np.arange(5) / 5.0
+        center_indices = cx * np.cos(thetas) + cy * np.sin(thetas) + gamma_arr
         search_radius = int(viewport_radius * 2.5) + 3
+
+        # The 4 vertex corner offsets for each rhombus: (dkr, dks)
+        corner_offsets = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)  # (4, 2)
 
         tiles_dict = {}
 
         for r in range(5):
             kr_center = int(round(center_indices[r]))
+            zeta_r = zeta[r]
             for s in range(r + 1, 5):
+                if self._shutdown:
+                    return tiles_dict
+
                 ks_center = int(round(center_indices[s]))
-                for kr in range(kr_center - search_radius, kr_center + search_radius + 1):
-                    for ks in range(ks_center - search_radius, ks_center + search_radius + 1):
-                        key = (r, s, kr, ks)
-                        if key in tiles_dict:
-                            continue
+                zeta_s = zeta[s]
+                denom = zeta[s - r].imag  # scalar
 
-                        verts = self._rhombus_vertices(gamma, r, s, kr, ks)
+                # Build all (kr, ks) pairs for this (r, s) as arrays
+                kr_range = np.arange(kr_center - search_radius, kr_center + search_radius + 1, dtype=np.float64)
+                ks_range = np.arange(ks_center - search_radius, ks_center + search_radius + 1, dtype=np.float64)
+                KR, KS = np.meshgrid(kr_range, ks_range, indexing='ij')
+                kr_flat = KR.ravel()  # (M,)
+                ks_flat = KS.ravel()  # (M,)
+                M = len(kr_flat)
 
-                        # Check if any vertex falls within generation bounds
-                        # Convert ribbon-space vertex to camera space: p = (v - shift_offset) / 2.5
-                        in_bounds = False
-                        for v in verts:
-                            v_cam = (v - shift_offset) / 2.5
-                            if min_x <= v_cam.real <= max_x and min_y <= v_cam.imag <= max_y:
-                                in_bounds = True
-                                break
+                # ---- Vectorized z0 computation ----
+                # z0 = 1j * (zeta[r] * (ks - gamma[s]) - zeta[s] * (kr - gamma[r])) / denom
+                z0 = 1j * (zeta_r * (ks_flat - gamma_arr[s]) - zeta_s * (kr_flat - gamma_arr[r])) / denom
+                z0 = np.round(z0.real, 5) + 1j * np.round(z0.imag, 5)  # (M,) complex
 
-                        if in_bounds:
-                            tile = OverlayTile(verts, r, s, kr, ks)
-                            tiles_dict[key] = tile
+                # ---- Vectorized k-vector: k[d] = ceil(Re(z0 / zeta[d]) + gamma[d]) ----
+                # z0[:, None] / zeta[None, :] -> (M, 5)
+                z0_over_zeta = z0[:, None] * zeta_inv[None, :]  # (M, 5) complex
+                k_base = np.floor(z0_over_zeta.real + gamma_arr[None, :]).astype(np.float64)
+                # The original uses: 0 - -(Re(z0/t) + p) // 1  which equals ceil(...) for non-integer
+                # np.floor gives the //1 part; 0 - -x//1 = -(-x//1) = ceil(x) for non-integers
+                k_base = -np.floor(-(z0_over_zeta.real + gamma_arr[None, :]))  # (M, 5)
 
-                        if self._shutdown:
-                            return tiles_dict
+                # ---- Vectorized 4 vertices per tile ----
+                # For each corner (dkr, dks), set k[r] = kr + dkr, k[s] = ks + dks
+                # vertex = sum(k[d] * zeta[d] for d in range(5))
+                # = sum(k_base[d] * zeta[d]) + dkr * zeta[r] + dks * zeta[s]  (since only k[r],k[s] change)
+                #
+                # base_vertex = sum over d of k_base[d] * zeta[d]
+                # but k_base[r] and k_base[s] are overwritten by kr, ks in the original code
+                # So: vertex = sum_{d != r,s}(k_base[d] * zeta[d]) + (kr+dkr)*zeta[r] + (ks+dks)*zeta[s]
+
+                # Sum over non-(r,s) directions
+                mask = np.ones(5, dtype=bool)
+                mask[r] = False
+                mask[s] = False
+                # base_sum = sum of k_base[d] * zeta[d] for d not in {r, s}
+                base_sum = np.sum(k_base[:, mask] * zeta[None, mask], axis=1)  # (M,) complex
+
+                # 4 vertices: shape (M, 4) complex
+                all_verts = np.empty((M, 4), dtype=np.complex128)
+                for ci, (dkr, dks) in enumerate(corner_offsets):
+                    all_verts[:, ci] = base_sum + (kr_flat + dkr) * zeta_r + (ks_flat + dks) * zeta_s
+                # Round to 5 decimals
+                all_verts = np.round(all_verts.real, 5) + 1j * np.round(all_verts.imag, 5)
+
+                # ---- Vectorized bounds check in camera space ----
+                # p_cam = (ribbon - shift_offset) / 2.5
+                cam_verts = (all_verts - shift_offset) * inv_2_5  # (M, 4) complex
+                cam_x = cam_verts.real  # (M, 4)
+                cam_y = cam_verts.imag  # (M, 4)
+
+                # Tile is in bounds if ANY of its 4 vertices is inside gen_bounds
+                in_x = (cam_x >= min_x) & (cam_x <= max_x)  # (M, 4) bool
+                in_y = (cam_y >= min_y) & (cam_y <= max_y)
+                in_bounds = np.any(in_x & in_y, axis=1)  # (M,) bool
+
+                # ---- Create OverlayTile objects only for visible tiles ----
+                # Reuse cached tiles when gamma hasn't changed (vertices are identical)
+                cache = self._tile_cache
+                indices = np.nonzero(in_bounds)[0]
+                for idx in indices:
+                    ki = int(kr_flat[idx])
+                    ksi = int(ks_flat[idx])
+                    key = (r, s, ki, ksi)
+                    if key not in tiles_dict:
+                        cached = cache.get(key)
+                        if cached is not None:
+                            tiles_dict[key] = cached
+                        else:
+                            v = all_verts[idx]
+                            tile_verts = [v[0], v[1], v[2], v[3]]
+                            tiles_dict[key] = OverlayTile(tile_verts, r, s, ki, ksi)
 
         return tiles_dict
 
@@ -324,169 +460,205 @@ class TileDataManager:
     # -------------------------------------------------------------------------
 
     def _calculate_neighbors(self, tile_list):
-        """Build neighbor graph using edge hashing. O(N) where N = number of tiles."""
-        edge_map = {}  # normalized_edge -> list of tiles
+        """Build neighbor graph using edge hashing. O(N) where N = number of tiles.
+
+        Uses raw vertex values (already rounded to 5dp from generation) as edge
+        keys, avoiding the overhead of normalized_edge() / edges() method calls.
+        """
+        edge_map = {}  # (v_lo, v_hi) -> [tile, ...]
 
         for tile in tile_list:
             tile.neighbors = []  # reset
-            for edge in tile.edges():
-                if edge not in edge_map:
-                    edge_map[edge] = []
-                edge_map[edge].append(tile)
+            verts = tile.vertices
+            n = len(verts)
+            for i in range(n):
+                v1 = verts[i]
+                v2 = verts[(i + 1) % n]
+                # Sort by (real, imag) to normalize edge direction
+                if (v1.real, v1.imag) < (v2.real, v2.imag):
+                    edge_key = (v1, v2)
+                else:
+                    edge_key = (v2, v1)
+                bucket = edge_map.get(edge_key)
+                if bucket is None:
+                    edge_map[edge_key] = [tile]
+                else:
+                    bucket.append(tile)
 
-        # Link tiles sharing an edge
+        # Link tiles sharing an edge (direct list append, skip add_neighbor dedup)
         for tiles_on_edge in edge_map.values():
             if len(tiles_on_edge) == 2:
-                tiles_on_edge[0].add_neighbor(tiles_on_edge[1])
-                tiles_on_edge[1].add_neighbor(tiles_on_edge[0])
+                t0, t1 = tiles_on_edge
+                t0.neighbors.append(t1)
+                t1.neighbors.append(t0)
 
     # -------------------------------------------------------------------------
     # Pattern detection with spatial vertex index
     # -------------------------------------------------------------------------
 
-    def _build_vertex_index(self, tile_list, precision=3):
-        """
-        Build a spatial index: rounded_vertex -> list of tiles containing that vertex.
-        This replaces the O(N) scan in find_star/find_starburst with O(1) lookups.
-        """
-        vertex_to_tiles = {}
-        for tile in tile_list:
-            for v in tile.vertices:
-                rv = complex(round(v.real, precision), round(v.imag, precision))
-                if rv not in vertex_to_tiles:
-                    vertex_to_tiles[rv] = []
-                vertex_to_tiles[rv].append(tile)
-        return vertex_to_tiles
-
-    def _is_valid_star_kite(self, tile):
-        """A kite is a valid star candidate if it has exactly 2 dart neighbors."""
-        if not tile.is_kite:
-            return False
-        dart_count = sum(1 for n in tile.neighbors if not n.is_kite)
-        return dart_count == 2
-
-    def _is_valid_starburst_dart(self, tile):
-        """A dart is a valid starburst candidate if it has exactly 2 dart neighbors."""
-        if tile.is_kite:
-            return False
-        dart_count = sum(1 for n in tile.neighbors if not n.is_kite)
-        return dart_count == 2
-
-    def _find_common_vertex(self, tiles, precision=3):
-        """Find a vertex shared by all given tiles."""
-        if not tiles:
-            return None
-        vertex_count = {}
-        for tile in tiles:
-            for v in tile.vertices:
-                rv = complex(round(v.real, precision), round(v.imag, precision))
-                vertex_count[rv] = vertex_count.get(rv, 0) + 1
-        for v, count in vertex_count.items():
-            if count >= len(tiles):
-                return v
-        return None
-
     def _detect_patterns(self, tile_list):
         """
-        Detect star and starburst patterns using spatial vertex index.
-        Sets pattern_type and blend_factor on each tile.
-        Returns (star_count, starburst_count).
-        """
-        vertex_index = self._build_vertex_index(tile_list)
-        pattern_tiles = set()  # tiles already assigned to a pattern
-        stars = []
-        starbursts = []
+        Detect star and starburst patterns via single-pass vertex index scan.
 
+        Instead of iterating tiles and searching neighbors for common vertices,
+        we build a vertex index and scan it directly.  Each vertex maps to all
+        tiles sharing it, so pattern detection is just a count + filter:
+          - Star:      exactly 5 valid kites at one vertex
+          - Starburst: exactly 10 valid darts at one vertex
+
+        Complexity: O(N) for validity + O(V) for vertex scan, where V ~ 2N.
+        """
+        # ---- Build vertex index using NumPy-rounded keys ----
+        # Bulk-extract all vertices into a flat array, round with NumPy,
+        # then scatter back into a dict keyed by (rounded_real, rounded_imag).
+        n = len(tile_list)
+        all_verts_flat = np.empty(n * 4, dtype=np.complex128)
+        for i, tile in enumerate(tile_list):
+            verts = tile.vertices
+            all_verts_flat[i * 4]     = verts[0]
+            all_verts_flat[i * 4 + 1] = verts[1]
+            all_verts_flat[i * 4 + 2] = verts[2]
+            all_verts_flat[i * 4 + 3] = verts[3]
+
+        # Vectorized round to 3dp
+        rounded_real = np.round(all_verts_flat.real, 3)
+        rounded_imag = np.round(all_verts_flat.imag, 3)
+
+        # Build vertex -> tiles dict using pre-rounded values
+        vertex_to_tiles = {}
+        for i, tile in enumerate(tile_list):
+            base = i * 4
+            for j in range(4):
+                idx = base + j
+                rk = (rounded_real[idx], rounded_imag[idx])
+                bucket = vertex_to_tiles.get(rk)
+                if bucket is None:
+                    vertex_to_tiles[rk] = [tile]
+                else:
+                    bucket.append(tile)
+
+        # ---- Pre-compute validity flags with fast neighbor counting ----
+        # A valid star kite: is_kite=True and exactly 2 dart neighbors
+        # A valid starburst dart: is_kite=False and exactly 2 dart neighbors
+        valid_star_kite = set()
+        valid_burst_dart = set()
         for tile in tile_list:
-            if tile in pattern_tiles:
+            # Count dart neighbors using a simple loop (faster than generator + sum)
+            dart_count = 0
+            for n in tile.neighbors:
+                if not n.is_kite:
+                    dart_count += 1
+            if dart_count == 2:
+                if tile.is_kite:
+                    valid_star_kite.add(id(tile))
+                else:
+                    valid_burst_dart.add(id(tile))
+
+        pattern_tiles = set()   # tile ids already claimed by a pattern
+        star_groups = []
+        burst_groups = []
+
+        # ---- Single pass over vertex index ----
+        for tiles_at_v in vertex_to_tiles.values():
+            count = len(tiles_at_v)
+
+            # Quick rejection: stars need 5+ tiles, starbursts need 10+
+            if count < 5:
                 continue
 
-            # Try star detection (5 kites sharing a vertex)
-            if tile.is_kite and self._is_valid_star_kite(tile):
-                kite_neighbors = [n for n in tile.neighbors
-                                  if n.is_kite and self._is_valid_star_kite(n)
-                                  and n not in pattern_tiles]
-                for n1 in kite_neighbors:
-                    found = False
-                    for n2 in kite_neighbors:
-                        if n1 is n2:
-                            continue
-                        common_v = self._find_common_vertex([tile, n1, n2])
-                        if common_v is None:
-                            continue
-                        # Use vertex index for O(1) lookup instead of scanning all tiles
-                        candidates = vertex_index.get(common_v, [])
-                        star_tiles = [t for t in candidates
-                                      if t.is_kite and self._is_valid_star_kite(t)]
-                        if len(star_tiles) == 5:
-                            stars.append(star_tiles)
-                            pattern_tiles.update(star_tiles)
-                            found = True
-                            break
-                    if found:
-                        break
+            # --- Star: 5 valid kites sharing this vertex ---
+            if count >= 5:
+                star_candidates = [t for t in tiles_at_v
+                                   if id(t) in valid_star_kite and id(t) not in pattern_tiles]
+                if len(star_candidates) == 5:
+                    star_groups.append(star_candidates)
+                    for t in star_candidates:
+                        pattern_tiles.add(id(t))
+                    continue
 
-            # Try starburst detection (10 darts sharing a vertex)
-            elif not tile.is_kite and self._is_valid_starburst_dart(tile):
-                dart_neighbors = [n for n in tile.neighbors
-                                  if not n.is_kite and self._is_valid_starburst_dart(n)
-                                  and n not in pattern_tiles]
-                potential = [tile] + dart_neighbors
-                if len(potential) >= 3:
-                    common_v = self._find_common_vertex(potential)
-                    if common_v is not None:
-                        candidates = vertex_index.get(common_v, [])
-                        burst_tiles = [t for t in candidates
-                                       if not t.is_kite and self._is_valid_starburst_dart(t)]
-                        if len(burst_tiles) == 10:
-                            starbursts.append(burst_tiles)
-                            pattern_tiles.update(burst_tiles)
+            # --- Starburst: 10 valid darts sharing this vertex ---
+            if count >= 10:
+                burst_candidates = [t for t in tiles_at_v
+                                    if id(t) in valid_burst_dart and id(t) not in pattern_tiles]
+                if len(burst_candidates) == 10:
+                    burst_groups.append(burst_candidates)
+                    for t in burst_candidates:
+                        pattern_tiles.add(id(t))
 
-        # Assign pattern data to tiles
-        star_set = set()
-        for group in stars:
-            star_set.update(group)
-        burst_set = set()
-        for group in starbursts:
-            burst_set.update(group)
+        # ---- Assign pattern data to tiles ----
+        star_ids = set()
+        for group in star_groups:
+            for t in group:
+                star_ids.add(id(t))
+        burst_ids = set()
+        for group in burst_groups:
+            for t in group:
+                burst_ids.add(id(t))
 
         for tile in tile_list:
-            if tile in star_set:
+            tid = id(tile)
+            if tid in star_ids:
                 tile.pattern_type = 1.0
                 tile.blend_factor = 0.3
-            elif tile in burst_set:
+            elif tid in burst_ids:
                 tile.pattern_type = 2.0
                 tile.blend_factor = 0.7
             else:
-                # Neighbor-based blend
-                kite_count = sum(1 for n in tile.neighbors if n.is_kite)
+                # Neighbor-based blend (fast loop)
+                kite_count = 0
+                for n in tile.neighbors:
+                    if n.is_kite:
+                        kite_count += 1
                 total = len(tile.neighbors)
                 tile.blend_factor = 0.5 if total == 0 else kite_count / total
                 tile.pattern_type = 0.0
 
-        return len(stars), len(starbursts)
+        return len(star_groups), len(burst_groups)
 
     # -------------------------------------------------------------------------
     # GPU buffer packing
     # -------------------------------------------------------------------------
 
+    def _pack_gpu_buffers_staged(self, tile_list, gamma):
+        """Pack tile geometry into numpy arrays (runs on background thread).
+        Returns (gpu_vertices, gpu_tile_data). Uses default pattern values
+        since pattern detection has not run yet at this stage.
+        """
+        n = len(tile_list)
+        if n == 0:
+            return (np.zeros((0, 4, 2), dtype=np.float32),
+                    np.zeros((0, 8), dtype=np.float32))
+
+        shift_offset = sum(z * g for z, g in zip(self.zeta, gamma))
+        sx, sy = shift_offset.real, shift_offset.imag
+
+        ribbon = np.array(
+            [[(v.real, v.imag) for v in tile.vertices[:4]] for tile in tile_list],
+            dtype=np.float32)  # (N, 4, 2)
+
+        ribbon[:, :, 0] -= sx
+        ribbon[:, :, 1] -= sy
+        ribbon *= (1.0 / 2.5)
+
+        data = np.empty((n, 8), dtype=np.float32)
+        data[:, 0] = np.array([1.0 if t.is_kite else 0.0 for t in tile_list], dtype=np.float32)
+        data[:, 1] = 0.0   # pattern_type: default (updated in Pass 2)
+        data[:, 2] = 0.5   # blend_factor: default (updated in Pass 2)
+        data[:, 3] = 0.0   # selected
+        data[:, 4] = 0.0   # hovered
+        data[:, 5] = 0.0   # anim_phase
+        data[:, 6] = 0.0   # anim_type
+        data[:, 7] = np.array([float(hash((t.r, t.s, t.kr, t.ks)) % 10000) / 10000.0
+                               for t in tile_list], dtype=np.float32)
+
+        return ribbon, data
+
     def _pack_gpu_buffers(self):
         """
-        Pack tile data into numpy arrays for GPU upload.
+        Pack tile data into numpy arrays for GPU upload (vectorized).
 
         gpu_vertices: float32 (N, 4, 2) - four corners per tile in camera/pentagrid space
-            Vertices from _rhombus_vertices are in ribbon space.
-            Ribbon space rb_p = 2.5*p + shift_offset (for 5 evenly-spaced unit vectors),
-            so we convert: p = (rb_p - shift_offset) / 2.5
-        gpu_tile_data: float32 (N, 8) - per-tile attributes:
-            [0] is_kite (0.0 or 1.0)
-            [1] pattern_type (0=normal, 1=star, 2=starburst)
-            [2] blend_factor (0.0-1.0)
-            [3] selected (0.0 or 1.0)
-            [4] hovered (0.0 or 1.0)
-            [5] anim_phase (0.0-1.0)
-            [6] anim_type (0=none, 2=cascade, 3=ripple)
-            [7] tile_id (hash-based random for seeding)
+        gpu_tile_data: float32 (N, 8) - per-tile attributes
         """
         n = len(self.tile_list)
         if n == 0:
@@ -494,35 +666,32 @@ class TileDataManager:
             self.gpu_tile_data = np.zeros((0, 8), dtype=np.float32)
             return
 
-        # Compute shift_offset = Σ zeta[k] * gamma[k]
-        # This is the constant offset between ribbon space and 2.5*camera_space
+        # Compute shift_offset = sum(zeta[k] * gamma[k])
         shift_offset = sum(z * g for z, g in zip(self.zeta, self._current_gamma))
+        sx, sy = shift_offset.real, shift_offset.imag
 
-        verts = np.zeros((n, 4, 2), dtype=np.float32)
-        data = np.zeros((n, 8), dtype=np.float32)
+        # Bulk-extract vertex data: build (N, 4, 2) array of ribbon-space coords
+        # Each tile.vertices is a list of 4 complex numbers
+        ribbon = np.array(
+            [[(v.real, v.imag) for v in tile.vertices[:4]] for tile in self.tile_list],
+            dtype=np.float32)  # (N, 4, 2)
 
-        for i, tile in enumerate(self.tile_list):
-            # Convert vertices from ribbon space to camera/pentagrid space.
-            # The procedural shader maps camera-space p to ribbon-space rb_p via:
-            #   rb_p = Σ grid[k] * (dot(p, grid[k]) + gamma[k])
-            #        = 2.5*p + Σ grid[k]*gamma[k]   (for 5 evenly-spaced unit vectors)
-            # So: p = (rb_p - shift_offset) / 2.5
-            # where shift_offset = Σ zeta[k] * gamma[k]
-            for j, v in enumerate(tile.vertices[:4]):
-                rb = complex(v.real, v.imag)
-                p_cam = (rb - shift_offset) / 2.5
-                verts[i, j, 0] = p_cam.real
-                verts[i, j, 1] = p_cam.imag
+        # Vectorized ribbon -> camera transform:  p = (rb - shift_offset) / 2.5
+        ribbon[:, :, 0] -= sx
+        ribbon[:, :, 1] -= sy
+        ribbon *= (1.0 / 2.5)
+        verts = ribbon  # already float32 (N, 4, 2)
 
-            data[i, 0] = 1.0 if tile.is_kite else 0.0
-            data[i, 1] = tile.pattern_type
-            data[i, 2] = tile.blend_factor
-            data[i, 3] = 1.0 if tile.selected else 0.0
-            data[i, 4] = 1.0 if tile.hovered else 0.0
-            data[i, 5] = tile.anim_phase
-            data[i, 6] = float(tile.anim_type)
-            # Stable tile ID from pentagrid indices
-            data[i, 7] = float(hash(tile.key) % 10000) / 10000.0
+        # Bulk-extract tile attributes into (N, 8) array
+        data = np.empty((n, 8), dtype=np.float32)
+        data[:, 0] = np.array([1.0 if t.is_kite else 0.0 for t in self.tile_list], dtype=np.float32)
+        data[:, 1] = np.array([t.pattern_type for t in self.tile_list], dtype=np.float32)
+        data[:, 2] = np.array([t.blend_factor for t in self.tile_list], dtype=np.float32)
+        data[:, 3] = np.array([1.0 if t.selected else 0.0 for t in self.tile_list], dtype=np.float32)
+        data[:, 4] = np.array([1.0 if t.hovered else 0.0 for t in self.tile_list], dtype=np.float32)
+        data[:, 5] = np.array([t.anim_phase for t in self.tile_list], dtype=np.float32)
+        data[:, 6] = np.array([float(t.anim_type) for t in self.tile_list], dtype=np.float32)
+        data[:, 7] = np.array([float(hash(t.key) % 10000) / 10000.0 for t in self.tile_list], dtype=np.float32)
 
         self.gpu_vertices = verts
         self.gpu_tile_data = data

@@ -29,6 +29,7 @@ class OverlayRenderer:
         self.instance_vert_vbo = None
         self.instance_data_vbo = None
         self.tile_count = 0
+        self._vbo_capacity = 0  # allocated VBO capacity in tiles
 
         # Depth mask texture
         self.mask_texture = None
@@ -195,7 +196,72 @@ class OverlayRenderer:
         glBufferData(GL_ARRAY_BUFFER, data_flat.nbytes, data_flat, GL_DYNAMIC_DRAW)
 
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+        self._vbo_capacity = tile_count
         self.logger.debug(f"Uploaded {tile_count} tiles to GPU")
+
+    # -------------------------------------------------------------------------
+    # Chunked upload methods for incremental loading
+    # -------------------------------------------------------------------------
+
+    def ensure_capacity(self, tile_count):
+        """Allocate VBO storage for tile_count tiles without uploading data.
+        Uses glBufferData(None) which is fast (~0.1ms). Only reallocates if
+        the current capacity is insufficient.
+        """
+        if tile_count <= self._vbo_capacity:
+            return
+
+        # Round up to nearest 1000 for headroom
+        new_capacity = ((tile_count // 1000) + 1) * 1000
+        byte_size = new_capacity * 8 * 4  # 8 floats * 4 bytes per tile
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.instance_vert_vbo)
+        glBufferData(GL_ARRAY_BUFFER, byte_size, None, GL_DYNAMIC_DRAW)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.instance_data_vbo)
+        glBufferData(GL_ARRAY_BUFFER, byte_size, None, GL_DYNAMIC_DRAW)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        self._vbo_capacity = new_capacity
+        self.logger.debug(f"VBO capacity allocated: {new_capacity} tiles")
+
+    def upload_tile_chunk(self, gpu_vertices, gpu_tile_data, offset, count):
+        """Upload a chunk of tiles using glBufferSubData (both VBOs).
+        Does NOT change self.tile_count -- caller manages renderable count.
+        """
+        if count == 0:
+            return
+
+        byte_offset = offset * 8 * 4  # 8 floats * 4 bytes per tile
+
+        vert_slice = gpu_vertices[offset:offset + count].reshape(-1).astype(np.float32)
+        glBindBuffer(GL_ARRAY_BUFFER, self.instance_vert_vbo)
+        glBufferSubData(GL_ARRAY_BUFFER, byte_offset, vert_slice.nbytes, vert_slice)
+
+        data_slice = gpu_tile_data[offset:offset + count].reshape(-1).astype(np.float32)
+        glBindBuffer(GL_ARRAY_BUFFER, self.instance_data_vbo)
+        glBufferSubData(GL_ARRAY_BUFFER, byte_offset, data_slice.nbytes, data_slice)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def upload_pattern_patch_chunk(self, gpu_tile_data, offset, count):
+        """Upload pattern data (columns 1,2) for a range of tiles.
+        Uploads the full 8-float row for each tile in the range so that
+        interaction state in other columns is preserved.
+        """
+        if count == 0:
+            return
+
+        byte_offset = offset * 8 * 4
+        data_slice = gpu_tile_data[offset:offset + count].reshape(-1).astype(np.float32)
+        glBindBuffer(GL_ARRAY_BUFFER, self.instance_data_vbo)
+        glBufferSubData(GL_ARRAY_BUFFER, byte_offset, data_slice.nbytes, data_slice)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def set_renderable_count(self, count):
+        """Set how many tiles to draw. Used during chunked upload to
+        progressively reveal tiles as they are uploaded."""
+        self.tile_count = count
 
     def upload_mask_texture(self, mask_data, width, height):
         """Upload a depth mask as a GPU texture.

@@ -21,6 +21,7 @@ uniform sampler2D u_depth_texture;
 uniform float u_depth_enabled;     // >0.5 when depth data is available
 uniform float u_depth_coverage;    // 0-1: fraction of depth pixels active
 uniform vec2 u_depth_centroid;     // XY centroid of depth data in UV space (0-1)
+uniform float u_depth_motion;      // 0-1: smoothed centroid motion magnitude
 
 #include "pentagrid_common.glsl"
 
@@ -88,20 +89,33 @@ void main() {
     float viewW = gSc * aspect;  // full visible width in pentagrid space
     float viewH = gSc;           // full visible height in pentagrid space
 
-    float eyeHalfW = viewW * 1.1;                        // tips extend past viewport edges
-    float eyeOpening = viewH * 0.9 * openness;           // tall sweeping lids
+    // The pentagrid rb_p transform scales distances by PN/2 = 2.5
+    float rbScale = float(PN) / 2.0;
+    float eyeHalfW = viewW * 0.45 * rbScale;              // fit within viewport
+    float eyeOpening = viewH * 0.63 * openness * rbScale;  // 30% smaller eye
 
-    // Eye center is at camera center
-    vec2 eyeCenter = u_camera;
+    // Eye center must be in the same dual/rhombus space as tile.center.
+    // tile.center comes from getRhombusVerts which works in the rb_p space.
+    // rb_p = sum(grid[k] * (dot(p, grid[k]) + shift[k])) — a linear transform of p.
+    // Compute this transform for the camera center point.
+    vec2 eyeCenter = vec2(0.0);
+    for (int k = 0; k < PN; k++) {
+        eyeCenter += grid[k] * (dot(u_camera, grid[k]) + shift[k]);
+    }
 
-    // Centroid in UV (0-1) -> map to pentagrid space for pupil position
+    // Centroid in UV (0-1) -> map to pentagrid space, then to rb_p space
     vec2 depthCentroidPG = vec2(
         (u_depth_centroid.x - 0.5) * viewW + u_camera.x,
         (u_depth_centroid.y - 0.5) * viewH + u_camera.y
     );
+    vec2 depthCentroidRB = vec2(0.0);
+    for (int k = 0; k < PN; k++) {
+        depthCentroidRB += grid[k] * (dot(depthCentroidPG, grid[k]) + shift[k]);
+    }
+    depthCentroidPG = depthCentroidRB;
 
     // --- Compute distances for this tile ---
-    vec2 tc = tile.center;          // tile centroid in pentagrid space
+    vec2 tc = tile.center;          // tile centroid in rb_p (dual) space
     vec2 localTC = tc - eyeCenter;  // relative to eye center
 
     // Eye lid SDF
@@ -120,8 +134,12 @@ void main() {
     float pupilRadius = eyeMinDim * 0.15;
     float irisRadius  = eyeMinDim * 0.30;
 
-    // Gentle idle animation when no depth data
-    if (u_depth_enabled < 0.5) {
+    // When depth is enabled but no motion, lerp pupil back to center
+    if (u_depth_enabled >= 0.5) {
+        float motion = clamp(u_depth_motion, 0.0, 1.0);
+        pupilCenter = mix(eyeCenter, pupilCenter, motion);
+    } else {
+        // Gentle idle animation when no depth data at all
         float ax = sin(u_time * 0.5) * maxPupilX * 0.5;
         float ay = cos(u_time * 0.7) * maxPupilY * 0.4;
         pupilCenter = eyeCenter + vec2(ax, ay);
@@ -145,8 +163,8 @@ void main() {
         float irisGrad = smoothstep(0.0, 1.0, -dIris / irisRadius);
         tileColor = mix(u_color2, u_color2 * 0.35, irisGrad);
     } else if (insideEye) {
-        // Sclera (white of the eye)
-        tileColor = vec3(0.95, 0.95, 0.93);
+        // Sclera: blend between color1 and color2
+        tileColor = mix(u_color1, u_color2, 0.5);
     }
 
     // Lid shadow at the edges of the eye opening
