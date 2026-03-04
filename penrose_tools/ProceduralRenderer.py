@@ -30,6 +30,7 @@ class ProceduralRenderer:
         'rainbow',
         'pulse',
         'sparkle',
+        'eye_spy',
     ]
 
     def __init__(self):
@@ -98,6 +99,12 @@ class ProceduralRenderer:
         self._mask_update_interval = 2.0  # Seconds between random mask updates
         self._last_mask_update = 0.0
         self._mask_color = (1.0, 0.3, 0.1)  # Warm highlight color
+
+        # Depth camera state for procedural shaders (eye_spy)
+        self._depth_texture_procedural = None  # GL texture for procedural pipeline
+        self._depth_coverage = 0.0   # Fraction of depth pixels active (0-1)
+        self._depth_centroid = (0.5, 0.5)  # UV centroid of depth data
+        self._depth_data_available = False
 
         # Interaction overlay enabled — draws interaction visuals on top of any effect
         self.interaction_overlay_enabled = True
@@ -188,6 +195,11 @@ class ProceduralRenderer:
             'u_edge_thickness': glGetUniformLocation(program, 'u_edge_thickness'),
             'u_gamma': glGetUniformLocation(program, 'u_gamma'),
             'u_pattern_texture': glGetUniformLocation(program, 'u_pattern_texture'),
+            # Depth camera uniforms (used by eye_spy effect)
+            'u_depth_texture': glGetUniformLocation(program, 'u_depth_texture'),
+            'u_depth_enabled': glGetUniformLocation(program, 'u_depth_enabled'),
+            'u_depth_coverage': glGetUniformLocation(program, 'u_depth_coverage'),
+            'u_depth_centroid': glGetUniformLocation(program, 'u_depth_centroid'),
         }
         glUseProgram(0)
         return uniforms
@@ -330,6 +342,22 @@ class ProceduralRenderer:
             gamma_array = (GLfloat * 5)(*gamma)
             glUniform1fv(uniforms['u_gamma'], 5, gamma_array)
 
+        # Depth camera uniforms for eye_spy effect
+        if current_effect == 'eye_spy' and uniforms.get('u_depth_enabled', -1) != -1:
+            if self._depth_data_available and self._depth_texture_procedural is not None:
+                glUniform1f(uniforms['u_depth_enabled'], 1.0)
+                glUniform1f(uniforms['u_depth_coverage'], self._depth_coverage)
+                glUniform2f(uniforms['u_depth_centroid'],
+                            self._depth_centroid[0], self._depth_centroid[1])
+                if uniforms.get('u_depth_texture', -1) != -1:
+                    glActiveTexture(GL_TEXTURE1)
+                    glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
+                    glUniform1i(uniforms['u_depth_texture'], 1)
+            else:
+                glUniform1f(uniforms['u_depth_enabled'], 0.0)
+                glUniform1f(uniforms['u_depth_coverage'], 0.3)
+                glUniform2f(uniforms['u_depth_centroid'], 0.5, 0.5)
+
         # Old texture-based region_blend fallback (used when overlay isn't available)
         if current_effect == 'region_blend' and not use_overlay:
             self._update_pattern_data_if_needed(width, height, gamma)
@@ -341,6 +369,13 @@ class ProceduralRenderer:
         glBindVertexArray(self.vao)
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
         glBindVertexArray(0)
+
+        # Unbind depth texture if it was bound
+        if current_effect == 'eye_spy' and self._depth_texture_procedural is not None:
+            glActiveTexture(GL_TEXTURE1)
+            glBindTexture(GL_TEXTURE_2D, 0)
+            glActiveTexture(GL_TEXTURE0)
+
         glUseProgram(0)
 
         # --- PASS 2: Overlay layer ---
@@ -620,6 +655,50 @@ class ProceduralRenderer:
             if self.depth_mask_enabled:
                 self.overlay_renderer.set_mask_enabled(True)
             self._last_mask_update = glfw.get_time()
+
+        # Also compute depth metrics and upload texture for procedural shaders
+        self._update_depth_metrics(mask_data, width, height)
+
+    def _update_depth_metrics(self, mask_data, width, height):
+        """Compute depth coverage and centroid from mask data, and upload
+        the depth frame as a procedural-pipeline texture for eye_spy."""
+        # Coverage: fraction of pixels above a small threshold
+        active = mask_data > 0.05
+        total_pixels = mask_data.size
+        active_count = np.count_nonzero(active)
+        self._depth_coverage = active_count / total_pixels if total_pixels > 0 else 0.0
+
+        # Centroid: weighted average of active pixel positions in UV space
+        if active_count > 0:
+            ys, xs = np.where(active)
+            weights = mask_data[active]
+            total_w = weights.sum()
+            if total_w > 0:
+                cx = (xs * weights).sum() / total_w / width
+                cy = (ys * weights).sum() / total_w / height
+                self._depth_centroid = (float(cx), float(cy))
+            else:
+                self._depth_centroid = (0.5, 0.5)
+        else:
+            self._depth_centroid = (0.5, 0.5)
+
+        self._depth_data_available = True
+
+        # Upload depth data as a texture for the procedural pipeline
+        if self._depth_texture_procedural is None:
+            self._depth_texture_procedural = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glBindTexture(GL_TEXTURE_2D, 0)
+
+        glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
+        contiguous = np.ascontiguousarray(mask_data, dtype=np.float32)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0,
+                     GL_RED, GL_FLOAT, contiguous)
+        glBindTexture(GL_TEXTURE_2D, 0)
 
     def _handle_mask_stamp(self, pentagrid_x, pentagrid_y):
         """Handle a mask stamp click — generate a Gaussian blob at the pentagrid position
@@ -939,6 +1018,8 @@ class ProceduralRenderer:
         if glfw.get_current_context():
             if hasattr(self, 'overlay_renderer') and self.overlay_renderer:
                 self.overlay_renderer.cleanup()
+            if hasattr(self, '_depth_texture_procedural') and self._depth_texture_procedural:
+                glDeleteTextures(1, [self._depth_texture_procedural])
             if hasattr(self, 'vao'):
                 glDeleteVertexArrays(1, [self.vao])
             if hasattr(self, 'vbo'):
