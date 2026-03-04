@@ -5,7 +5,7 @@
 // Per-vertex: unit quad corner [0,0] [1,0] [1,1] [0,1]
 in vec2 a_corner;
 
-// Per-instance: tile vertices in camera/pentagrid space (converted from ribbon via (rb - offset) / 2.5)
+// Per-instance: tile vertices in camera/pentagrid space
 in vec2 a_v0;
 in vec2 a_v1;
 in vec2 a_v2;
@@ -38,23 +38,19 @@ void main() {
     );
 
     // World space -> clip space
-    // Overlay vertices are in camera/pentagrid space (converted from ribbon space
-    // in _pack_gpu_buffers via: p = (ribbon - shift_offset) / 2.5).
-    // The procedural shader maps: p = clip * 0.5 * vec2(aspect, 1) * (3/zoom) + camera
-    // Inverting: clip = (p - camera) * zoom / (1.5 * vec2(aspect, 1))
     vec2 clip;
     clip.x = (world_pos.x - u_camera.x) * u_zoom / (1.5 * u_aspect);
     clip.y = (world_pos.y - u_camera.y) * u_zoom / 1.5;
 
     gl_Position = vec4(clip, 0.0, 1.0);
 
-    // Pass to fragment shader
-    v_world_pos = world_pos;
+    // Pass corners to fragment shader
     v_v0 = a_v0;
     v_v1 = a_v1;
     v_v2 = a_v2;
     v_v3 = a_v3;
+
+    v_world_pos = world_pos;
     v_tile_data1 = a_tile_data1;
     v_tile_data2 = a_tile_data2;
 }
-

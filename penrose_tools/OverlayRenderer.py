@@ -30,8 +30,15 @@ class OverlayRenderer:
         self.instance_data_vbo = None
         self.tile_count = 0
 
+        # Depth mask texture
+        self.mask_texture = None
+        self.mask_enabled = False
+        self.mask_color = (1.0, 0.3, 0.1)  # Default warm highlight color
+        self.mask_center = None  # Override for mask center (pentagrid coords); None = use camera
+
         self._compile_shader()
         self._create_vao()
+        self._create_default_mask_texture()
         self.logger.info("OverlayRenderer initialized")
 
     def _compile_shader(self):
@@ -92,6 +99,13 @@ class OverlayRenderer:
             'u_edge_thickness': glGetUniformLocation(self.shader_program, 'u_edge_thickness'),
             'u_time': glGetUniformLocation(self.shader_program, 'u_time'),
             'u_overlay_mode': glGetUniformLocation(self.shader_program, 'u_overlay_mode'),
+            # Depth mask uniforms
+            'u_mask_texture': glGetUniformLocation(self.shader_program, 'u_mask_texture'),
+            'u_mask_enabled': glGetUniformLocation(self.shader_program, 'u_mask_enabled'),
+            'u_mask_camera': glGetUniformLocation(self.shader_program, 'u_mask_camera'),
+            'u_mask_zoom': glGetUniformLocation(self.shader_program, 'u_mask_zoom'),
+            'u_mask_aspect': glGetUniformLocation(self.shader_program, 'u_mask_aspect'),
+            'u_mask_color': glGetUniformLocation(self.shader_program, 'u_mask_color'),
         }
         glUseProgram(0)
         self.logger.info("Overlay shader compiled and linked")
@@ -147,6 +161,19 @@ class OverlayRenderer:
         glBindVertexArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
+    def _create_default_mask_texture(self):
+        """Create a 1x1 black texture to prevent sampler warnings when mask is disabled."""
+        self.mask_texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, self.mask_texture)
+        default_data = np.zeros((1, 1), dtype=np.float32)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 1, 1, 0,
+                     GL_RED, GL_FLOAT, default_data)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glBindTexture(GL_TEXTURE_2D, 0)
+
     # -------------------------------------------------------------------------
     # Data upload
     # -------------------------------------------------------------------------
@@ -169,6 +196,41 @@ class OverlayRenderer:
 
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         self.logger.debug(f"Uploaded {tile_count} tiles to GPU")
+
+    def upload_mask_texture(self, mask_data, width, height):
+        """Upload a depth mask as a GPU texture.
+        mask_data: numpy array of shape (height, width) with float32 values in [0, 1].
+        """
+        if self.mask_texture is None:
+            self.mask_texture = glGenTextures(1)
+
+        glBindTexture(GL_TEXTURE_2D, self.mask_texture)
+        # Upload as single-channel RED float texture
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0,
+                     GL_RED, GL_FLOAT, mask_data.astype(np.float32))
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        self.mask_enabled = True
+        self.logger.debug(f"Uploaded mask texture: {width}x{height}")
+
+    def set_mask_color(self, r, g, b):
+        """Set the highlight color for the depth mask effect."""
+        self.mask_color = (r, g, b)
+
+    def set_mask_enabled(self, enabled):
+        """Enable or disable the depth mask effect."""
+        self.mask_enabled = enabled
+
+    def set_mask_center(self, x, y):
+        """Override the mask center position (pentagrid coords). Set to None to use camera."""
+        self.mask_center = (x, y)
+
+    def clear_mask_center(self):
+        """Clear the mask center override — use camera position instead."""
+        self.mask_center = None
 
     def upload_tile_data_partial(self, gpu_tile_data, offset, count):
         """Partial update of tile data (interaction changes only)."""
@@ -210,6 +272,26 @@ class OverlayRenderer:
         glUniform3f(self.uniforms['u_color1'], c1[0] / 255.0, c1[1] / 255.0, c1[2] / 255.0)
         glUniform3f(self.uniforms['u_color2'], c2[0] / 255.0, c2[1] / 255.0, c2[2] / 255.0)
 
+        # Depth mask uniforms — always bind texture to avoid sampler warnings
+        if self.uniforms.get('u_mask_enabled', -1) != -1:
+            glUniform1f(self.uniforms['u_mask_enabled'],
+                        1.0 if self.mask_enabled else 0.0)
+        if self.mask_texture is not None and self.uniforms.get('u_mask_texture', -1) != -1:
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self.mask_texture)
+            glUniform1i(self.uniforms['u_mask_texture'], 0)
+        if self.mask_enabled:
+            if self.uniforms.get('u_mask_camera', -1) != -1:
+                # Use mask_center override if set, otherwise use camera position
+                mcx, mcy = self.mask_center if self.mask_center else (camera_x, camera_y)
+                glUniform2f(self.uniforms['u_mask_camera'], mcx, mcy)
+            if self.uniforms.get('u_mask_zoom', -1) != -1:
+                glUniform1f(self.uniforms['u_mask_zoom'], zoom)
+            if self.uniforms.get('u_mask_aspect', -1) != -1:
+                glUniform1f(self.uniforms['u_mask_aspect'], aspect)
+            if self.uniforms.get('u_mask_color', -1) != -1:
+                glUniform3f(self.uniforms['u_mask_color'], *self.mask_color)
+
         # Instanced draw with alpha blending for interaction overlay compositing
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -217,6 +299,12 @@ class OverlayRenderer:
         glBindVertexArray(self.vao)
         glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None, self.tile_count)
         glBindVertexArray(0)
+
+        # Unbind mask texture
+        if self.mask_enabled and self.mask_texture is not None:
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, 0)
+
         glUseProgram(0)
 
     # -------------------------------------------------------------------------
@@ -232,6 +320,8 @@ class OverlayRenderer:
                         self.instance_vert_vbo, self.instance_data_vbo]:
                 if buf:
                     glDeleteBuffers(1, [buf])
+            if self.mask_texture:
+                glDeleteTextures(1, [self.mask_texture])
             if self.shader_program:
                 glDeleteProgram(self.shader_program)
 

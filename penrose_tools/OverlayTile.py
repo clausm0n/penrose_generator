@@ -46,7 +46,7 @@ class OverlayTile:
         self.selected = False
         self.hovered = False
         self.anim_phase = 0.0     # 0.0-1.0 animation progress
-        self.anim_type = 0        # 0=none, 1=flip, 2=cascade, 3=ripple
+        self.anim_type = 0        # 0=none, 2=cascade, 3=ripple
 
         # Color override (None = use default shader coloring)
         self.color_override = None

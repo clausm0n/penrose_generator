@@ -23,9 +23,9 @@ class InteractionManager:
 
     # Animation type constants (match GPU tile_data layout)
     ANIM_NONE = 0
-    ANIM_FLIP = 1
     ANIM_CASCADE = 2
     ANIM_RIPPLE = 3
+    MASK_STAMP = 4
 
     def __init__(self, tile_manager):
         self.logger = logging.getLogger('InteractionManager')
@@ -41,8 +41,8 @@ class InteractionManager:
         self._selected_indices = set()
 
         # Active interaction mode (what happens on click)
-        # 0 = select, 1 = flip, 2 = cascade, 3 = ripple
-        self.click_mode = 1  # default to flip
+        # 0 = select, 1 = cascade, 2 = ripple, 3 = mask_stamp
+        self.click_mode = 1  # default to cascade
 
         # Animation speed multiplier
         self.anim_speed = 2.0
@@ -51,25 +51,36 @@ class InteractionManager:
         self.cascade_depth = 20
 
         # Cascade stagger delay in seconds per ring
-        self.cascade_stagger = 0.1
+        self.cascade_stagger = 0.2
 
         # Dirty tracking — indices of tiles whose gpu_tile_data changed since last upload
         self._dirty_indices = set()
 
+        # Mask stamp callback — set by ProceduralRenderer to handle mask generation
+        # Signature: callback(pentagrid_x, pentagrid_y)
+        self._mask_stamp_callback = None
+
+        # Whether a mask stamp is currently active (visible)
+        self._mask_stamp_active = False
+
         self.logger.info("InteractionManager initialized")
 
     def set_click_mode(self, mode):
-        """Set what happens when a tile is clicked. 0=select, 1=flip, 2=cascade, 3=ripple."""
+        """Set what happens when a tile is clicked. 0=select, 1=cascade, 2=ripple, 3=mask_stamp."""
         self.click_mode = max(0, min(3, mode))
-        mode_names = ['select', 'flip', 'cascade', 'ripple']
+        mode_names = ['select', 'cascade', 'ripple', 'mask_stamp']
         self.logger.info(f"Click mode: {mode_names[self.click_mode]}")
 
     def cycle_click_mode(self):
         """Cycle to the next click mode. Returns the new mode index."""
         self.click_mode = (self.click_mode + 1) % 4
-        mode_names = ['select', 'flip', 'cascade', 'ripple']
+        mode_names = ['select', 'cascade', 'ripple', 'mask_stamp']
         self.logger.info(f"Click mode: {mode_names[self.click_mode]}")
         return self.click_mode
+
+    def set_mask_stamp_callback(self, callback):
+        """Set the callback for mask stamp clicks. callback(pentagrid_x, pentagrid_y)."""
+        self._mask_stamp_callback = callback
 
     # -------------------------------------------------------------------------
     # Dirty tracking for partial GPU uploads
@@ -128,18 +139,28 @@ class InteractionManager:
 
     def handle_click(self, pentagrid_x, pentagrid_y):
         """Handle a click at the given pentagrid-space position."""
+        # Mask stamp doesn't need a tile hit — it works on pentagrid position directly
+        if self.click_mode == self.MASK_STAMP:
+            self._start_mask_stamp(pentagrid_x, pentagrid_y)
+            return
+
         hit = self.tile_manager.hit_test(pentagrid_x, pentagrid_y)
         if hit < 0:
             return
 
         if self.click_mode == 0:
             self._toggle_select(hit)
-        elif self.click_mode == self.ANIM_FLIP:
-            self._start_flip(hit)
-        elif self.click_mode == self.ANIM_CASCADE:
+        elif self.click_mode == 1:
             self._start_cascade(hit)
-        elif self.click_mode == self.ANIM_RIPPLE:
+        elif self.click_mode == 2:
             self._start_ripple(hit)
+
+    def _start_mask_stamp(self, pentagrid_x, pentagrid_y):
+        """Place a mask stamp at the given pentagrid position."""
+        if self._mask_stamp_callback:
+            self._mask_stamp_callback(pentagrid_x, pentagrid_y)
+            self._mask_stamp_active = True
+            self.logger.info(f"Mask stamp at ({pentagrid_x:.2f}, {pentagrid_y:.2f})")
 
     def _toggle_select(self, tile_index):
         """Toggle selection on a single tile."""
@@ -150,10 +171,6 @@ class InteractionManager:
             self._selected_indices.add(tile_index)
             self.tile_manager.update_tile_interaction(tile_index, selected=True)
         self._mark_dirty(tile_index)
-
-    def _start_flip(self, tile_index):
-        """Start a flip animation on a single tile."""
-        self._add_animation(tile_index, self.ANIM_FLIP, speed=self.anim_speed, delay=0.0)
 
     def _start_cascade(self, center_index):
         """Start a rotational cascade from the clicked tile outward through neighbors."""
@@ -304,6 +321,7 @@ class InteractionManager:
             self._mark_dirty(idx)
         self._animations.clear()
 
+        self._mask_stamp_active = False
         self.clear_hover()
 
     def on_tiles_regenerated(self):

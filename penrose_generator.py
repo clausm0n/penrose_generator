@@ -42,12 +42,11 @@ DEFAULT_CONFIG = {
     'shader_settings': {
         'no_effect': True,
         'shift_effect': True,
-        'color_wave': True,
-        'color_flow': True,
         'region_blend': True,
-        'raindrop_ripple': True,
-        'koi_pond': True,
-        'pixelation_slideshow': True
+        'rainbow': True,
+        'pulse': True,
+        'sparkle': True,
+        'depth_mask': True
     },
     'vertex_offset': 0.0001
 }
@@ -67,6 +66,13 @@ try:
     BLUETOOTH_AVAILABLE = True
 except ImportError:
     BLUETOOTH_AVAILABLE = False
+
+# Check if camera capture is available
+try:
+    from penrose_tools.CameraManager import CameraManager
+    CAMERA_AVAILABLE = True
+except ImportError:
+    CAMERA_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -234,8 +240,9 @@ def toggle_fullscreen(window):
         fullscreen_mode = False
         logger.info("Switched to windowed mode")
 
-    # Update viewport
-    glViewport(0, 0, width, height)
+    # Update viewport using framebuffer size (HiDPI/Retina)
+    fb_width, fb_height = glfw.get_framebuffer_size(window)
+    glViewport(0, 0, fb_width, fb_height)
 
 def update_toggles(shaders):
     global config_data, running
@@ -330,10 +337,10 @@ def key_callback(window, key, scancode, action, mods):
             if renderer:
                 renderer.next_effect()
         elif key == glfw.KEY_TAB:
-            # Cycle interaction mode: select → flip → cascade → ripple
+            # Cycle interaction mode: select → cascade → ripple → mask_stamp
             if renderer and renderer.interaction_manager:
                 mode = renderer.interaction_manager.cycle_click_mode()
-                mode_names = ['select', 'flip', 'cascade', 'ripple']
+                mode_names = ['select', 'cascade', 'ripple', 'mask_stamp']
                 logger.info(f"Interaction mode: {mode_names[mode]}")
         elif key == glfw.KEY_C:
             # Clear all interaction state
@@ -383,6 +390,7 @@ def main():
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
     parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
     parser.add_argument('--local', action='store_true', help='Run in local mode without server components')
+    parser.add_argument('--camera', action='store_true', help='Enable webcam capture for interaction/depth processing')
     args = parser.parse_args()
 
     # Set environment variable for local mode
@@ -395,9 +403,15 @@ def main():
         args.local = True
         args.bluetooth = False
 
+    # Check if camera was requested but not available
+    if args.camera and not CAMERA_AVAILABLE:
+        logger.warning("Camera support not available (opencv-python not installed). Continuing without camera.")
+        args.camera = False
+
     # Initialize variables that may be used in finally block
     cycle_manager = None
     gui_overlay = None
+    camera_manager = None
 
     try:
         logger.info("Starting the penrose generator script.")
@@ -412,8 +426,9 @@ def main():
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(0, 0, 0, 1)
 
-        # Setup viewport only - no more matrix mode operations
-        glViewport(0, 0, width, height)
+        # Setup viewport using framebuffer size (differs from window size on HiDPI/Retina)
+        fb_width, fb_height = glfw.get_framebuffer_size(window)
+        glViewport(0, 0, fb_width, fb_height)
 
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()
@@ -440,8 +455,17 @@ def main():
         else:
             logger.info("Running in local mode - no server components initialized")
 
+        # Initialize camera capture if requested
+        if args.camera:
+            camera_manager = CameraManager(camera_index=0, width=640, height=480, fps=30)
+            if camera_manager.start():
+                logger.info("Camera capture started")
+            else:
+                logger.warning("Failed to start camera capture")
+                camera_manager = None
+
         logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors")
-        logger.info("Interaction: Click=interact, TAB=cycle mode (select/flip/cascade/ripple), C=clear")
+        logger.info("Interaction: Click=interact, TAB=cycle mode (select/cascade/ripple/mask_stamp), C=clear")
 
         last_time = glfw.get_time()
         while not glfw.window_should_close(window) and running:
@@ -459,8 +483,12 @@ def main():
                 update_event.clear()
                 config_data = op.read_config_file(CONFIG_PATH)
 
+            # Update viewport with framebuffer size (handles HiDPI/Retina and resizes)
+            fb_width, fb_height = glfw.get_framebuffer_size(window)
+            glViewport(0, 0, fb_width, fb_height)
+
             # Render procedural tiling
-            renderer.render(width, height, config_data)
+            renderer.render(fb_width, fb_height, config_data)
 
             glfw.swap_buffers(window)
 
@@ -476,6 +504,8 @@ def main():
         # Clean up GUI overlay
         if gui_overlay:
             gui_overlay.cleanup()
+        if camera_manager is not None:
+            camera_manager.stop()
         glfw.terminate()
         if cycle_manager is not None:
             cycle_manager.stop()

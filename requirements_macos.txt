@@ -10,5 +10,6 @@ pillow>=12.1.0  # Latest version
 pyinstaller>=6.18.0  # Latest version
 pyinstaller-hooks-contrib>=2024.6
 PyOpenGL>=3.1.10  # Latest version with better OpenGL 3.2+ support
+opencv-python>=4.9.0  # Optional: webcam/depth camera support
 typing_extensions>=4.12.2
 

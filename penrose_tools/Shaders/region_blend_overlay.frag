@@ -18,7 +18,14 @@ uniform float u_edge_thickness;
 uniform float u_time;
 uniform float u_overlay_mode; // 0 = primary (opaque), 1 = interaction-only (alpha)
 
-// Edge distance computation in world space
+// Depth mask support
+uniform sampler2D u_mask_texture;
+uniform float u_mask_enabled;     // 0.0 = off, 1.0 = on
+uniform vec2 u_mask_camera;       // camera position for mask UV mapping
+uniform float u_mask_zoom;        // zoom for mask UV mapping
+uniform float u_mask_aspect;      // viewport aspect ratio for mask UV mapping
+uniform vec3 u_mask_color;        // color to blend with mask (highlight color)
+
 float distToSegment(vec2 p, vec2 a, vec2 b) {
     vec2 e = b - a;
     vec2 w = p - a;
@@ -54,88 +61,63 @@ void main() {
     float tile_id       = v_tile_data2.w;
 
     vec3 tileColor;
-
     if (pattern_type > 0.9 && pattern_type < 1.1) {
-        // Star pattern: invert blend of colors
-        vec3 blended = blendColors(u_color1, u_color2, 0.3);
-        tileColor = invertColor(blended);
-    }
-    else if (pattern_type > 1.9 && pattern_type < 2.1) {
-        // Starburst pattern: invert blend of colors
-        vec3 blended = blendColors(u_color1, u_color2, 0.7);
-        tileColor = invertColor(blended);
-    }
-    else {
-        // Normal tile: blend based on pre-computed neighbor data
+        tileColor = invertColor(blendColors(u_color1, u_color2, 0.3));
+    } else if (pattern_type > 1.9 && pattern_type < 2.1) {
+        tileColor = invertColor(blendColors(u_color1, u_color2, 0.7));
+    } else {
         tileColor = blendColors(u_color1, u_color2, blend_factor);
     }
 
-    // Selection highlight
-    if (selected > 0.5) {
-        tileColor = mix(tileColor, vec3(1.0, 1.0, 0.0), 0.3);
-    }
-    // Hover highlight
-    if (hovered > 0.5) {
-        tileColor = mix(tileColor, vec3(1.0, 1.0, 1.0), 0.15);
-    }
+    if (selected > 0.5) tileColor = mix(tileColor, vec3(1.0, 1.0, 0.0), 0.3);
+    if (hovered > 0.5) tileColor = mix(tileColor, vec3(1.0, 1.0, 1.0), 0.15);
 
-    // Determine overlay alpha — fully opaque for region_blend tiles,
-    // transparent unless there's an active interaction (hover/select/anim)
     float interactionAlpha = 0.0;
     if (selected > 0.5) interactionAlpha = max(interactionAlpha, 0.35);
     if (hovered > 0.5) interactionAlpha = max(interactionAlpha, 0.2);
 
-    // Animation effects contribute alpha
-    if (anim_type > 0.5) {
-        // Flip animation (type 1): pulse brightness
-        if (anim_type < 1.5) {
-            float flip = sin(anim_phase * 3.14159);
-            tileColor = mix(tileColor, vec3(1.0), flip * 0.5);
-            interactionAlpha = max(interactionAlpha, flip * 0.6);
-        }
-        // Cascade animation (type 2): rotational color shift
-        else if (anim_type < 2.5) {
-            float wave = sin(anim_phase * 3.14159);
-            float hueShift = anim_phase * 0.5 + tile_id;
-            vec3 cascadeColor = vec3(
-                0.5 + 0.5 * sin(hueShift * 6.28318),
-                0.5 + 0.5 * sin(hueShift * 6.28318 + 2.094),
-                0.5 + 0.5 * sin(hueShift * 6.28318 + 4.189)
-            );
-            tileColor = mix(tileColor, cascadeColor, wave * 0.7);
-            interactionAlpha = max(interactionAlpha, wave * 0.7);
-        }
-        // Ripple animation (type 3): radial pulse
-        else if (anim_type < 3.5) {
-            float ripple = sin(anim_phase * 3.14159) * (1.0 - anim_phase);
-            tileColor = mix(tileColor, vec3(0.8, 0.9, 1.0), ripple * 0.6);
-            interactionAlpha = max(interactionAlpha, ripple * 0.5);
-        }
+    if (anim_type > 2.5 && anim_type < 3.5) {
+        float ripple = sin(anim_phase * 3.14159) * (1.0 - anim_phase);
+        tileColor = mix(tileColor, vec3(0.8, 0.9, 1.0), ripple * 0.6);
+        interactionAlpha = max(interactionAlpha, ripple * 0.5);
     }
 
-    // For tiles that are part of pattern rendering (region_blend mode),
-    // they should be fully opaque. Use u_overlay_mode to decide:
-    // Mode 0 (primary/region_blend): all tiles fully opaque
-    // Mode 1 (interaction-only): only tiles with active interactions are visible
     float finalAlpha;
     if (u_overlay_mode < 0.5) {
-        finalAlpha = 1.0;  // Primary mode: fully opaque
+        finalAlpha = 1.0;
     } else {
-        finalAlpha = interactionAlpha;  // Interaction-only: transparent unless interacted
+        finalAlpha = interactionAlpha;
     }
 
-    // Edge rendering in camera space (vertices converted from ribbon via (rb - offset) / 2.5)
-    // Procedural shader uses edgeWidth = 0.012 in ribbon space
-    // Camera space = ribbon / 2.5, so edgeWidth = 0.012 / 2.5 = 0.0048
-    float edgeDist = distToQuadEdge(v_world_pos);
     float edgeWidth = 0.0048 * u_edge_thickness;
     float aaWidth = 0.0012;
+    float edgeDist = distToQuadEdge(v_world_pos);
     float edgeFactor = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
     vec3 edgeColor = tileColor * 0.15;
     vec3 finalColor = mix(edgeColor, tileColor, edgeFactor);
 
-    // Use finalAlpha for compositing — fully opaque for region_blend primary rendering,
-    // semi-transparent for interaction-only overlay on other effects
+    // --- Depth mask overlay ---
+    if (u_mask_enabled > 0.5) {
+        // Map world position to mask UV coordinates
+        // Convert world pos to normalized screen coords using camera/zoom
+        vec2 rel = v_world_pos - u_mask_camera;
+        vec2 mask_uv;
+        mask_uv.x = rel.x * u_mask_zoom / (3.0 * u_mask_aspect) + 0.5;
+        mask_uv.y = rel.y * u_mask_zoom / 3.0 + 0.5;
+
+        // Clamp to valid range
+        mask_uv = clamp(mask_uv, 0.0, 1.0);
+
+        // Sample mask (single channel - use red)
+        float maskVal = texture(u_mask_texture, mask_uv).r;
+
+        // Apply mask: blend tile color toward mask_color based on mask intensity
+        finalColor = mix(finalColor, u_mask_color, maskVal * 0.8);
+
+        // Boost edge visibility in masked areas
+        float maskedEdge = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
+        finalColor = mix(finalColor * 0.3, finalColor, maskedEdge);
+    }
+
     fragColor = vec4(finalColor, finalAlpha);
 }
-

@@ -26,14 +26,11 @@ class ProceduralRenderer:
     EFFECT_NAMES = [
         'no_effect',
         'shift_effect',
-        'color_wave',
-        'color_flow',
         'region_blend',
-        'raindrop_ripple',
-        'koi_pond',
         'rainbow',
         'pulse',
-        'sparkle'
+        'sparkle',
+        'depth_mask'
     ]
 
     def __init__(self):
@@ -67,8 +64,8 @@ class ProceduralRenderer:
         self.shader_programs = []
         self.uniform_locations = []  # List of dicts, one per shader
 
-        # Effect mode - start with region_blend (index 4) to show pattern highlighting
-        self.effect_mode = 4  # region_blend
+        # Effect mode - start with region_blend (index 2) to show pattern highlighting
+        self.effect_mode = 2  # region_blend
         self.num_effects = len(self.EFFECT_NAMES)
         self.logger.info(f"Starting with effect: {self.EFFECT_NAMES[self.effect_mode]}")
 
@@ -94,7 +91,13 @@ class ProceduralRenderer:
         self._last_gamma_for_overlay = None
 
         # Effects that use the overlay for their primary rendering (opaque overlay)
-        self.OVERLAY_EFFECTS = {'region_blend'}
+        self.OVERLAY_EFFECTS = {'region_blend', 'depth_mask'}
+
+        # Depth mask state
+        self._mask_resolution = 128  # Mask texture resolution
+        self._mask_update_interval = 2.0  # Seconds between random mask updates
+        self._last_mask_update = 0.0
+        self._mask_color = (1.0, 0.3, 0.1)  # Warm highlight color
 
         # Interaction overlay enabled — draws interaction visuals on top of any effect
         self.interaction_overlay_enabled = True
@@ -110,6 +113,7 @@ class ProceduralRenderer:
             self.tile_manager = TileDataManager()
             self.overlay_renderer = OverlayRenderer()
             self.interaction_manager = InteractionManager(self.tile_manager)
+            self.interaction_manager.set_mask_stamp_callback(self._handle_mask_stamp)
             self.logger.info("Overlay + interaction system initialized")
         except Exception as e:
             self.logger.error(f"Overlay system init failed (falling back to texture): {e}")
@@ -207,7 +211,9 @@ class ProceduralRenderer:
             frag_path = os.path.join(shader_dir, f'{effect_name}.frag')
 
             if not os.path.exists(frag_path):
-                self.logger.warning(f"Effect shader not found: {frag_path}, skipping")
+                self.logger.warning(f"Effect shader not found: {frag_path}, adding placeholder")
+                self.shader_programs.append(None)
+                self.uniform_locations.append({})
                 continue
 
             with open(frag_path, 'r') as f:
@@ -282,10 +288,10 @@ class ProceduralRenderer:
             self._flush_interaction_dirty()
 
         # --- PASS 1: Procedural base layer ---
-        # For overlay effects, render a simple base (no_effect) as the safety net;
+        # For overlay effects, render a simple base as the safety net;
         # for non-overlay effects, render the normal procedural shader.
         if use_overlay:
-            base_index = 0  # no_effect as base
+            base_index = 0  # no_effect as base for all overlay effects
         else:
             base_index = self.effect_mode
 
@@ -379,6 +385,18 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect, gamma,
                 self.velocity_x, self.velocity_y)
 
+        # Update depth mask if this is the depth_mask effect
+        # But don't override an active mask stamp from the interaction manager
+        mask_stamp_active = (self.interaction_manager
+                             and self.interaction_manager._mask_stamp_active)
+        current_effect = self.EFFECT_NAMES[self.effect_mode]
+        if current_effect == 'depth_mask' and not mask_stamp_active:
+            self._update_depth_mask()
+        elif not mask_stamp_active:
+            # Disable mask for other overlay effects (unless stamp is active)
+            if self.overlay_renderer:
+                self.overlay_renderer.set_mask_enabled(False)
+
         # Render overlay tiles on top of procedural base (primary mode = opaque)
         self.overlay_renderer.render(
             self.camera_x, self.camera_y, self.zoom,
@@ -431,7 +449,8 @@ class ProceduralRenderer:
             return False
         return (self.interaction_manager._hovered_index >= 0
                 or len(self.interaction_manager._selected_indices) > 0
-                or len(self.interaction_manager._animations) > 0)
+                or len(self.interaction_manager._animations) > 0
+                or self.interaction_manager._mask_stamp_active)
 
     def _flush_interaction_dirty(self):
         """Upload only the dirty tile range to GPU (partial buffer update)."""
@@ -521,6 +540,108 @@ class ProceduralRenderer:
         import random
         self.gamma = [random.uniform(0.0, 1.0) for _ in range(5)]
         return self.gamma
+
+    # -------------------------------------------------------------------------
+    # Depth mask effect
+    # -------------------------------------------------------------------------
+
+    def _update_depth_mask(self):
+        """Ensure the depth mask texture exists (generated once, then static).
+        User can stamp new masks via mask_stamp interaction mode."""
+        if self._last_mask_update == 0.0:
+            mask = self._generate_random_mask(self._mask_resolution)
+            if self.overlay_renderer:
+                self.overlay_renderer.upload_mask_texture(
+                    mask, self._mask_resolution, self._mask_resolution)
+                self.overlay_renderer.set_mask_color(*self._mask_color)
+                self.overlay_renderer.set_mask_enabled(True)
+            self._last_mask_update = glfw.get_time()
+
+    def _generate_random_mask(self, resolution):
+        """Generate a random blob mask simulating a depth camera silhouette.
+        Returns a (resolution, resolution) float32 array with values in [0, 1].
+        """
+        # Create smooth blobs using summed Gaussians to simulate person silhouettes
+        mask = np.zeros((resolution, resolution), dtype=np.float32)
+
+        # Coordinate grid
+        y, x = np.mgrid[0:resolution, 0:resolution].astype(np.float32) / resolution
+
+        # Generate 2-5 random blobs (simulating people / objects)
+        num_blobs = np.random.randint(2, 6)
+        for _ in range(num_blobs):
+            cx = np.random.uniform(0.15, 0.85)
+            cy = np.random.uniform(0.15, 0.85)
+            # Elliptical blob with random size
+            sx = np.random.uniform(0.05, 0.20)
+            sy = np.random.uniform(0.08, 0.30)
+            intensity = np.random.uniform(0.5, 1.0)
+
+            dx = (x - cx) / sx
+            dy = (y - cy) / sy
+            blob = np.exp(-0.5 * (dx * dx + dy * dy))
+            mask += blob * intensity
+
+        # Normalize to [0, 1]
+        mask_max = mask.max()
+        if mask_max > 0:
+            mask /= mask_max
+
+        # Apply a soft threshold to create more defined silhouettes
+        mask = np.clip(mask * 1.5 - 0.2, 0.0, 1.0)
+
+        return mask
+
+    def set_mask_update_interval(self, interval):
+        """Set how often the random mask regenerates (in seconds)."""
+        self._mask_update_interval = max(0.1, interval)
+
+    def set_mask_color(self, r, g, b):
+        """Set the depth mask highlight color (0-1 float values)."""
+        self._mask_color = (r, g, b)
+        if self.overlay_renderer:
+            self.overlay_renderer.set_mask_color(r, g, b)
+
+    def upload_external_mask(self, mask_data, width, height):
+        """Upload an external mask (e.g. from a depth camera).
+        mask_data: numpy array of shape (height, width) with float32 values in [0, 1].
+        """
+        if self.overlay_renderer:
+            self.overlay_renderer.upload_mask_texture(mask_data, width, height)
+            self.overlay_renderer.set_mask_enabled(True)
+            self._last_mask_update = glfw.get_time()  # Reset timer
+
+    def _handle_mask_stamp(self, pentagrid_x, pentagrid_y):
+        """Handle a mask stamp click — generate a Gaussian blob at the pentagrid position
+        and upload it as the mask texture. Works across all effects."""
+        res = self._mask_resolution
+        mask = self._generate_stamp_mask(res, pentagrid_x, pentagrid_y)
+        if self.overlay_renderer:
+            self.overlay_renderer.upload_mask_texture(mask, res, res)
+            self.overlay_renderer.set_mask_color(*self._mask_color)
+            self.overlay_renderer.set_mask_center(pentagrid_x, pentagrid_y)
+            self.overlay_renderer.set_mask_enabled(True)
+
+    def _generate_stamp_mask(self, resolution, center_x, center_y):
+        """Generate a single Gaussian blob mask centered at (0.5, 0.5).
+        The shader maps world positions to mask UV using the camera transform,
+        so we always generate the blob at center and let the shader position it.
+        Returns a (resolution, resolution) float32 array with values in [0, 1].
+        """
+        y, x = np.mgrid[0:resolution, 0:resolution].astype(np.float32) / resolution
+
+        # Single centered blob — the fragment shader handles positioning via
+        # u_mask_camera which is set to the current camera position.
+        # The stamp appears where the camera is looking, so we create it at UV center.
+        cx, cy = 0.5, 0.5
+        sx, sy = 0.15, 0.15  # Stamp radius in UV space
+        dx = (x - cx) / sx
+        dy = (y - cy) / sy
+        mask = np.exp(-0.5 * (dx * dx + dy * dy)).astype(np.float32)
+
+        # Soft threshold for defined edges
+        mask = np.clip(mask * 1.5 - 0.2, 0.0, 1.0)
+        return mask
 
     def _generate_tiles_for_viewport(self, width, height, gamma):
         """Generate tile objects for the current viewport."""

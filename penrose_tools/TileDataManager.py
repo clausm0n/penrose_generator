@@ -485,7 +485,7 @@ class TileDataManager:
             [3] selected (0.0 or 1.0)
             [4] hovered (0.0 or 1.0)
             [5] anim_phase (0.0-1.0)
-            [6] anim_type (0=none, 1=flip, 2=cascade, 3=ripple)
+            [6] anim_type (0=none, 2=cascade, 3=ripple)
             [7] tile_id (hash-based random for seeding)
         """
         n = len(self.tile_list)
