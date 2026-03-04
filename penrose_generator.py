@@ -46,7 +46,6 @@ DEFAULT_CONFIG = {
         'rainbow': True,
         'pulse': True,
         'sparkle': True,
-        'depth_mask': True
     },
     'vertex_offset': 0.0001
 }
@@ -73,6 +72,12 @@ try:
     CAMERA_AVAILABLE = True
 except ImportError:
     CAMERA_AVAILABLE = False
+
+# Check if depth camera is available (uses OpenNI2)
+try:
+    from penrose_tools.DepthCameraManager import DepthCameraManager, DEPTH_CAMERA_AVAILABLE
+except ImportError:
+    DEPTH_CAMERA_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -347,6 +352,13 @@ def key_callback(window, key, scancode, action, mods):
             if renderer and renderer.interaction_manager:
                 renderer.interaction_manager.clear_all()
                 logger.info("Cleared all interactions")
+        elif key == glfw.KEY_M:
+            # Toggle depth mask layer
+            if renderer:
+                renderer.depth_mask_enabled = not renderer.depth_mask_enabled
+                if not renderer.depth_mask_enabled and renderer.overlay_renderer:
+                    renderer.overlay_renderer.set_mask_enabled(False)
+                logger.info(f"Depth mask layer: {'ON' if renderer.depth_mask_enabled else 'OFF'}")
         elif key == glfw.KEY_R:
             randomize_colors_event.set()
         elif key == glfw.KEY_G:
@@ -391,6 +403,7 @@ def main():
     parser.add_argument('-bt', '--bluetooth', action='store_true', help='Use Bluetooth server instead of HTTP')
     parser.add_argument('--local', action='store_true', help='Run in local mode without server components')
     parser.add_argument('--camera', action='store_true', help='Enable webcam capture for interaction/depth processing')
+    parser.add_argument('--depth-camera', action='store_true', help='Enable Orbbec depth camera for depth-based tile coloring')
     args = parser.parse_args()
 
     # Set environment variable for local mode
@@ -456,15 +469,40 @@ def main():
             logger.info("Running in local mode - no server components initialized")
 
         # Initialize camera capture if requested
-        if args.camera:
-            camera_manager = CameraManager(camera_index=0, width=640, height=480, fps=30)
-            if camera_manager.start():
-                logger.info("Camera capture started")
-            else:
-                logger.warning("Failed to start camera capture")
-                camera_manager = None
+        camera_manager = None
+        depth_camera_manager = None
 
-        logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors")
+        if args.camera:
+            if CAMERA_AVAILABLE:
+                camera_manager = CameraManager(camera_index=0, width=640, height=480, fps=30)
+                if camera_manager.start():
+                    logger.info("Camera capture started")
+                else:
+                    logger.warning("Failed to start camera capture")
+                    camera_manager = None
+            else:
+                logger.warning("--camera requested but CameraManager not available (install opencv-python)")
+
+        if args.depth_camera:
+            if DEPTH_CAMERA_AVAILABLE:
+                depth_camera_manager = DepthCameraManager(
+                    width=640, height=480, fps=30,
+                    depth_min_mm=500, depth_max_mm=4000,
+                    invert=True  # Closer objects are brighter
+                )
+                if depth_camera_manager.start():
+                    logger.info("Depth camera capture started")
+                    logger.info("Depth range: 500-4000mm, inverted (closer=brighter)")
+                    # Enable depth mask layer (works with any active effect)
+                    renderer.depth_mask_enabled = True
+                    logger.info("Depth mask layer enabled (works with any effect)")
+                else:
+                    logger.warning("Failed to start depth camera capture")
+                    depth_camera_manager = None
+            else:
+                logger.warning("--depth-camera requested but DepthCameraManager not available (install openni package)")
+
+        logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors, M=depth mask")
         logger.info("Interaction: Click=interact, TAB=cycle mode (select/cascade/ripple/mask_stamp), C=clear")
 
         last_time = glfw.get_time()
@@ -487,6 +525,15 @@ def main():
             fb_width, fb_height = glfw.get_framebuffer_size(window)
             glViewport(0, 0, fb_width, fb_height)
 
+            # Process depth camera frames if available
+            if depth_camera_manager and depth_camera_manager.is_running:
+                depth_frame, _ts = depth_camera_manager.get_depth()
+                if depth_frame is not None:
+                    # Resize depth frame to mask resolution and upload to renderer
+                    mask_resolution = renderer._mask_resolution
+                    depth_resized = depth_camera_manager.resize_for_mask(depth_frame, mask_resolution)
+                    renderer.upload_external_mask(depth_resized, mask_resolution, mask_resolution)
+
             # Render procedural tiling
             renderer.render(fb_width, fb_height, config_data)
 
@@ -506,6 +553,8 @@ def main():
             gui_overlay.cleanup()
         if camera_manager is not None:
             camera_manager.stop()
+        if depth_camera_manager is not None:
+            depth_camera_manager.stop()
         glfw.terminate()
         if cycle_manager is not None:
             cycle_manager.stop()

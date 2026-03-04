@@ -15,6 +15,12 @@ try:
 except ImportError:
     CameraManager = None
 
+# Optional: Depth camera capture (uses OpenNI2)
+try:
+    from .DepthCameraManager import DepthCameraManager
+except ImportError:
+    DepthCameraManager = None
+
 # Only export Bluetooth components if not in local mode
 import os
 if not os.environ.get('PENROSE_LOCAL_MODE'):
@@ -22,10 +28,10 @@ if not os.environ.get('PENROSE_LOCAL_MODE'):
         from .PenroseBluetoothServer import run_bluetooth_server
         __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
                    'ProceduralRenderer', 'run_bluetooth_server',
-                   'GUIOverlay', 'CameraManager']
+                   'GUIOverlay', 'CameraManager', 'DepthCameraManager']
     except ImportError:
         __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
-                   'ProceduralRenderer', 'GUIOverlay', 'CameraManager']
+                   'ProceduralRenderer', 'GUIOverlay', 'CameraManager', 'DepthCameraManager']
 else:
     __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
-               'ProceduralRenderer', 'GUIOverlay', 'CameraManager']
+               'ProceduralRenderer', 'GUIOverlay', 'CameraManager', 'DepthCameraManager']

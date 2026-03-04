@@ -30,7 +30,6 @@ class ProceduralRenderer:
         'rainbow',
         'pulse',
         'sparkle',
-        'depth_mask'
     ]
 
     def __init__(self):
@@ -91,9 +90,10 @@ class ProceduralRenderer:
         self._last_gamma_for_overlay = None
 
         # Effects that use the overlay for their primary rendering (opaque overlay)
-        self.OVERLAY_EFFECTS = {'region_blend', 'depth_mask'}
+        self.OVERLAY_EFFECTS = {'region_blend'}
 
-        # Depth mask state
+        # Depth mask layer (independent of effect mode — works with any effect)
+        self.depth_mask_enabled = False
         self._mask_resolution = 128  # Mask texture resolution
         self._mask_update_interval = 2.0  # Seconds between random mask updates
         self._last_mask_update = 0.0
@@ -385,15 +385,12 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect, gamma,
                 self.velocity_x, self.velocity_y)
 
-        # Update depth mask if this is the depth_mask effect
-        # But don't override an active mask stamp from the interaction manager
+        # Depth mask management — enable/disable mask on the overlay renderer
         mask_stamp_active = (self.interaction_manager
                              and self.interaction_manager._mask_stamp_active)
-        current_effect = self.EFFECT_NAMES[self.effect_mode]
-        if current_effect == 'depth_mask' and not mask_stamp_active:
+        if self.depth_mask_enabled and not mask_stamp_active:
             self._update_depth_mask()
         elif not mask_stamp_active:
-            # Disable mask for other overlay effects (unless stamp is active)
             if self.overlay_renderer:
                 self.overlay_renderer.set_mask_enabled(False)
 
@@ -406,7 +403,7 @@ class ProceduralRenderer:
     def _update_interaction_overlay(self, width, height, gamma, config_data):
         """Manage tile lifecycle for interaction overlay (non-region_blend effects).
         Same tile generation logic, but renders with alpha blending so the
-        procedural base shows through — only interaction visuals are drawn."""
+        procedural base shows through. Includes depth mask modulation layer."""
         aspect = float(width) / float(height)
 
         # Poll for completed background generation
@@ -436,7 +433,16 @@ class ProceduralRenderer:
                 self.camera_x, self.camera_y, self.zoom, aspect, gamma,
                 self.velocity_x, self.velocity_y)
 
-        # Only render overlay if there are active interactions to show
+        # Depth mask management — enable/disable mask on the overlay renderer
+        mask_stamp_active = (self.interaction_manager
+                             and self.interaction_manager._mask_stamp_active)
+        if self.depth_mask_enabled and not mask_stamp_active:
+            self._update_depth_mask()
+        elif not mask_stamp_active:
+            if self.overlay_renderer:
+                self.overlay_renderer.set_mask_enabled(False)
+
+        # Render overlay if there are active interactions or depth mask to show
         if self._has_active_interactions():
             self.overlay_renderer.render(
                 self.camera_x, self.camera_y, self.zoom,
@@ -450,7 +456,8 @@ class ProceduralRenderer:
         return (self.interaction_manager._hovered_index >= 0
                 or len(self.interaction_manager._selected_indices) > 0
                 or len(self.interaction_manager._animations) > 0
-                or self.interaction_manager._mask_stamp_active)
+                or self.interaction_manager._mask_stamp_active
+                or self.depth_mask_enabled)
 
     def _flush_interaction_dirty(self):
         """Upload only the dirty tile range to GPU (partial buffer update)."""
@@ -605,11 +612,14 @@ class ProceduralRenderer:
     def upload_external_mask(self, mask_data, width, height):
         """Upload an external mask (e.g. from a depth camera).
         mask_data: numpy array of shape (height, width) with float32 values in [0, 1].
+        Updates the texture but respects the current depth_mask_enabled toggle.
         """
         if self.overlay_renderer:
             self.overlay_renderer.upload_mask_texture(mask_data, width, height)
-            self.overlay_renderer.set_mask_enabled(True)
-            self._last_mask_update = glfw.get_time()  # Reset timer
+            # Only set mask_enabled on the renderer if the layer is toggled on
+            if self.depth_mask_enabled:
+                self.overlay_renderer.set_mask_enabled(True)
+            self._last_mask_update = glfw.get_time()
 
     def _handle_mask_stamp(self, pentagrid_x, pentagrid_y):
         """Handle a mask stamp click — generate a Gaussian blob at the pentagrid position
@@ -621,6 +631,7 @@ class ProceduralRenderer:
             self.overlay_renderer.set_mask_color(*self._mask_color)
             self.overlay_renderer.set_mask_center(pentagrid_x, pentagrid_y)
             self.overlay_renderer.set_mask_enabled(True)
+            self.depth_mask_enabled = True
 
     def _generate_stamp_mask(self, resolution, center_x, center_y):
         """Generate a single Gaussian blob mask centered at (0.5, 0.5).

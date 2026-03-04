@@ -82,13 +82,6 @@ void main() {
         interactionAlpha = max(interactionAlpha, ripple * 0.5);
     }
 
-    float finalAlpha;
-    if (u_overlay_mode < 0.5) {
-        finalAlpha = 1.0;
-    } else {
-        finalAlpha = interactionAlpha;
-    }
-
     float edgeWidth = 0.0048 * u_edge_thickness;
     float aaWidth = 0.0012;
     float edgeDist = distToQuadEdge(v_world_pos);
@@ -96,27 +89,40 @@ void main() {
     vec3 edgeColor = tileColor * 0.15;
     vec3 finalColor = mix(edgeColor, tileColor, edgeFactor);
 
-    // --- Depth mask overlay ---
+    // --- Depth mask: per-tile brightness modulation using palette colors ---
+    float maskAlpha = 0.0;
     if (u_mask_enabled > 0.5) {
-        // Map world position to mask UV coordinates
-        // Convert world pos to normalized screen coords using camera/zoom
-        vec2 rel = v_world_pos - u_mask_camera;
+        // Sample mask at tile centroid so each tile gets a uniform value
+        vec2 tileCentroid = (v_v0 + v_v1 + v_v2 + v_v3) * 0.25;
+        vec2 rel = tileCentroid - u_mask_camera;
         vec2 mask_uv;
         mask_uv.x = rel.x * u_mask_zoom / (3.0 * u_mask_aspect) + 0.5;
         mask_uv.y = rel.y * u_mask_zoom / 3.0 + 0.5;
 
-        // Clamp to valid range
-        mask_uv = clamp(mask_uv, 0.0, 1.0);
+        float maskVal = 0.0;
+        if (mask_uv.x >= 0.0 && mask_uv.x <= 1.0 && mask_uv.y >= 0.0 && mask_uv.y <= 1.0) {
+            maskVal = texture(u_mask_texture, mask_uv).r;
+        }
 
-        // Sample mask (single channel - use red)
-        float maskVal = texture(u_mask_texture, mask_uv).r;
+        // Use palette colors for depth effect:
+        // Background (maskVal ~0): darken tile significantly
+        // Foreground (maskVal ~1): brighten tile with color2 accent
+        vec3 darkened = finalColor * 0.2;
+        vec3 brightened = mix(finalColor, u_color2, 0.35) * 1.4;
+        finalColor = mix(darkened, brightened, maskVal);
 
-        // Apply mask: blend tile color toward mask_color based on mask intensity
-        finalColor = mix(finalColor, u_mask_color, maskVal * 0.8);
+        // Mask contributes to alpha so tiles become visible over any base effect
+        maskAlpha = maskVal * 0.8;
+    }
 
-        // Boost edge visibility in masked areas
-        float maskedEdge = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
-        finalColor = mix(finalColor * 0.3, finalColor, maskedEdge);
+    // Compute final alpha
+    float finalAlpha;
+    if (u_overlay_mode < 0.5) {
+        // Primary opaque overlay (region_blend): always fully visible
+        finalAlpha = 1.0;
+    } else {
+        // Interaction overlay: mask and interactions both contribute visibility
+        finalAlpha = max(interactionAlpha, maskAlpha);
     }
 
     fragColor = vec4(finalColor, finalAlpha);

@@ -206,8 +206,9 @@ class OverlayRenderer:
 
         glBindTexture(GL_TEXTURE_2D, self.mask_texture)
         # Upload as single-channel RED float texture
+        contiguous = np.ascontiguousarray(mask_data, dtype=np.float32)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0,
-                     GL_RED, GL_FLOAT, mask_data.astype(np.float32))
+                     GL_RED, GL_FLOAT, contiguous)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
