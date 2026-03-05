@@ -34,12 +34,12 @@ import glfw
 from OpenGL.GL import *
 
 sys.path.insert(0, os.path.dirname(__file__))
-from penrose_tools.DepthCameraManager import DepthCameraManager, OPENNI2_AVAILABLE
+from penrose_tools.DepthCameraManager import DepthCameraManager, OPENNI2_AVAILABLE, _BACKEND
 
 # ── Shaders ──────────────────────────────────────────────────────────────
 
 VERT_SRC = """
-#version 140
+#version 150
 in vec2 a_pos;
 out vec2 v_uv;
 void main() {
@@ -49,7 +49,7 @@ void main() {
 """
 
 FRAG_SRC = """
-#version 140
+#version 150
 in vec2 v_uv;
 out vec4 fragColor;
 
@@ -85,7 +85,7 @@ void main() {
 }
 """
 
-# ── Text rendering (bitmap font via OpenGL immediate mode) ───────────────
+# ── Text rendering (bitmap font via Core Profile shaders) ────────────────
 
 _FONT = {}
 
@@ -152,20 +152,80 @@ def _define_font():
 
 _define_font()
 
+# Shader-based text renderer (Core Profile compatible)
+_TEXT_VERT_SRC = """
+#version 150
+in vec2 a_pos;
+uniform vec2 u_resolution;
+void main() {
+    // Convert pixel coords (top-left origin) to clip space
+    vec2 ndc = vec2(
+        (a_pos.x / u_resolution.x) * 2.0 - 1.0,
+        1.0 - (a_pos.y / u_resolution.y) * 2.0
+    );
+    gl_Position = vec4(ndc, 0.0, 1.0);
+}
+"""
+
+_TEXT_FRAG_SRC = """
+#version 150
+uniform vec3 u_color;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(u_color, 1.0);
+}
+"""
+
+_text_prog = None
+_text_vao = None
+_text_vbo = None
+_text_u_resolution = -1
+_text_u_color = -1
+
+def _init_text_renderer():
+    """Compile the text shader program (call once after GL context is created)."""
+    global _text_prog, _text_vao, _text_vbo, _text_u_resolution, _text_u_color
+
+    vert = glCreateShader(GL_VERTEX_SHADER)
+    glShaderSource(vert, _TEXT_VERT_SRC)
+    glCompileShader(vert)
+    if not glGetShaderiv(vert, GL_COMPILE_STATUS):
+        raise RuntimeError(f"Text vert error: {glGetShaderInfoLog(vert).decode()}")
+
+    frag = glCreateShader(GL_FRAGMENT_SHADER)
+    glShaderSource(frag, _TEXT_FRAG_SRC)
+    glCompileShader(frag)
+    if not glGetShaderiv(frag, GL_COMPILE_STATUS):
+        raise RuntimeError(f"Text frag error: {glGetShaderInfoLog(frag).decode()}")
+
+    _text_prog = glCreateProgram()
+    glAttachShader(_text_prog, vert)
+    glAttachShader(_text_prog, frag)
+    glBindAttribLocation(_text_prog, 0, "a_pos")
+    glLinkProgram(_text_prog)
+    if not glGetProgramiv(_text_prog, GL_LINK_STATUS):
+        raise RuntimeError(f"Text link error: {glGetProgramInfoLog(_text_prog).decode()}")
+    glDeleteShader(vert)
+    glDeleteShader(frag)
+
+    _text_u_resolution = glGetUniformLocation(_text_prog, "u_resolution")
+    _text_u_color = glGetUniformLocation(_text_prog, "u_color")
+
+    _text_vao = glGenVertexArrays(1)
+    _text_vbo = glGenBuffers(1)
+    glBindVertexArray(_text_vao)
+    glBindBuffer(GL_ARRAY_BUFFER, _text_vbo)
+    # Pre-allocate buffer (will be updated each draw call)
+    glBufferData(GL_ARRAY_BUFFER, 64000, None, GL_DYNAMIC_DRAW)
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, None)
+    glBindVertexArray(0)
+
 
 def draw_text_gl(text, x, y, win_w, win_h, scale=2, color=(0.0, 1.0, 0.0)):
-    """Draw text using GL_POINTS in orthographic projection. (x,y) from top-left."""
-    glMatrixMode(GL_PROJECTION)
-    glPushMatrix()
-    glLoadIdentity()
-    glOrtho(0, win_w, win_h, 0, -1, 1)
-    glMatrixMode(GL_MODELVIEW)
-    glPushMatrix()
-    glLoadIdentity()
-
-    glColor3f(*color)
-    glPointSize(float(scale))
-    glBegin(GL_POINTS)
+    """Draw text using triangulated quads per pixel (Core Profile)."""
+    # Build vertex data: two triangles (6 verts) per lit pixel
+    verts = []
     cx = x
     for ch in text:
         glyph = _FONT.get(ch)
@@ -178,16 +238,28 @@ def draw_text_gl(text, x, y, win_w, win_h, scale=2, color=(0.0, 1.0, 0.0)):
                 if bits & (0x10 >> col):
                     px = cx + col * scale
                     py = y + row * scale
-                    for dx in range(scale):
-                        for dy in range(scale):
-                            glVertex2f(px + dx, py + dy)
+                    x0, y0 = float(px), float(py)
+                    x1, y1 = float(px + scale), float(py + scale)
+                    # Two triangles for a filled square
+                    verts.extend([x0,y0, x1,y0, x1,y1,
+                                  x0,y0, x1,y1, x0,y1])
         cx += 6 * scale
-    glEnd()
 
-    glPopMatrix()
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
+    if not verts:
+        return
+
+    data = np.array(verts, dtype=np.float32)
+
+    glUseProgram(_text_prog)
+    glUniform2f(_text_u_resolution, float(win_w), float(win_h))
+    glUniform3f(_text_u_color, *color)
+
+    glBindVertexArray(_text_vao)
+    glBindBuffer(GL_ARRAY_BUFFER, _text_vbo)
+    glBufferSubData(GL_ARRAY_BUFFER, 0, data.nbytes, data)
+    glDrawArrays(GL_TRIANGLES, 0, len(verts) // 2)
+    glBindVertexArray(0)
+    glUseProgram(0)
 
 
 def draw_text_shadow(text, x, y, w, h, scale=2, color=(0.0, 1.0, 0.0)):
@@ -231,9 +303,10 @@ def erode_mask(arr, iterations=1):
 
 def run_debug_viewer(args):
     if not OPENNI2_AVAILABLE:
-        print("ERROR: OpenNI2 is not available.")
-        print("Make sure the openni2 runtime is in penrose_tools/openni2_runtime/")
+        print("ERROR: No depth camera backend available.")
+        print("Install OrbbecSDK native libs or OpenNI2 runtime.")
         sys.exit(1)
+    print(f"Depth camera backend: {_BACKEND}")
 
     cam = DepthCameraManager(
         depth_min_mm=args.min,
@@ -249,7 +322,9 @@ def run_debug_viewer(args):
         sys.exit(1)
 
     glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 2)
+    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)
     glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
     glfw.window_hint(glfw.FLOATING, glfw.TRUE)  # Stay on top initially
     window = glfw.create_window(960, 540, "Depth Camera Debug", None, None)
@@ -262,6 +337,9 @@ def run_debug_viewer(args):
     glfw.swap_interval(1)
     glfw.show_window(window)
     glfw.focus_window(window)
+
+    # Init text renderer (needs GL context)
+    _init_text_renderer()
 
     # Show a "loading" frame so the window isn't blank
     fb_w, fb_h = glfw.get_framebuffer_size(window)
@@ -341,12 +419,16 @@ def run_debug_viewer(args):
     bg_frames_to_avg = 30        # Number of frames to average for bg capture
     bg_capturing = False         # Currently capturing bg frames
     bg_capture_frames = []       # Accumulated frames during bg capture
+    col_stride = 1               # Column stride for alignment (1=normal, 2=skip every other)
+    row_stride = 1               # Row stride for alignment
+    col_offset = 0               # Column offset (0 or 1) for which columns to keep
 
     def on_key(win, key, scancode, action, mods):
         nonlocal bg_reference, bg_tolerance, threshold_mode, threshold_level
         nonlocal blur_enabled, erode_enabled, bg_capturing, bg_capture_frames
+        nonlocal col_stride, row_stride, col_offset
 
-        if action != glfw.PRESS:
+        if action != glfw.PRESS and action != glfw.REPEAT:
             return
 
         if key in (glfw.KEY_Q, glfw.KEY_ESCAPE):
@@ -361,20 +443,38 @@ def run_debug_viewer(args):
                 cam.set_temporal_smoothing(0.3)
             print(f"Smoothing: {cam.temporal_smoothing}")
         elif key == glfw.KEY_EQUAL:
-            cam.set_depth_range(cam.depth_min_mm, cam.depth_max_mm + 500)
-            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}mm")
+            raw = getattr(cam, '_raw_unit_mode', False)
+            step = 10 if raw else 500
+            cam.set_depth_range(cam.depth_min_mm, cam.depth_max_mm + step)
+            unit = "raw" if raw else "mm"
+            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm} {unit}")
         elif key == glfw.KEY_MINUS:
-            cam.set_depth_range(cam.depth_min_mm, max(1000, cam.depth_max_mm - 500))
-            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}mm")
+            raw = getattr(cam, '_raw_unit_mode', False)
+            step = 10 if raw else 500
+            floor = 10 if raw else 1000
+            cam.set_depth_range(cam.depth_min_mm, max(floor, cam.depth_max_mm - step))
+            unit = "raw" if raw else "mm"
+            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm} {unit}")
         elif key == glfw.KEY_RIGHT_BRACKET:
-            cam.set_depth_range(min(cam.depth_min_mm + 100, cam.depth_max_mm - 100),
+            raw = getattr(cam, '_raw_unit_mode', False)
+            step = 5 if raw else 100
+            cam.set_depth_range(min(cam.depth_min_mm + step, cam.depth_max_mm - step),
                                 cam.depth_max_mm)
-            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}mm")
+            unit = "raw" if raw else "mm"
+            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm} {unit}")
         elif key == glfw.KEY_LEFT_BRACKET:
-            cam.set_depth_range(max(0, cam.depth_min_mm - 100), cam.depth_max_mm)
-            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}mm")
+            raw = getattr(cam, '_raw_unit_mode', False)
+            step = 5 if raw else 100
+            cam.set_depth_range(max(0, cam.depth_min_mm - step), cam.depth_max_mm)
+            unit = "raw" if raw else "mm"
+            print(f"Range: {cam.depth_min_mm}-{cam.depth_max_mm} {unit}")
         elif key == glfw.KEY_R:
-            cam.set_depth_range(500, 4000)
+            raw = getattr(cam, '_raw_unit_mode', False)
+            if raw:
+                max_raw = int(getattr(cam, '_raw_max_observed', 255))
+                cam.set_depth_range(0, max_raw)
+            else:
+                cam.set_depth_range(500, 4000)
             cam.set_invert(True)
             cam.set_temporal_smoothing(0.3)
             bg_reference = None
@@ -383,6 +483,9 @@ def run_debug_viewer(args):
             bg_tolerance = 0.05
             blur_enabled = False
             erode_enabled = False
+            col_stride = 1
+            row_stride = 1
+            col_offset = 0
             print("Reset all to defaults")
         elif key == glfw.KEY_P:
             depth, _ = cam.get_depth()
@@ -417,18 +520,29 @@ def run_debug_viewer(args):
         elif key == glfw.KEY_DOWN:
             bg_tolerance = max(0.005, bg_tolerance - 0.01)
             print(f"BG tolerance: {bg_tolerance:.3f}")
-        elif key == glfw.KEY_RIGHT:
-            threshold_level = min(0.9, threshold_level + 0.02)
-            print(f"Threshold level: {threshold_level:.2f}")
-        elif key == glfw.KEY_LEFT:
-            threshold_level = max(0.02, threshold_level - 0.02)
-            print(f"Threshold level: {threshold_level:.2f}")
         elif key == glfw.KEY_G:
             blur_enabled = not blur_enabled
             print(f"Blur: {blur_enabled}")
         elif key == glfw.KEY_E:
             erode_enabled = not erode_enabled
             print(f"Erosion: {erode_enabled}")
+
+        # Alignment controls
+        elif key == glfw.KEY_LEFT:
+            col_stride = max(1, col_stride - 1)
+            print(f"Col stride: {col_stride}  Col offset: {col_offset}")
+        elif key == glfw.KEY_RIGHT:
+            col_stride = min(4, col_stride + 1)
+            print(f"Col stride: {col_stride}  Col offset: {col_offset}")
+        elif key == glfw.KEY_COMMA:   # < key
+            threshold_level = max(0.02, threshold_level - 0.02)
+            print(f"Threshold level: {threshold_level:.2f}")
+        elif key == glfw.KEY_PERIOD:  # > key
+            threshold_level = min(0.9, threshold_level + 0.02)
+            print(f"Threshold level: {threshold_level:.2f}")
+        elif key == glfw.KEY_TAB:
+            col_offset = (col_offset + 1) % col_stride if col_stride > 1 else 0
+            print(f"Col offset: {col_offset}  Col stride: {col_stride}")
 
     glfw.set_key_callback(window, on_key)
 
@@ -441,8 +555,8 @@ def run_debug_viewer(args):
         while not glfw.window_should_close(window):
             glfw.poll_events()
 
-            raw_depth, _ = cam.get_depth()
-            if raw_depth is None:
+            raw_depth_full, _ = cam.get_depth()
+            if raw_depth_full is None:
                 # Still draw something so the window isn't frozen
                 fb_w, fb_h = glfw.get_framebuffer_size(window)
                 glViewport(0, 0, fb_w, fb_h)
@@ -453,6 +567,14 @@ def run_debug_viewer(args):
                 glfw.swap_buffers(window)
                 time.sleep(0.01)
                 continue
+
+            # Apply column/row stride for alignment adjustment
+            if col_stride > 1:
+                raw_depth = raw_depth_full[:, col_offset::col_stride]
+            else:
+                raw_depth = raw_depth_full
+            if row_stride > 1:
+                raw_depth = raw_depth[::row_stride, :]
 
             now = time.monotonic()
             dt = now - last_time
@@ -554,11 +676,11 @@ def run_debug_viewer(args):
             total = raw_depth.size
 
             lines = [
-                f"FPS: {fps:.1f}   Frame: {cam.frame_count}   Res: {w}x{h}",
-                f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}mm   Invert: {cam.invert}   Smooth: {cam.temporal_smoothing:.1f}",
+                f"FPS: {fps:.1f}   Frame: {cam.frame_count}   Res: {w}x{h}   Backend: {_BACKEND}",
+                f"Range: {cam.depth_min_mm}-{cam.depth_max_mm}{'raw' if getattr(cam, '_raw_unit_mode', False) else 'mm'}   Invert: {cam.invert}   Smooth: {cam.temporal_smoothing:.1f}",
                 f"Raw valid: {valid_raw}/{total} ({100*valid_raw/total:.0f}%)   Processed: {valid_proc}/{total} ({100*valid_proc/total:.0f}%)",
                 f"BG: {'SET' if bg_reference is not None else 'NONE'}   Tol: {bg_tolerance:.3f}   Thresh: {'ON' if threshold_mode else 'OFF'} ({threshold_level:.2f})",
-                f"Blur: {'ON' if blur_enabled else 'OFF'}   Erode: {'ON' if erode_enabled else 'OFF'}",
+                f"Blur: {'ON' if blur_enabled else 'OFF'}   Erode: {'ON' if erode_enabled else 'OFF'}   ColStride: {col_stride}  ColOff: {col_offset}",
             ]
             if bg_capturing:
                 lines.append(f"*** CAPTURING BG: {len(bg_capture_frames)}/{bg_frames_to_avg} ***")
@@ -576,8 +698,8 @@ def run_debug_viewer(args):
             # Help
             help_lines = [
                 "B:BG capture  X:Clear BG  T:Threshold  G:Blur  E:Erode",
-                "Up/Dn:Tolerance  L/R:ThreshLvl  +/-:MaxRange  [/]:MinRange",
-                "I:Invert  S:Smooth  R:Reset  P:Stats  Q:Quit",
+                "Up/Dn:Tolerance  </> :ThreshLvl  +/-:MaxRange  [/]:MinRange",
+                "L/R:ColStride  TAB:ColOffset  I:Invert  S:Smooth  R:Reset  P:Stats  Q:Quit",
             ]
             y = fb_h - 8
             for line in reversed(help_lines):
@@ -596,6 +718,12 @@ def run_debug_viewer(args):
         glDeleteBuffers(1, [vbo])
         glDeleteVertexArrays(1, [vao])
         glDeleteProgram(prog)
+        if _text_vbo:
+            glDeleteBuffers(1, [_text_vbo])
+        if _text_vao:
+            glDeleteVertexArrays(1, [_text_vao])
+        if _text_prog:
+            glDeleteProgram(_text_prog)
         glfw.terminate()
         print("Done.")
 

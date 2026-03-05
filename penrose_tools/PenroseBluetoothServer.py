@@ -257,8 +257,7 @@ class PenroseBluetoothServer:
             config.read(self.config_file)
             settings = dict(config['Settings'])
             formatted_settings = {
-                "size": int(settings.get('size', 0)),
-                "scale": int(settings.get('scale', 0)),
+                "zoom": float(settings.get('zoom', 1.0)),
                 "gamma": [float(x.strip()) for x in settings.get('gamma', '').split(',')],
                 "color1": [int(x.strip()) for x in settings.get('color1', '').replace('(', '').replace(')', '').split(',')],
                 "color2": [int(x.strip()) for x in settings.get('color2', '').replace('(', '').replace(')', '').split(',')]

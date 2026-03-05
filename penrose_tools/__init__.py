@@ -4,6 +4,7 @@ from .Server import run_server
 from .Tile import Tile
 from .ProceduralRenderer import ProceduralRenderer
 from .GUIOverlay import GUIOverlay
+from .DemoController import DemoController
 from .events import (
     update_event, toggle_shader_event, randomize_colors_event,
     shutdown_event, toggle_regions_event, toggle_gui_event
@@ -20,6 +21,13 @@ try:
     from .DepthCameraManager import DepthCameraManager
 except ImportError:
     DepthCameraManager = None
+
+# Optional: Audio feedback (requires signalflow)
+try:
+    from .AudioManager import AudioManager, SIGNALFLOW_AVAILABLE as AUDIO_AVAILABLE
+except ImportError:
+    AudioManager = None
+    AUDIO_AVAILABLE = False
 
 # Only export Bluetooth components if not in local mode
 import os

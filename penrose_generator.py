@@ -20,6 +20,8 @@ from threading import Thread
 from collections import OrderedDict
 from penrose_tools import Operations, Tile, run_server, GUIOverlay
 from penrose_tools.ProceduralRenderer import ProceduralRenderer
+from penrose_tools.TweenEngine import TweenEngine
+from penrose_tools.DemoController import DemoController
 import logging
 import configparser
 import signal
@@ -32,8 +34,7 @@ import time
 # Configuration and initialization
 CONFIG_PATH = 'config.ini'
 DEFAULT_CONFIG = {
-    'size': 15,
-    'scale': 20,
+    'zoom': 1.0,
     'gamma': [1.0, 0.7, 0.5, 0.3, 0.1],
     'color1': [205, 255, 255],
     'color2': [0, 0, 255],
@@ -41,7 +42,6 @@ DEFAULT_CONFIG = {
     'timer' : 10,
     'shader_settings': {
         'no_effect': True,
-        'shift_effect': True,
         'region_blend': True,
         'rainbow': True,
         'pulse': True,
@@ -58,6 +58,12 @@ width = 0
 height = 0
 gui_overlay = None
 renderer = None  # Global renderer reference
+audio_manager = None  # Global audio manager reference
+tween_engine = None  # Global tween engine reference
+demo_controller = None  # Global demo controller reference
+depth_camera_manager = None  # Global depth camera reference
+_pending_gamma = None  # Queued gamma value during fade transitions
+_pending_shader = False  # Queued shader switch during fade transitions
 
 # Check if Bluetooth is available
 try:
@@ -78,6 +84,12 @@ try:
     from penrose_tools.DepthCameraManager import DepthCameraManager, DEPTH_CAMERA_AVAILABLE
 except ImportError:
     DEPTH_CAMERA_AVAILABLE = False
+
+# Check if audio feedback is available (requires signalflow)
+try:
+    from penrose_tools.AudioManager import AudioManager, SIGNALFLOW_AVAILABLE as AUDIO_AVAILABLE
+except ImportError:
+    AUDIO_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
@@ -149,8 +161,7 @@ def initialize_config(path):
         print("Config file not found. Creating a new one...")
         config = configparser.ConfigParser()
         config['Settings'] = {
-            'size': str(int(DEFAULT_CONFIG['size'])),  # Ensure size is integer
-            'scale': str(int(DEFAULT_CONFIG['scale'])),  # Convert scale to integer
+            'zoom': str(DEFAULT_CONFIG['zoom']),
             'gamma': ', '.join(map(str, DEFAULT_CONFIG['gamma'])),
             'color1': ', '.join(map(str, DEFAULT_CONFIG['color1'])),
             'color2': ', '.join(map(str, DEFAULT_CONFIG['color2'])),
@@ -250,15 +261,40 @@ def toggle_fullscreen(window):
     glViewport(0, 0, fb_width, fb_height)
 
 def update_toggles(shaders):
-    global config_data, running
+    global config_data, running, tween_engine
     logger.debug("Checking for events...")
     if randomize_colors_event.is_set():
         logger.info("Randomize Colors Event Detected")
-        for i in range(3):
-            config_data['color1'][i] = np.random.randint(0, 256)
-            config_data['color2'][i] = np.random.randint(0, 256)
+        new_c1 = [int(np.random.randint(0, 256)) for _ in range(3)]
+        new_c2 = [int(np.random.randint(0, 256)) for _ in range(3)]
         randomize_colors_event.clear()
-        op.update_config_file(CONFIG_PATH, **config_data)
+        if tween_engine:
+            # Get current colors (from active tween or config)
+            if tween_engine.is_active('color'):
+                current = tween_engine.get('color')
+                old_c1 = [current[0], current[1], current[2]]
+                old_c2 = [current[3], current[4], current[5]]
+            else:
+                old_c1 = list(config_data['color1'])
+                old_c2 = list(config_data['color2'])
+            pending_c1 = list(new_c1)
+            pending_c2 = list(new_c2)
+            def on_color_complete():
+                config_data['color1'] = pending_c1
+                config_data['color2'] = pending_c2
+                op.update_config_file(CONFIG_PATH, **config_data)
+            tween_engine.start(
+                'color',
+                old_c1 + old_c2,
+                new_c1 + new_c2,
+                1.0,
+                'ease_in_out',
+                on_complete=on_color_complete
+            )
+        else:
+            config_data['color1'] = new_c1
+            config_data['color2'] = new_c2
+            op.update_config_file(CONFIG_PATH, **config_data)
     if update_event.is_set():
         logger.info("Update Event Detected")
         update_event.clear()
@@ -266,8 +302,11 @@ def update_toggles(shaders):
     if toggle_shader_event.is_set():
         logger.info("Toggle Shader Event Detected - Before toggle")
         toggle_shader_event.clear()
-        next_index = shaders.next_shader()
-        logger.info(f"Shader switched to index {next_index}")
+        if tween_engine:
+            _start_shader_fade()
+        else:
+            next_index = shaders.next_shader()
+            logger.info(f"Shader switched to index {next_index}")
     if shutdown_event.is_set():
         logger.info("Shutdown Event Detected")
         running = False
@@ -275,7 +314,9 @@ def update_toggles(shaders):
 
 def scroll_callback(window, xoffset, yoffset):
     """Handle mouse scroll for zoom."""
-    global renderer
+    global renderer, demo_controller
+    if demo_controller:
+        demo_controller.on_user_input()
     if renderer:
         if yoffset > 0:
             renderer.zoom_by(1.15)  # Zoom in
@@ -284,16 +325,22 @@ def scroll_callback(window, xoffset, yoffset):
 
 def mouse_button_callback(window, button, action, mods):
     """Handle mouse clicks for tile interaction."""
-    global renderer, width, height
+    global renderer, width, height, audio_manager, demo_controller
+    if demo_controller:
+        demo_controller.on_user_input()
     if renderer and renderer.interaction_manager and action == glfw.PRESS:
         if button == glfw.MOUSE_BUTTON_LEFT:
             mx, my = glfw.get_cursor_pos(window)
             px, py = renderer.screen_to_pentagrid(mx, my, width, height)
             renderer.interaction_manager.handle_click(px, py)
+            if audio_manager:
+                audio_manager.on_click(renderer.interaction_manager.click_mode, px, py)
 
 def cursor_position_callback(window, xpos, ypos):
     """Handle cursor movement for tile hover."""
-    global renderer, width, height
+    global renderer, width, height, demo_controller
+    if demo_controller:
+        demo_controller.on_user_input()
     if renderer and renderer.interaction_manager:
         px, py = renderer.screen_to_pentagrid(xpos, ypos, width, height)
         renderer.interaction_manager.update_hover(px, py)
@@ -305,8 +352,73 @@ def cursor_enter_callback(window, entered):
     if not entered and renderer and renderer.interaction_manager:
         renderer.interaction_manager.clear_hover()
 
+def _start_gamma_fade(new_gamma):
+    """Start a fade-to-black → apply gamma → fade-back-in sequence."""
+    global config_data, tween_engine, renderer, _pending_gamma, audio_manager
+    logger.info(f"_start_gamma_fade called, tween_engine={tween_engine is not None}")
+    if not tween_engine:
+        # No tween engine, apply immediately
+        config_data['gamma'] = new_gamma
+        op.update_config_file(CONFIG_PATH, **config_data)
+        return
+    # If a brightness tween is already active (mid-fade), queue the gamma
+    if tween_engine.is_active('brightness'):
+        _pending_gamma = new_gamma
+        return
+    _pending_gamma = None
+    captured_gamma = list(new_gamma)
+    def on_fade_out_complete():
+        global config_data, _pending_gamma
+        # Apply the newest gamma (could have been updated during fade)
+        gamma_to_apply = _pending_gamma if _pending_gamma is not None else captured_gamma
+        _pending_gamma = None
+        config_data['gamma'] = list(gamma_to_apply)
+        renderer.set_gamma(list(gamma_to_apply))
+        op.update_config_file(CONFIG_PATH, **config_data)
+        # Fade back in
+        tween_engine.start('brightness', 0.0, 1.0, 0.5, 'ease_out',
+                           on_complete=on_fade_in_complete)
+    def on_fade_in_complete():
+        tween_engine.brightness_multiplier = 1.0
+    # Start fade to black
+    tween_engine.start('brightness', 1.0, 0.0, 0.5, 'ease_in',
+                       on_complete=on_fade_out_complete)
+
+def _start_shader_fade():
+    """Start a fade-to-black → switch shader → fade-back-in sequence."""
+    global tween_engine, renderer, _pending_shader, audio_manager
+    logger.info(f"_start_shader_fade called, tween_engine={tween_engine is not None}")
+    if not tween_engine:
+        # No tween engine, switch immediately
+        if renderer:
+            renderer.next_effect()
+        return
+    # If a brightness tween is already active (mid-fade), queue the shader switch
+    if tween_engine.is_active('brightness'):
+        _pending_shader = True
+        return
+    _pending_shader = False
+    def on_fade_out_complete():
+        global _pending_shader
+        if renderer:
+            effect_idx = renderer.next_effect()
+            if audio_manager:
+                audio_manager.on_effect_change(effect_idx)
+        # If another shader switch was queued, it will be handled on next event
+        _pending_shader = False
+        # Fade back in
+        tween_engine.start('brightness', 0.0, 1.0, 0.5, 'ease_out',
+                           on_complete=on_fade_in_complete)
+    def on_fade_in_complete():
+        tween_engine.brightness_multiplier = 1.0
+    # Start fade to black
+    tween_engine.start('brightness', 1.0, 0.0, 0.5, 'ease_in',
+                       on_complete=on_fade_out_complete)
+
 def key_callback(window, key, scancode, action, mods):
-    global config_data, gui_overlay, fullscreen_mode, width, height, renderer
+    global config_data, gui_overlay, fullscreen_mode, width, height, renderer, audio_manager, tween_engine, demo_controller, depth_camera_manager
+    if demo_controller:
+        demo_controller.on_user_input()
     if action == glfw.PRESS or action == glfw.REPEAT:
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
@@ -340,7 +452,7 @@ def key_callback(window, key, scancode, action, mods):
             toggle_fullscreen(window)
         if key == glfw.KEY_SPACE:
             if renderer:
-                renderer.next_effect()
+                _start_shader_fade()
         elif key == glfw.KEY_TAB:
             # Cycle interaction mode: select → cascade → ripple → mask_stamp
             if renderer and renderer.interaction_manager:
@@ -360,21 +472,23 @@ def key_callback(window, key, scancode, action, mods):
                     renderer.overlay_renderer.set_mask_enabled(False)
                 logger.info(f"Depth mask layer: {'ON' if renderer.depth_mask_enabled else 'OFF'}")
         elif key == glfw.KEY_R:
+            logger.info("KEY R pressed: setting randomize_colors_event")
             randomize_colors_event.set()
+            if audio_manager:
+                audio_manager.on_color_change(config_data.get('color1', [128,128,128]),
+                                              config_data.get('color2', [128,128,128]))
         elif key == glfw.KEY_G:
             if renderer:
-                new_gamma = renderer.randomize_gamma()
-                config_data['gamma'] = new_gamma
-                op.update_config_file(CONFIG_PATH, **config_data)
+                import random as _rnd
+                new_gamma = [_rnd.uniform(0.0, 1.0) for _ in range(5)]
+                _start_gamma_fade(new_gamma)
                 logger.info(f"Gamma randomized: {new_gamma}")
+                if audio_manager:
+                    audio_manager.on_gamma_change()
         elif key == glfw.KEY_UP:
-            config_data['scale'] = min(config_data['scale'] + 3, 60)
-            op.update_config_file(CONFIG_PATH, **config_data)
-            update_event.set()
+            renderer.zoom_by(1.15)
         elif key == glfw.KEY_DOWN:
-            config_data['scale'] = max(config_data['scale'] - 3, 30)
-            op.update_config_file(CONFIG_PATH, **config_data)
-            update_event.set()
+            renderer.zoom_by(0.85)
         elif key in [glfw.KEY_1, glfw.KEY_2, glfw.KEY_3]:
             if 'cycle' not in config_data:
                 config_data['cycle'] = '[False, False, False]'
@@ -395,8 +509,51 @@ def key_callback(window, key, scancode, action, mods):
             update_event.set()
             logger.info(f"Cycle settings updated to: {config_data['cycle']}")
 
+        # Depth camera range controls
+        elif key == glfw.KEY_EQUAL and depth_camera_manager:
+            raw = getattr(depth_camera_manager, '_raw_unit_mode', False)
+            step = 10 if raw else 500
+            depth_camera_manager.set_depth_range(
+                depth_camera_manager.depth_min_mm,
+                depth_camera_manager.depth_max_mm + step)
+            unit = "raw" if raw else "mm"
+            logger.info(f"Depth range: {depth_camera_manager.depth_min_mm}-"
+                        f"{depth_camera_manager.depth_max_mm} {unit}")
+        elif key == glfw.KEY_MINUS and depth_camera_manager:
+            raw = getattr(depth_camera_manager, '_raw_unit_mode', False)
+            step = 10 if raw else 500
+            floor = 10 if raw else 1000
+            depth_camera_manager.set_depth_range(
+                depth_camera_manager.depth_min_mm,
+                max(floor, depth_camera_manager.depth_max_mm - step))
+            unit = "raw" if raw else "mm"
+            logger.info(f"Depth range: {depth_camera_manager.depth_min_mm}-"
+                        f"{depth_camera_manager.depth_max_mm} {unit}")
+        elif key == glfw.KEY_COMMA and depth_camera_manager:
+            raw = getattr(depth_camera_manager, '_raw_unit_mode', False)
+            step = 5 if raw else 100
+            depth_camera_manager.set_depth_range(
+                max(0, depth_camera_manager.depth_min_mm - step),
+                depth_camera_manager.depth_max_mm)
+            unit = "raw" if raw else "mm"
+            logger.info(f"Depth range: {depth_camera_manager.depth_min_mm}-"
+                        f"{depth_camera_manager.depth_max_mm} {unit}")
+        elif key == glfw.KEY_PERIOD and depth_camera_manager:
+            raw = getattr(depth_camera_manager, '_raw_unit_mode', False)
+            step = 5 if raw else 100
+            depth_camera_manager.set_depth_range(
+                min(depth_camera_manager.depth_min_mm + step,
+                    depth_camera_manager.depth_max_mm - step),
+                depth_camera_manager.depth_max_mm)
+            unit = "raw" if raw else "mm"
+            logger.info(f"Depth range: {depth_camera_manager.depth_min_mm}-"
+                        f"{depth_camera_manager.depth_max_mm} {unit}")
+        elif key == glfw.KEY_I and depth_camera_manager:
+            depth_camera_manager.set_invert(not depth_camera_manager.invert)
+            logger.info(f"Depth invert: {depth_camera_manager.invert}")
+
 def main():
-    global width, height, config_data, gui_overlay, fullscreen_mode, renderer
+    global width, height, config_data, gui_overlay, fullscreen_mode, renderer, audio_manager, tween_engine, demo_controller, depth_camera_manager
 
     parser = argparse.ArgumentParser(description="Penrose Tiling Generator")
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
@@ -404,6 +561,10 @@ def main():
     parser.add_argument('--local', action='store_true', help='Run in local mode without server components')
     parser.add_argument('--camera', action='store_true', help='Enable webcam capture for interaction/depth processing')
     parser.add_argument('--depth-camera', action='store_true', help='Enable Orbbec depth camera for depth-based tile coloring')
+    parser.add_argument('--audio', action='store_true', help='Enable reactive audio feedback (requires signalflow)')
+    parser.add_argument('--audio-mode', choices=['stereo', 'surround'], default='stereo', help='Audio output mode: stereo or 5.1 surround')
+    parser.add_argument('--demo', action='store_true', help='Enable autonomous demo mode')
+    parser.add_argument('--demo-idle', type=float, default=2.0, help='Idle timeout in minutes before demo resumes (default: 2.0)')
     args = parser.parse_args()
 
     # Set environment variable for local mode
@@ -445,6 +606,18 @@ def main():
 
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()
+        initial_zoom = float(config_data.get('zoom', 1.0))
+        renderer.set_zoom(initial_zoom)
+        renderer.zoom = initial_zoom  # Skip interpolation for initial value
+
+        # Initialize tween engine for smooth visual transitions
+        tween_engine = TweenEngine()
+        renderer.tween_engine = tween_engine
+
+        # Initialize demo controller if --demo flag is set
+        if args.demo:
+            demo_controller = DemoController(renderer, tween_engine, CONFIG_PATH, idle_timeout_minutes=args.demo_idle)
+            logger.info(f"Demo mode enabled (idle timeout: {args.demo_idle} minutes)")
 
         # Initialize GUI overlay
         gui_overlay = GUIOverlay()
@@ -502,24 +675,68 @@ def main():
             else:
                 logger.warning("--depth-camera requested but DepthCameraManager not available (install openni package)")
 
+        # Initialize audio feedback if requested
+        if args.audio:
+            if AUDIO_AVAILABLE:
+                try:
+                    audio_manager = AudioManager(mode=args.audio_mode)
+                    logger.info(f"Audio feedback started (mode={args.audio_mode})")
+                except Exception as e:
+                    logger.warning(f"Failed to start audio feedback: {e}")
+                    audio_manager = None
+            else:
+                logger.warning("--audio requested but signalflow not installed (pip install signalflow)")
+
         logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors, M=depth mask")
         logger.info("Interaction: Click=interact, TAB=cycle mode (select/cascade/ripple/mask_stamp), C=clear")
 
         last_time = glfw.get_time()
+        prev_frame_time = last_time
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
             glClear(GL_COLOR_BUFFER_BIT)
 
+            # Calculate delta time for tween updates
+            current_time = glfw.get_time()
+            dt = current_time - prev_frame_time
+            dt = max(0.0, min(dt, 0.1))  # Clamp to avoid large jumps
+            prev_frame_time = current_time
+
             # Handle events
             if randomize_colors_event.is_set():
                 randomize_colors_event.clear()
-                for i in range(3):
-                    config_data['color1'][i] = np.random.randint(0, 256)
-                    config_data['color2'][i] = np.random.randint(0, 256)
-                op.update_config_file(CONFIG_PATH, **config_data)
+                logger.info("COLOR EVENT: randomize_colors_event fired in main loop")
+                new_c1 = [int(np.random.randint(0, 256)) for _ in range(3)]
+                new_c2 = [int(np.random.randint(0, 256)) for _ in range(3)]
+                # Get current colors (from active tween or config)
+                if tween_engine and tween_engine.is_active('color'):
+                    current = tween_engine.get('color')
+                    old_c1 = [current[0], current[1], current[2]]
+                    old_c2 = [current[3], current[4], current[5]]
+                else:
+                    old_c1 = list(config_data['color1'])
+                    old_c2 = list(config_data['color2'])
+                # Store final colors for when tween completes
+                pending_c1 = list(new_c1)
+                pending_c2 = list(new_c2)
+                def on_color_complete():
+                    config_data['color1'] = pending_c1
+                    config_data['color2'] = pending_c2
+                    op.update_config_file(CONFIG_PATH, **config_data)
+                tween_engine.start(
+                    'color',
+                    old_c1 + old_c2,
+                    new_c1 + new_c2,
+                    1.0,
+                    'ease_in_out',
+                    on_complete=on_color_complete
+                )
             if update_event.is_set():
                 update_event.clear()
                 config_data = op.read_config_file(CONFIG_PATH)
+            if toggle_shader_event.is_set():
+                toggle_shader_event.clear()
+                _start_shader_fade()
 
             # Update viewport with framebuffer size (handles HiDPI/Retina and resizes)
             fb_width, fb_height = glfw.get_framebuffer_size(window)
@@ -534,6 +751,39 @@ def main():
                     depth_resized = depth_camera_manager.resize_for_mask(depth_frame, mask_resolution)
                     renderer.upload_external_mask(depth_resized, mask_resolution, mask_resolution)
 
+            # Update audio drones with current state
+            if audio_manager:
+                audio_manager.update_pan(renderer.velocity_x, renderer.velocity_y)
+                # Drive pulse drone when pulse shader is active
+                is_pulse = renderer.get_effect_name() == 'pulse'
+                audio_manager.update_pulse(
+                    active=is_pulse,
+                    zoom=renderer.zoom,
+                )
+                # Drive eye_spy drone from depth camera state
+                is_eye_spy = renderer.get_effect_name() == 'eye_spy'
+                audio_manager.update_eye_spy(
+                    active=is_eye_spy,
+                    centroid_x=renderer._depth_centroid[0],
+                    centroid_y=renderer._depth_centroid[1],
+                    coverage=renderer._depth_coverage,
+                    motion=renderer._depth_motion,
+                    depth_available=renderer._depth_data_available,
+                )
+
+            # Update tween engine before rendering
+            tween_engine.update(dt)
+            # Sync brightness_multiplier from active brightness tween
+            brightness_val = tween_engine.get('brightness')
+            if brightness_val is not None:
+                tween_engine.brightness_multiplier = brightness_val
+            elif not tween_engine.is_active('brightness'):
+                tween_engine.brightness_multiplier = 1.0
+
+            # Update demo controller if active
+            if demo_controller:
+                demo_controller.update(dt)
+            
             # Render procedural tiling
             renderer.render(fb_width, fb_height, config_data)
 
@@ -559,6 +809,8 @@ def main():
             camera_manager.stop()
         if depth_camera_manager is not None:
             depth_camera_manager.stop()
+        if audio_manager is not None:
+            audio_manager.stop()
         glfw.terminate()
         if cycle_manager is not None:
             cycle_manager.stop()

@@ -25,7 +25,6 @@ class ProceduralRenderer:
 
     EFFECT_NAMES = [
         'no_effect',
-        'shift_effect',
         'region_blend',
         'rainbow',
         'pulse',
@@ -39,12 +38,11 @@ class ProceduralRenderer:
         # Camera state - current (interpolated) values
         self.camera_x = 0.0
         self.camera_y = 0.0
-        self.zoom = 1.0
-
+        self.zoom = 0.3
         # Camera state - target values for smooth interpolation
         self.target_camera_x = 0.0
         self.target_camera_y = 0.0
-        self.target_zoom = 1.0
+        self.target_zoom = 0.3
 
         # Smoothing factors (0.0 = no smoothing, 1.0 = instant)
         # Lower values = smoother/slower interpolation
@@ -113,6 +111,9 @@ class ProceduralRenderer:
 
         # Interaction overlay enabled — draws interaction visuals on top of any effect
         self.interaction_overlay_enabled = True
+
+        # Tween engine reference for smooth visual transitions
+        self.tween_engine = None
 
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
@@ -338,10 +339,28 @@ class ProceduralRenderer:
 
         c1 = config_data.get('color1', [255, 255, 255])
         c2 = config_data.get('color2', [0, 0, 255])
+
+        # Apply color tween if active (smooth color transitions)
+        if self.tween_engine:
+            color_tween = self.tween_engine.get('color')
+            if color_tween is not None:
+                # color tween value is [c1_r, c1_g, c1_b, c2_r, c2_g, c2_b] in 0-255 range
+                c1 = [color_tween[0], color_tween[1], color_tween[2]]
+                c2 = [color_tween[3], color_tween[4], color_tween[5]]
+                self.logger.debug(f"Color tween active: c1={c1}, c2={c2}")
+
+        # Apply brightness multiplier from tween engine (for fade-to-black transitions)
+        brightness = self.tween_engine.brightness_multiplier if self.tween_engine else 1.0
+        if brightness < 1.0:
+            self.logger.debug(f"Brightness multiplier: {brightness:.3f}")
+
+        c1_r, c1_g, c1_b = c1[0] / 255.0 * brightness, c1[1] / 255.0 * brightness, c1[2] / 255.0 * brightness
+        c2_r, c2_g, c2_b = c2[0] / 255.0 * brightness, c2[1] / 255.0 * brightness, c2[2] / 255.0 * brightness
+
         if uniforms.get('u_color1', -1) != -1:
-            glUniform3f(uniforms['u_color1'], c1[0]/255.0, c1[1]/255.0, c1[2]/255.0)
+            glUniform3f(uniforms['u_color1'], c1_r, c1_g, c1_b)
         if uniforms.get('u_color2', -1) != -1:
-            glUniform3f(uniforms['u_color2'], c2[0]/255.0, c2[1]/255.0, c2[2]/255.0)
+            glUniform3f(uniforms['u_color2'], c2_r, c2_g, c2_b)
         if uniforms.get('u_edge_thickness', -1) != -1:
             glUniform1f(uniforms['u_edge_thickness'], self.edge_thickness)
         if uniforms.get('u_gamma', -1) != -1:
@@ -391,10 +410,14 @@ class ProceduralRenderer:
         # --- PASS 2: Overlay layer ---
         # For region_blend: full opaque overlay (primary rendering)
         # For all other effects: interaction-only overlay (hover/select/anim visuals)
+        # Pass tweened colors (with brightness applied) so overlays match the base layer
+        overlay_config = dict(config_data)
+        overlay_config['color1'] = [c1_r * 255.0, c1_g * 255.0, c1_b * 255.0]
+        overlay_config['color2'] = [c2_r * 255.0, c2_g * 255.0, c2_b * 255.0]
         if use_overlay:
-            self._update_overlay(width, height, gamma, config_data)
+            self._update_overlay(width, height, gamma, overlay_config)
         elif has_interaction:
-            self._update_interaction_overlay(width, height, gamma, config_data)
+            self._update_interaction_overlay(width, height, gamma, overlay_config)
 
     def _process_overlay_updates(self, gamma, aspect):
         """Poll for background generation results and upload to GPU.
@@ -675,7 +698,13 @@ class ProceduralRenderer:
             if total_w > 0:
                 cx = (xs * weights).sum() / total_w / width
                 cy = (ys * weights).sum() / total_w / height
-                self._depth_centroid = (float(cx), float(cy))
+                # Flip Y: numpy row 0 = top, but pentagrid Y+ = up
+                self._depth_centroid = (float(cx), 1.0 - float(cy))
+                if not hasattr(self, '_centroid_log_count'):
+                    self._centroid_log_count = 0
+                self._centroid_log_count += 1
+                if self._centroid_log_count % 60 == 1:
+                    self.logger.info(f"Depth centroid: ({cx:.3f}, {1.0-cy:.3f}) coverage={self._depth_coverage:.2f}")
             else:
                 self._depth_centroid = (0.5, 0.5)
         else:

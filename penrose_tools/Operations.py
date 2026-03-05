@@ -31,12 +31,11 @@ class Operations:
         self.is_transitioning = False
         self.tile_interpolation = {}  # To track interpolation state of tiles
 
-    def write_config_file(self, scale, size, gamma, color1, color2, vertex_offset=0.00009):
+    def write_config_file(self, zoom, gamma, color1, color2, vertex_offset=0.00009):
         """Write complete configuration to file."""
         self.filename = 'config.ini'
         self.config['Settings'] = {
-            'scale': str(scale),
-            'size': str(size),
+            'zoom': str(zoom),
             'gamma': ','.join(map(str, gamma)),
             'color1': f"({','.join(map(str, color1))})",
             'color2': f"({','.join(map(str, color2))})",
@@ -49,8 +48,7 @@ class Operations:
         """Read and parse the configuration file."""
         self.config.read(config_path)
         settings = {
-            'scale': self.config.getint('Settings', 'scale'),
-            'size': self.config.getint('Settings', 'size'),
+            'zoom': float(self.config.get('Settings', 'zoom', fallback='1.0')),
             'gamma': [float(x.strip()) for x in self.config.get('Settings', 'gamma').split(',')],
             'color1': self.parse_color(self.config.get('Settings', 'color1')),
             'color2': self.parse_color(self.config.get('Settings', 'color2'))

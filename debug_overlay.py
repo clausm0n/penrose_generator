@@ -48,7 +48,7 @@ def debug_overlay():
     try:
         # Mock config data and shader manager
         mock_config = {
-            'scale': 25,
+            'zoom': 1.0,
             'vertex_offset': 0.0001
         }
         

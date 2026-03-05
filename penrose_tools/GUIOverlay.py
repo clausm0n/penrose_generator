@@ -36,7 +36,7 @@ class GUIOverlay:
             "",
             "CURRENT SETTINGS:",
             "  Shader: {shader_name}",
-            "  Scale: {scale}",
+            "  Zoom: {zoom}",
             "  Vertex Offset: {vertex_offset}",
             "",
             "Press F1 to hide this overlay"
@@ -393,8 +393,8 @@ class GUIOverlay:
         for line in self.controls:
             if "{shader_name}" in line:
                 formatted_controls.append(line.format(shader_name=current_shader))
-            elif "{scale}" in line:
-                formatted_controls.append(line.format(scale=config_data.get('scale', 'Unknown')))
+            elif "{zoom}" in line:
+                formatted_controls.append(line.format(zoom=config_data.get('zoom', 'Unknown')))
             elif "{vertex_offset}" in line:
                 formatted_controls.append(line.format(vertex_offset=config_data.get('vertex_offset', 'Unknown')))
             else:
