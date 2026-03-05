@@ -28,3 +28,6 @@ config.ini
 # OS
 .DS_Store
 Thumbs.db
+
+# Allow prebuilt signalflow binaries
+!signalflow_win64/signalflow/*.pyd
