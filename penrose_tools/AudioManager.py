@@ -17,8 +17,17 @@ All audio runs on SignalFlow's own thread; public methods are thread-safe.
 
 import logging
 import math
+import os
+import sys
 import threading
 import time as _time
+
+# On Windows, add the bundled prebuilt signalflow binaries to the search path
+if sys.platform == "win32":
+    _bundled = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "signalflow_win64")
+    if os.path.isdir(_bundled) and _bundled not in sys.path:
+        os.add_dll_directory(_bundled + os.sep + "signalflow")
+        sys.path.insert(0, _bundled)
 
 try:
     from signalflow import (
