@@ -30,7 +30,12 @@ class ProceduralRenderer:
         'pulse',
         'sparkle',
         'eye_spy',
+        'plasmaball',
+        'pong',
     ]
+
+    # Effects that use depth camera uniforms
+    DEPTH_EFFECTS = {'eye_spy', 'plasmaball', 'pong'}
 
     def __init__(self):
         self.logger = logging.getLogger('ProceduralRenderer')
@@ -101,13 +106,15 @@ class ProceduralRenderer:
         self._last_mask_update = 0.0
         self._mask_color = (1.0, 0.3, 0.1)  # Warm highlight color
 
-        # Depth camera state for procedural shaders (eye_spy)
+        # Depth camera state for procedural shaders (eye_spy, plasmaball, pong)
         self._depth_texture_procedural = None  # GL texture for procedural pipeline
         self._depth_coverage = 0.0   # Fraction of depth pixels active (0-1)
         self._depth_centroid = (0.5, 0.5)  # UV centroid of depth data
         self._depth_data_available = False
         self._depth_motion = 0.0  # Smoothed centroid motion magnitude (0-1)
         self._prev_depth_centroid = (0.5, 0.5)  # Previous frame centroid for motion detection
+        self._depth_left_y = 0.5   # Y centroid of left half of depth frame (for pong)
+        self._depth_right_y = 0.5  # Y centroid of right half of depth frame (for pong)
 
         # Interaction overlay enabled — draws interaction visuals on top of any effect
         self.interaction_overlay_enabled = True
@@ -207,6 +214,9 @@ class ProceduralRenderer:
             'u_depth_coverage': glGetUniformLocation(program, 'u_depth_coverage'),
             'u_depth_centroid': glGetUniformLocation(program, 'u_depth_centroid'),
             'u_depth_motion': glGetUniformLocation(program, 'u_depth_motion'),
+            # Pong-specific depth uniforms
+            'u_depth_left_y': glGetUniformLocation(program, 'u_depth_left_y'),
+            'u_depth_right_y': glGetUniformLocation(program, 'u_depth_right_y'),
         }
         glUseProgram(0)
         return uniforms
@@ -367,8 +377,8 @@ class ProceduralRenderer:
             gamma_array = (GLfloat * 5)(*gamma)
             glUniform1fv(uniforms['u_gamma'], 5, gamma_array)
 
-        # Depth camera uniforms for eye_spy effect
-        if current_effect == 'eye_spy' and uniforms.get('u_depth_enabled', -1) != -1:
+        # Depth camera uniforms for depth-interactive effects
+        if current_effect in self.DEPTH_EFFECTS and uniforms.get('u_depth_enabled', -1) != -1:
             if self._depth_data_available and self._depth_texture_procedural is not None:
                 glUniform1f(uniforms['u_depth_enabled'], 1.0)
                 glUniform1f(uniforms['u_depth_coverage'], self._depth_coverage)
@@ -380,12 +390,23 @@ class ProceduralRenderer:
                     glActiveTexture(GL_TEXTURE1)
                     glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
                     glUniform1i(uniforms['u_depth_texture'], 1)
+                # Pong-specific: left/right paddle Y positions
+                if current_effect == 'pong':
+                    if uniforms.get('u_depth_left_y', -1) != -1:
+                        glUniform1f(uniforms['u_depth_left_y'], self._depth_left_y)
+                    if uniforms.get('u_depth_right_y', -1) != -1:
+                        glUniform1f(uniforms['u_depth_right_y'], self._depth_right_y)
             else:
                 glUniform1f(uniforms['u_depth_enabled'], 0.0)
                 glUniform1f(uniforms['u_depth_coverage'], 0.3)
                 glUniform2f(uniforms['u_depth_centroid'], 0.5, 0.5)
                 if uniforms.get('u_depth_motion', -1) != -1:
                     glUniform1f(uniforms['u_depth_motion'], 0.0)
+                if current_effect == 'pong':
+                    if uniforms.get('u_depth_left_y', -1) != -1:
+                        glUniform1f(uniforms['u_depth_left_y'], 0.5)
+                    if uniforms.get('u_depth_right_y', -1) != -1:
+                        glUniform1f(uniforms['u_depth_right_y'], 0.5)
 
         # Old texture-based region_blend fallback (used when overlay isn't available)
         if current_effect == 'region_blend' and not use_overlay:
@@ -400,7 +421,7 @@ class ProceduralRenderer:
         glBindVertexArray(0)
 
         # Unbind depth texture if it was bound
-        if current_effect == 'eye_spy' and self._depth_texture_procedural is not None:
+        if current_effect in self.DEPTH_EFFECTS and self._depth_texture_procedural is not None:
             glActiveTexture(GL_TEXTURE1)
             glBindTexture(GL_TEXTURE_2D, 0)
             glActiveTexture(GL_TEXTURE0)
@@ -683,7 +704,7 @@ class ProceduralRenderer:
 
     def _update_depth_metrics(self, mask_data, width, height):
         """Compute depth coverage and centroid from mask data, and upload
-        the depth frame as a procedural-pipeline texture for eye_spy."""
+        the depth frame as a procedural-pipeline texture for depth-interactive effects."""
         # Coverage: fraction of pixels above a small threshold
         active = mask_data > 0.05
         total_pixels = mask_data.size
@@ -721,6 +742,35 @@ class ProceduralRenderer:
         else:
             self._depth_motion = max(0.0, self._depth_motion * 0.995)
         self._prev_depth_centroid = self._depth_centroid
+
+        # Pong: compute Y centroids for left and right halves of the depth frame
+        half_w = width // 2
+        left_half = mask_data[:, :half_w]
+        right_half = mask_data[:, half_w:]
+        left_active = left_half > 0.05
+        right_active = right_half > 0.05
+        if np.count_nonzero(left_active) > 0:
+            ys_l = np.where(left_active)[0]
+            weights_l = left_half[left_active]
+            total_wl = weights_l.sum()
+            if total_wl > 0:
+                cy_l = (ys_l * weights_l).sum() / total_wl / height
+                self._depth_left_y = 1.0 - float(cy_l)  # Flip Y
+            else:
+                self._depth_left_y = 0.5
+        else:
+            self._depth_left_y = 0.5
+        if np.count_nonzero(right_active) > 0:
+            ys_r = np.where(right_active)[0]
+            weights_r = right_half[right_active]
+            total_wr = weights_r.sum()
+            if total_wr > 0:
+                cy_r = (ys_r * weights_r).sum() / total_wr / height
+                self._depth_right_y = 1.0 - float(cy_r)  # Flip Y
+            else:
+                self._depth_right_y = 0.5
+        else:
+            self._depth_right_y = 0.5
 
         self._depth_data_available = True
 
