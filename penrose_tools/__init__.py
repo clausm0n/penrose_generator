@@ -5,7 +5,8 @@ from .GUIOverlay import GUIOverlay
 from .DemoController import DemoController
 from .events import (
     update_event, toggle_shader_event, randomize_colors_event,
-    shutdown_event, toggle_regions_event, toggle_gui_event
+    shutdown_event, toggle_regions_event, toggle_gui_event,
+    reset_viewport_event, randomize_gamma_event
 )
 
 # Optional: Camera capture (requires opencv-python)

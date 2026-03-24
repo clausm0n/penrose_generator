@@ -27,7 +27,7 @@ import configparser
 import signal
 import argparse
 import asyncio
-from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event
+from penrose_tools.events import update_event, toggle_shader_event, randomize_colors_event, shutdown_event, toggle_regions_event, toggle_gui_event, reset_viewport_event, randomize_gamma_event
 from threading import Timer
 import random
 import time
@@ -93,6 +93,138 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Penrose_Generator')
+
+# --- Arcade stick/button input via Linux evdev ---
+import sys
+if sys.platform == 'linux':
+    import struct
+    import select
+
+    class ArcadeInput:
+        """Reads a DragonRise USB arcade encoder and fires penrose events.
+
+        Physical-to-logical axis remap (board is rotated):
+            Board LEFT  -> Pan UP
+            Board RIGHT -> Pan DOWN
+            Board DOWN  -> Pan LEFT
+            Board UP    -> Pan RIGHT
+
+        Buttons:
+            BTN_BASE4 (code 297) -> randomize colors
+            BTN_BASE5 (code 298) -> randomize gamma
+            BTN_BASE6 (code 299) -> change shader
+            BTN_BASE3 (code 296) -> reset viewport
+        """
+        EVENT_FORMAT = "llHHi"
+        EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+        AXIS_CENTER = 128
+        AXIS_DEADZONE = 30
+
+        # Button code -> event mapping
+        BUTTON_MAP = {
+            297: 'randomize_colors',   # BTN_BASE4 (button 3 on board)
+            298: 'randomize_gamma',     # BTN_BASE5 (button 4)
+            299: 'toggle_shader',       # BTN_BASE6 (button 5)
+            296: 'reset_viewport',      # BTN_BASE3 (button 6)
+        }
+
+        def __init__(self):
+            self.fd = None
+            self.device_name = None
+            self.axis_x = self.AXIS_CENTER
+            self.axis_y = self.AXIS_CENTER
+            self._open_device()
+
+        def _open_device(self):
+            for i in range(20):
+                path = f"/dev/input/event{i}"
+                if not os.path.exists(path):
+                    continue
+                try:
+                    with open(f"/sys/class/input/event{i}/device/name", "r") as f:
+                        name = f.read().strip()
+                except FileNotFoundError:
+                    continue
+                if "DragonRise" in name or "Generic   USB  Joystick" in name:
+                    try:
+                        self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                        self.device_name = name
+                        logger.info(f"Arcade controller found: {path} ({name})")
+                        return
+                    except PermissionError:
+                        logger.warning(f"Arcade controller at {path} - permission denied (run with sudo)")
+            logger.info("No arcade controller found - arcade input disabled")
+
+        def poll(self):
+            """Poll for arcade inputs. Returns (pan_x, pan_y, button_events).
+
+            pan_x/pan_y are -1, 0, or 1 (remapped to real-space directions).
+            button_events is a list of event name strings for buttons pressed this frame.
+            """
+            button_events = []
+            if self.fd is None:
+                return 0, 0, button_events
+
+            try:
+                readable, _, _ = select.select([self.fd], [], [], 0)
+            except (ValueError, OSError):
+                return 0, 0, button_events
+
+            if not readable:
+                return self._get_pan(), button_events
+
+            try:
+                data = os.read(self.fd, self.EVENT_SIZE * 32)
+            except OSError:
+                return self._get_pan(), button_events
+
+            for offset in range(0, len(data) - self.EVENT_SIZE + 1, self.EVENT_SIZE):
+                _, _, ev_type, code, value = struct.unpack_from(self.EVENT_FORMAT, data, offset)
+                if ev_type == 0x03:  # ABS axis
+                    if code == 0x00:    # ABS_X
+                        self.axis_x = value
+                    elif code == 0x01:  # ABS_Y
+                        self.axis_y = value
+                elif ev_type == 0x01 and value == 1:  # KEY press
+                    event_name = self.BUTTON_MAP.get(code)
+                    if event_name:
+                        button_events.append(event_name)
+                        logger.info(f"Arcade button: {event_name}")
+
+            return self._get_pan(), button_events
+
+        def _get_pan(self):
+            """Convert raw axes to remapped -1/0/1 pan directions.
+
+            Board orientation remap:
+                Raw LEFT  (X low)  -> pan_y +1 (UP)
+                Raw RIGHT (X high) -> pan_y -1 (DOWN)
+                Raw DOWN  (Y high) -> pan_x -1 (LEFT)
+                Raw UP    (Y low)  -> pan_x +1 (RIGHT)
+            """
+            pan_x = 0
+            pan_y = 0
+            dx = self.axis_x - self.AXIS_CENTER
+            dy = self.axis_y - self.AXIS_CENTER
+            if abs(dx) > self.AXIS_DEADZONE:
+                pan_y = -1 if dx > 0 else 1   # left->up, right->down
+            if abs(dy) > self.AXIS_DEADZONE:
+                pan_x = 1 if dy < 0 else -1   # up->right, down->left
+            return pan_x, pan_y, []
+
+        def close(self):
+            if self.fd is not None:
+                os.close(self.fd)
+                self.fd = None
+else:
+    class ArcadeInput:
+        """Stub for non-Linux platforms."""
+        def __init__(self):
+            pass
+        def poll(self):
+            return 0, 0, []
+        def close(self):
+            pass
 
 class CycleManager:
     def __init__(self, config_path, update_event, toggle_shader_event, randomize_colors_event):
@@ -627,6 +759,9 @@ def main():
             else:
                 logger.warning("--audio requested but signalflow not installed (pip install signalflow)")
 
+        # Initialize arcade controller (Linux only, auto-detects DragonRise USB encoder)
+        arcade_input = ArcadeInput()
+
         logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors, M=depth mask")
         logger.info("Interaction: Click=interact, TAB=cycle mode (select/cascade/ripple/mask_stamp), C=clear")
 
@@ -654,10 +789,29 @@ def main():
                     pan_x -= 1
                 if glfw.get_key(window, glfw.KEY_D) == glfw.PRESS:
                     pan_x += 1
+
+                # Arcade stick panning (remapped to real-space orientation)
+                arcade_pan_x, arcade_pan_y, arcade_buttons = arcade_input.poll()
+                pan_x += arcade_pan_x
+                pan_y += arcade_pan_y
+
                 if pan_x != 0 or pan_y != 0:
                     # Normalize diagonal so it doesn't move faster than cardinal
                     length = (pan_x ** 2 + pan_y ** 2) ** 0.5
                     renderer.move_direction(pan_x / length, pan_y / length)
+
+                # Handle arcade button events
+                for btn in arcade_buttons:
+                    if demo_controller:
+                        demo_controller.on_user_input()
+                    if btn == 'randomize_colors':
+                        randomize_colors_event.set()
+                    elif btn == 'randomize_gamma':
+                        randomize_gamma_event.set()
+                    elif btn == 'toggle_shader':
+                        toggle_shader_event.set()
+                    elif btn == 'reset_viewport':
+                        reset_viewport_event.set()
 
             # Handle events
             if randomize_colors_event.is_set():
@@ -708,6 +862,20 @@ def main():
             if toggle_shader_event.is_set():
                 toggle_shader_event.clear()
                 _start_shader_fade()
+            if randomize_gamma_event.is_set():
+                randomize_gamma_event.clear()
+                if renderer:
+                    import random as _rnd
+                    new_gamma = [_rnd.uniform(0.0, 1.0) for _ in range(5)]
+                    _start_gamma_fade(new_gamma)
+                    logger.info(f"Arcade: gamma randomized: {new_gamma}")
+                    if audio_manager:
+                        audio_manager.on_gamma_change()
+            if reset_viewport_event.is_set():
+                reset_viewport_event.clear()
+                if renderer:
+                    renderer.reset()
+                    logger.info("Arcade: viewport reset to center")
 
             # Update viewport with framebuffer size (handles HiDPI/Retina and resizes)
             fb_width, fb_height = glfw.get_framebuffer_size(window)
@@ -782,6 +950,7 @@ def main():
             depth_camera_manager.stop()
         if audio_manager is not None:
             audio_manager.stop()
+        arcade_input.close()
         glfw.terminate()
         if cycle_manager is not None:
             cycle_manager.stop()
