@@ -114,8 +114,8 @@ class GUIOverlay:
     def create_simple_shader(self):
         """Create a simple shader for rendering colored rectangles."""
         vertex_shader_source = """
-        #version 330 core
-        layout (location = 0) in vec2 aPos;
+        #version 140
+        in vec2 aPos;
 
         uniform vec2 screenSize;
         uniform vec2 position;
@@ -135,16 +135,15 @@ class GUIOverlay:
             gl_Position = vec4(ndc, 0.0, 1.0);
         }
         """
-        
+
         fragment_shader_source = """
-        #version 330 core
-        out vec4 FragColor;
-        
+        #version 140
+
         uniform vec4 color;
-        
+
         void main()
         {
-            FragColor = color;
+            gl_FragColor = color;
         }
         """
         
@@ -180,6 +179,7 @@ class GUIOverlay:
         self.shader_program = glCreateProgram()
         glAttachShader(self.shader_program, vertex_shader)
         glAttachShader(self.shader_program, fragment_shader)
+        glBindAttribLocation(self.shader_program, 0, "aPos")
         glLinkProgram(self.shader_program)
         
         # Check program linking
@@ -205,14 +205,14 @@ class GUIOverlay:
     def create_textured_shader(self):
         """Create a shader for rendering textured quads (for text)."""
         vertex_shader_source = """
-        #version 330 core
-        layout (location = 0) in vec2 aPos;
+        #version 140
+        in vec2 aPos;
 
         uniform vec2 screenSize;
         uniform vec2 position;
         uniform vec2 size;
 
-        out vec2 TexCoord;
+        varying vec2 TexCoord;
 
         void main()
         {
@@ -226,17 +226,16 @@ class GUIOverlay:
         """
 
         fragment_shader_source = """
-        #version 330 core
-        in vec2 TexCoord;
-        out vec4 FragColor;
+        #version 140
+        varying vec2 TexCoord;
 
         uniform sampler2D textTexture;
         uniform vec4 color;
 
         void main()
         {
-            vec4 texColor = texture(textTexture, TexCoord);
-            FragColor = texColor * color;
+            vec4 texColor = texture2D(textTexture, TexCoord);
+            gl_FragColor = texColor * color;
         }
         """
 
@@ -266,6 +265,7 @@ class GUIOverlay:
         self.textured_shader_program = glCreateProgram()
         glAttachShader(self.textured_shader_program, vertex_shader)
         glAttachShader(self.textured_shader_program, fragment_shader)
+        glBindAttribLocation(self.textured_shader_program, 0, "aPos")
         glLinkProgram(self.textured_shader_program)
 
         # Check program linking

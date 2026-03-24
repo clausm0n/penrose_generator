@@ -171,12 +171,14 @@ if sys.platform == 'linux':
                 return 0, 0, button_events
 
             if not readable:
-                return self._get_pan(), button_events
+                px, py, _ = self._get_pan()
+                return px, py, button_events
 
             try:
                 data = os.read(self.fd, self.EVENT_SIZE * 32)
             except OSError:
-                return self._get_pan(), button_events
+                px, py, _ = self._get_pan()
+                return px, py, button_events
 
             for offset in range(0, len(data) - self.EVENT_SIZE + 1, self.EVENT_SIZE):
                 _, _, ev_type, code, value = struct.unpack_from(self.EVENT_FORMAT, data, offset)
@@ -191,7 +193,8 @@ if sys.platform == 'linux':
                         button_events.append(event_name)
                         logger.info(f"Arcade button: {event_name}")
 
-            return self._get_pan(), button_events
+            px, py, _ = self._get_pan()
+            return px, py, button_events
 
         def _get_pan(self):
             """Convert raw axes to remapped -1/0/1 pan directions.
@@ -210,7 +213,7 @@ if sys.platform == 'linux':
                 pan_y = -1 if dx > 0 else 1   # left->up, right->down
             if abs(dy) > self.AXIS_DEADZONE:
                 pan_x = 1 if dy < 0 else -1   # up->right, down->left
-            return pan_x, pan_y, []
+            return (pan_x, pan_y, [])
 
         def close(self):
             if self.fd is not None:
