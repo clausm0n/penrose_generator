@@ -42,6 +42,7 @@ class TileDataManager:
         self._lock = threading.Lock()
         self._worker_thread = None
         self._pending_result = None  # (tiles_dict, tile_list) from background thread
+        self._pending_request = None  # queued request when worker is busy
         self._generation_in_progress = False
         self._shutdown = False
 
@@ -55,7 +56,7 @@ class TileDataManager:
         self.star_count = 0
         self.starburst_count = 0
 
-        # Current gamma (needed for ribbon->camera space conversion in _pack_gpu_buffers)
+        # Current gamma (needed for ribbon->camera space conversion)
         self._current_gamma = [0.0, 0.0, 0.0, 0.0, 0.0]
 
         # Tile geometry cache: reuse tiles across regenerations when gamma is unchanged.
@@ -67,6 +68,10 @@ class TileDataManager:
         self._staged_geometry = None   # (tiles_dict, tile_list, gpu_verts, gpu_data,
                                        #  gen_bounds, comfort_bounds, gamma, gen_id)
         self._staged_patterns = None   # (pattern_type_col, blend_factor_col, stars, bursts, gen_id)
+
+        # Carry-over blend map: preserve blend_factor from previous generation
+        # so Pass 1 geometry doesn't flash to flat 0.5 while Pass 2 computes
+        self._prev_blend_map = {}      # dict[(r,s,kr,ks) -> float]
 
         # Generation ID for interruption handling
         self._generation_id = 0
@@ -102,21 +107,21 @@ class TileDataManager:
                         velocity_x=0.0, velocity_y=0.0):
         """Compute generation zone and comfort zone.
 
-        The generation zone is 100% oversized and biased in the direction of
-        camera velocity so tiles are ready before the user pans into view.
-        The comfort zone is 50% oversized — regen triggers when the viewport
-        edge crosses it, giving plenty of runway.
+        Both zones scale with velocity to provide more runway at high speed.
+        The generation zone is biased in the movement direction so tiles are
+        ready before the user pans into view.
         """
         half_h = 3.0 / zoom
         half_w = half_h * aspect
 
         # Velocity-based bias: shift the zones ahead of movement direction.
-        # Scale velocity to a fraction of the viewport so the bias is meaningful
-        # but capped to avoid generating an absurdly large area.
         speed = (velocity_x ** 2 + velocity_y ** 2) ** 0.5
+        # Adaptive factor: 0.0 at rest, 1.0 at speed >= 0.2
+        speed_factor = min(1.0, speed * 5.0)
+
         if speed > 0.0001:
-            # Bias up to 40% of viewport in the movement direction
-            bias_scale = min(0.4, speed * 3.0)
+            # Bias up to 60% of viewport in the movement direction
+            bias_scale = min(0.6, speed * 4.0)
             bias_x = (velocity_x / speed) * half_w * bias_scale
             bias_y = (velocity_y / speed) * half_h * bias_scale
         else:
@@ -126,9 +131,9 @@ class TileDataManager:
         cx = camera_x + bias_x
         cy = camera_y + bias_y
 
-        # Generation zone: 80% larger than viewport
-        gen_margin_w = half_w * 0.8
-        gen_margin_h = half_h * 0.8
+        # Generation zone: 80-120% larger than viewport (scales with speed)
+        gen_margin_w = half_w * (0.8 + 0.4 * speed_factor)
+        gen_margin_h = half_h * (0.8 + 0.4 * speed_factor)
         gen_bounds = (
             cx - half_w - gen_margin_w,
             cy - half_h - gen_margin_h,
@@ -136,10 +141,9 @@ class TileDataManager:
             cy + half_h + gen_margin_h,
         )
 
-        # Comfort zone: 40% larger than viewport
-        # Regen triggers when the viewport edge crosses this boundary
-        comfort_margin_w = half_w * 0.4
-        comfort_margin_h = half_h * 0.4
+        # Comfort zone: 40-70% larger than viewport (scales with speed)
+        comfort_margin_w = half_w * (0.4 + 0.3 * speed_factor)
+        comfort_margin_h = half_h * (0.4 + 0.3 * speed_factor)
         comfort_bounds = (
             cx - half_w - comfort_margin_w,
             cy - half_h - comfort_margin_h,
@@ -158,20 +162,31 @@ class TileDataManager:
         """
         Request tile generation for the given viewport.
         Runs on a background thread. Non-blocking.
-        Returns immediately; poll poll_geometry()/poll_patterns() each frame.
+        If a worker is already running, the request is queued as pending.
+        The running worker completes normally; when done, _finish_worker
+        launches the pending request with a fresh generation ID.
         """
-        if self._generation_in_progress:
-            return  # Already working on it
-
         gen_bounds, comfort_bounds = self._compute_zones(
             camera_x, camera_y, zoom, aspect, velocity_x, velocity_y)
 
+        if self._generation_in_progress:
+            # Queue as pending — will be launched when current worker finishes.
+            # Don't increment _active_generation_id here: let the current
+            # worker finish so it can deliver its results. The pending request
+            # will get a fresh ID when _finish_worker launches it.
+            self._pending_request = (gen_bounds, comfort_bounds, gamma)
+            return
+
         self._generation_id += 1
         self._active_generation_id = self._generation_id
+        self._launch_worker(gen_bounds, comfort_bounds, gamma, self._generation_id)
+
+    def _launch_worker(self, gen_bounds, comfort_bounds, gamma, generation_id):
+        """Start a background generation thread."""
         self._generation_in_progress = True
         self._worker_thread = threading.Thread(
             target=self._generate_worker,
-            args=(gen_bounds, comfort_bounds, gamma, self._generation_id),
+            args=(gen_bounds, comfort_bounds, gamma, generation_id),
             daemon=True
         )
         self._worker_thread.start()
@@ -208,7 +223,8 @@ class TileDataManager:
 
     def poll_patterns(self):
         """Check if Pass 2 (pattern detection) results are ready.
-        Returns (pattern_type_col, blend_factor_col, stars, bursts, generation_id) or None.
+        Returns (pattern_type_col, blend_factor_col, stars, bursts,
+                 symmetry_tile_ids, generation_id) or None.
         """
         if self._staged_patterns is None:
             return None
@@ -217,28 +233,32 @@ class TileDataManager:
             staged = self._staged_patterns
             self._staged_patterns = None
 
-        return staged
+        # Save blend map for carry-over to next generation's Pass 1
+        (pattern_type_col, blend_factor_col, stars, bursts,
+         symmetry_tile_ids, gen_id) = staged
+        if self.tile_list and len(self.tile_list) == len(blend_factor_col):
+            blend_map = {}
+            for i, tile in enumerate(self.tile_list):
+                key = (tile.r, tile.s, tile.kr, tile.ks)
+                blend_map[key] = (float(blend_factor_col[i]), float(pattern_type_col[i]))
+            self._prev_blend_map = blend_map
 
-    def poll_results(self):
-        """Legacy compatibility shim. Prefer poll_geometry()/poll_patterns()."""
-        geo = self.poll_geometry()
-        if geo is None:
-            return False
-        # Also consume patterns if ready
-        pat = self.poll_patterns()
-        if pat is not None:
-            pattern_type_col, blend_factor_col, stars, bursts, gen_id = pat
-            self.gpu_tile_data[:len(pattern_type_col), 1] = pattern_type_col
-            self.gpu_tile_data[:len(blend_factor_col), 2] = blend_factor_col
-            self.star_count = stars
-            self.starburst_count = bursts
-        self.gpu_data_dirty = True
-        self._generation_in_progress = False
-        return True
+        return staged
 
     # -------------------------------------------------------------------------
     # Background worker
     # -------------------------------------------------------------------------
+
+    def _finish_worker(self):
+        """Called at the end of a worker run. Launches pending request if any."""
+        self._generation_in_progress = False
+        pending = self._pending_request
+        self._pending_request = None
+        if pending is not None and not self._shutdown:
+            gen_bounds, comfort_bounds, gamma = pending
+            self._generation_id += 1
+            self._active_generation_id = self._generation_id
+            self._launch_worker(gen_bounds, comfort_bounds, gamma, self._generation_id)
 
     def _generate_worker(self, gen_bounds, comfort_bounds, gamma, generation_id):
         """Background thread: two-pass generation.
@@ -254,7 +274,7 @@ class TileDataManager:
                 self._tile_cache = {}
                 self._cache_gamma = gamma_tuple
 
-            tiles_dict = self._generate_tiles(gen_bounds, gamma)
+            tiles_dict = self._generate_tiles(gen_bounds, gamma, generation_id)
             tile_list = list(tiles_dict.values())
             t1 = time.perf_counter()
 
@@ -264,7 +284,7 @@ class TileDataManager:
 
             # Check for interruption before posting Pass 1
             if self._shutdown or generation_id != self._active_generation_id:
-                self._generation_in_progress = False
+                self._finish_worker()
                 return
 
             with self._lock:
@@ -279,10 +299,18 @@ class TileDataManager:
             )
 
             # --- Pass 2: Neighbors + pattern detection ---
+            if generation_id != self._active_generation_id:
+                self._finish_worker()
+                return
+
             self._calculate_neighbors(tile_list)
             t3 = time.perf_counter()
 
-            stars, bursts = self._detect_patterns(tile_list)
+            if generation_id != self._active_generation_id:
+                self._finish_worker()
+                return
+
+            stars, bursts, symmetry_tile_ids = self._detect_patterns(tile_list)
             t4 = time.perf_counter()
 
             # Build pattern patch: the two columns that changed
@@ -292,12 +320,13 @@ class TileDataManager:
 
             # Check for interruption before posting Pass 2
             if self._shutdown or generation_id != self._active_generation_id:
-                self._generation_in_progress = False
+                self._finish_worker()
                 return
 
             with self._lock:
                 self._staged_patterns = (
-                    pattern_type_col, blend_factor_col, stars, bursts, generation_id
+                    pattern_type_col, blend_factor_col, stars, bursts,
+                    symmetry_tile_ids, generation_id
                 )
 
             # Update tile cache
@@ -308,31 +337,17 @@ class TileDataManager:
                 f"patterns {(t4-t3)*1000:.1f}ms"
             )
 
+            self._finish_worker()
+
         except Exception as e:
             self.logger.error(f"Tile generation failed: {e}", exc_info=True)
-            self._generation_in_progress = False
+            self._finish_worker()
 
     # -------------------------------------------------------------------------
     # Tile generation (pentagrid math)
     # -------------------------------------------------------------------------
 
-    def _rhombus_vertices(self, gamma, r, s, kr, ks):
-        """Compute 4 vertices of a rhombus at grid intersection (r,s,kr,ks).
-        Scalar fallback — only used outside the vectorized path.
-        """
-        z0 = 1j * (self.zeta[r] * (ks - gamma[s]) - self.zeta[s] * (kr - gamma[r])) / self.zeta[s - r].imag
-        z0 = complex(round(z0.real, 5), round(z0.imag, 5))
-
-        k = [0 - -(complex(z0 / t).real + p) // 1 for t, p in zip(self.zeta, gamma)]
-
-        verts = []
-        for kr_off, ks_off in [(kr, ks), (kr + 1, ks), (kr + 1, ks + 1), (kr, ks + 1)]:
-            k[r], k[s] = kr_off, ks_off
-            vertex = sum(x * t for t, x in zip(self.zeta, k))
-            verts.append(complex(round(vertex.real, 5), round(vertex.imag, 5)))
-        return verts
-
-    def _generate_tiles(self, gen_bounds, gamma):
+    def _generate_tiles(self, gen_bounds, gamma, generation_id=None):
         """Generate OverlayTile objects covering the generation zone (vectorized).
 
         For each (r, s) direction pair, all (kr, ks) grid intersections are
@@ -374,7 +389,8 @@ class TileDataManager:
             kr_center = int(round(center_indices[r]))
             zeta_r = zeta[r]
             for s in range(r + 1, 5):
-                if self._shutdown:
+                if self._shutdown or (generation_id is not None
+                                      and generation_id != self._active_generation_id):
                     return tiles_dict
 
                 ks_center = int(round(center_indices[s]))
@@ -585,7 +601,7 @@ class TileDataManager:
                     for t in burst_candidates:
                         pattern_tiles.add(id(t))
 
-        # ---- Assign pattern data to tiles ----
+        # ---- Collect star/burst tile IDs ----
         star_ids = set()
         for group in star_groups:
             for t in group:
@@ -595,7 +611,57 @@ class TileDataManager:
             for t in group:
                 burst_ids.add(id(t))
 
+        # ---- Detect 5-fold symmetric vertices ----
+        # Vertices shared by exactly 5 or 10 tiles are 5-fold symmetric
+        # (stars, starbursts, and other Penrose vertex figures)
+        symmetry_tile_ids = set()
+        for tiles_at_v in vertex_to_tiles.values():
+            count = len(tiles_at_v)
+            if count == 5 or count == 10:
+                for t in tiles_at_v:
+                    symmetry_tile_ids.add(id(t))
+
+        # ---- Spatial region blend via iterative neighbor diffusion ----
+        # Seed each tile with its is_kite value, then average with neighbors
+        # over multiple passes to create smooth spatial regions.
+        n = len(tile_list)
+        blend = np.array([1.0 if t.is_kite else 0.0 for t in tile_list],
+                         dtype=np.float64)
+
+        # Build index lookup for fast neighbor resolution
+        tile_to_idx = {id(t): i for i, t in enumerate(tile_list)}
+
+        # Pre-build neighbor index lists (once, reused across passes)
+        neighbor_indices = []
         for tile in tile_list:
+            indices = []
+            for nb in tile.neighbors:
+                idx = tile_to_idx.get(id(nb))
+                if idx is not None:
+                    indices.append(idx)
+            neighbor_indices.append(indices)
+
+        # Diffusion: 2 passes, each tile = 40% self + 60% neighbor average
+        # Very few passes keeps fine-grained, tile-level variation visible
+        for _pass in range(2):
+            new_blend = np.empty(n, dtype=np.float64)
+            for i in range(n):
+                nb_idx = neighbor_indices[i]
+                if nb_idx:
+                    nb_avg = 0.0
+                    for j in nb_idx:
+                        nb_avg += blend[j]
+                    nb_avg /= len(nb_idx)
+                    new_blend[i] = blend[i] * 0.4 + nb_avg * 0.6
+                else:
+                    new_blend[i] = blend[i]
+            blend = new_blend
+
+        # Single smoothstep for gentle contrast boost (preserves granularity)
+        blend = blend * blend * (3.0 - 2.0 * blend)
+
+        # ---- Assign pattern data to tiles ----
+        for i, tile in enumerate(tile_list):
             tid = id(tile)
             if tid in star_ids:
                 tile.pattern_type = 1.0
@@ -604,16 +670,10 @@ class TileDataManager:
                 tile.pattern_type = 2.0
                 tile.blend_factor = 0.7
             else:
-                # Neighbor-based blend (fast loop)
-                kite_count = 0
-                for n in tile.neighbors:
-                    if n.is_kite:
-                        kite_count += 1
-                total = len(tile.neighbors)
-                tile.blend_factor = 0.5 if total == 0 else kite_count / total
+                tile.blend_factor = float(blend[i])
                 tile.pattern_type = 0.0
 
-        return len(star_groups), len(burst_groups)
+        return len(star_groups), len(burst_groups), symmetry_tile_ids
 
     # -------------------------------------------------------------------------
     # GPU buffer packing
@@ -642,8 +702,22 @@ class TileDataManager:
 
         data = np.empty((n, 8), dtype=np.float32)
         data[:, 0] = np.array([1.0 if t.is_kite else 0.0 for t in tile_list], dtype=np.float32)
-        data[:, 1] = 0.0   # pattern_type: default (updated in Pass 2)
-        data[:, 2] = 0.5   # blend_factor: default (updated in Pass 2)
+
+        # Carry over blend_factor and pattern_type from previous generation
+        # so tiles don't flash to flat coloring while Pass 2 computes
+        prev = self._prev_blend_map
+        if prev:
+            for i, t in enumerate(tile_list):
+                key = (t.r, t.s, t.kr, t.ks)
+                if key in prev:
+                    data[i, 1] = prev[key][1]  # pattern_type
+                    data[i, 2] = prev[key][0]  # blend_factor
+                else:
+                    data[i, 1] = 0.0
+                    data[i, 2] = 0.5
+        else:
+            data[:, 1] = 0.0   # pattern_type: default (updated in Pass 2)
+            data[:, 2] = 0.5   # blend_factor: default (updated in Pass 2)
         data[:, 3] = 0.0   # selected
         data[:, 4] = 0.0   # hovered
         data[:, 5] = 0.0   # anim_phase
@@ -652,49 +726,6 @@ class TileDataManager:
                                for t in tile_list], dtype=np.float32)
 
         return ribbon, data
-
-    def _pack_gpu_buffers(self):
-        """
-        Pack tile data into numpy arrays for GPU upload (vectorized).
-
-        gpu_vertices: float32 (N, 4, 2) - four corners per tile in camera/pentagrid space
-        gpu_tile_data: float32 (N, 8) - per-tile attributes
-        """
-        n = len(self.tile_list)
-        if n == 0:
-            self.gpu_vertices = np.zeros((0, 4, 2), dtype=np.float32)
-            self.gpu_tile_data = np.zeros((0, 8), dtype=np.float32)
-            return
-
-        # Compute shift_offset = sum(zeta[k] * gamma[k])
-        shift_offset = sum(z * g for z, g in zip(self.zeta, self._current_gamma))
-        sx, sy = shift_offset.real, shift_offset.imag
-
-        # Bulk-extract vertex data: build (N, 4, 2) array of ribbon-space coords
-        # Each tile.vertices is a list of 4 complex numbers
-        ribbon = np.array(
-            [[(v.real, v.imag) for v in tile.vertices[:4]] for tile in self.tile_list],
-            dtype=np.float32)  # (N, 4, 2)
-
-        # Vectorized ribbon -> camera transform:  p = (rb - shift_offset) / 2.5
-        ribbon[:, :, 0] -= sx
-        ribbon[:, :, 1] -= sy
-        ribbon *= (1.0 / 2.5)
-        verts = ribbon  # already float32 (N, 4, 2)
-
-        # Bulk-extract tile attributes into (N, 8) array
-        data = np.empty((n, 8), dtype=np.float32)
-        data[:, 0] = np.array([1.0 if t.is_kite else 0.0 for t in self.tile_list], dtype=np.float32)
-        data[:, 1] = np.array([t.pattern_type for t in self.tile_list], dtype=np.float32)
-        data[:, 2] = np.array([t.blend_factor for t in self.tile_list], dtype=np.float32)
-        data[:, 3] = np.array([1.0 if t.selected else 0.0 for t in self.tile_list], dtype=np.float32)
-        data[:, 4] = np.array([1.0 if t.hovered else 0.0 for t in self.tile_list], dtype=np.float32)
-        data[:, 5] = np.array([t.anim_phase for t in self.tile_list], dtype=np.float32)
-        data[:, 6] = np.array([float(t.anim_type) for t in self.tile_list], dtype=np.float32)
-        data[:, 7] = np.array([float(hash(t.key) % 10000) / 10000.0 for t in self.tile_list], dtype=np.float32)
-
-        self.gpu_vertices = verts
-        self.gpu_tile_data = data
 
     def update_tile_interaction(self, tile_index, selected=None, hovered=None,
                                  anim_phase=None, anim_type=None):

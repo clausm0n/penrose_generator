@@ -11,7 +11,6 @@ import logging
 import os
 import re
 from penrose_tools.Operations import Operations
-from penrose_tools.Tile import Tile
 from penrose_tools.TileDataManager import TileDataManager
 from penrose_tools.OverlayRenderer import OverlayRenderer
 from penrose_tools.InteractionManager import InteractionManager
@@ -457,17 +456,18 @@ class ProceduralRenderer:
             if self.interaction_manager:
                 self.interaction_manager.on_tiles_regenerated()
 
-            # Single full upload — fast since arrays are pre-packed on bg thread
-            self.overlay_renderer.upload_tile_data(gpu_verts, gpu_data, tile_count)
+            # Use glBufferSubData to avoid GPU pipeline stall from buffer orphaning
+            self.overlay_renderer.ensure_capacity(tile_count)
+            self.overlay_renderer.upload_tile_chunk(gpu_verts, gpu_data, 0, tile_count)
+            self.overlay_renderer.set_renderable_count(tile_count)
             self.overlay_needs_upload = False
             self.tile_manager.gpu_data_dirty = False
-            # Allow new generation requests while patterns are still computing
-            self.tile_manager._generation_in_progress = False
 
         # --- Poll for pattern data (Pass 2 result) ---
         pat_result = self.tile_manager.poll_patterns()
         if pat_result is not None:
-            pattern_type_col, blend_factor_col, stars, bursts, gen_id = pat_result
+            (pattern_type_col, blend_factor_col, stars, bursts,
+             symmetry_tile_ids, gen_id) = pat_result
 
             if gen_id == self._chunk_gen_id and self.tile_manager.gpu_tile_data is not None:
                 self.tile_manager.star_count = stars
@@ -478,11 +478,17 @@ class ProceduralRenderer:
                 self.tile_manager.gpu_tile_data[:n, 1] = pattern_type_col
                 self.tile_manager.gpu_tile_data[:n, 2] = blend_factor_col
 
-                # Re-upload the data VBO with updated patterns
-                self.overlay_renderer.upload_tile_data(
-                    self.tile_manager.gpu_vertices,
-                    self.tile_manager.gpu_tile_data,
-                    self.tile_manager.tile_count)
+                # Patch only the data VBO with updated patterns (avoids full re-upload)
+                self.overlay_renderer.upload_pattern_patch_chunk(
+                    self.tile_manager.gpu_tile_data, 0, n)
+
+                # Pass 5-fold symmetry tile indices to interaction manager
+                if self.interaction_manager and symmetry_tile_ids:
+                    sym_indices = set()
+                    for i, tile in enumerate(self.tile_manager.tile_list):
+                        if id(tile) in symmetry_tile_ids:
+                            sym_indices.add(i)
+                    self.interaction_manager.set_symmetry_tiles(sym_indices)
 
         # --- Request new generation if camera left comfort zone ---
         gamma_tuple = tuple(round(g, 4) for g in gamma)

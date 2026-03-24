@@ -105,9 +105,9 @@ TileData findTile(vec2 p, float gamma[5]) {
         if (tile.found) break;
         for (int s = r + 1; s < PN; s++) {
             if (tile.found) break;
-            for (int dr = -2; dr <= 2; dr++) {
+            for (int dr = -3; dr <= 3; dr++) {
                 if (tile.found) break;
-                for (int ds = -2; ds <= 2; ds++) {
+                for (int ds = -3; ds <= 3; ds++) {
                     if (tile.found) break;
                     float kr = floor(pindex[r]) + float(dr);
                     float ks = floor(pindex[s]) + float(ds);

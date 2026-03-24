@@ -4,13 +4,13 @@ import os
 if not os.environ.get('PENROSE_LOCAL_MODE'):
     try:
         from .PenroseBluetoothServer import run_bluetooth_server
-        __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
+        __all__ = ['Operations', 'run_server',
                    'ProceduralRenderer', 'run_bluetooth_server']
     except ImportError:
-        __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
+        __all__ = ['Operations', 'run_server',
                    'ProceduralRenderer']
 else:
-    __all__ = ['Operations', 'run_server', 'Effects', 'Tile',
+    __all__ = ['Operations', 'run_server',
                'ProceduralRenderer']
 
 import numpy as np
@@ -18,7 +18,7 @@ import glfw
 from OpenGL.GL import *
 from threading import Thread
 from collections import OrderedDict
-from penrose_tools import Operations, Tile, run_server, GUIOverlay
+from penrose_tools import Operations, run_server, GUIOverlay
 from penrose_tools.ProceduralRenderer import ProceduralRenderer
 from penrose_tools.TweenEngine import TweenEngine
 from penrose_tools.DemoController import DemoController
@@ -260,58 +260,6 @@ def toggle_fullscreen(window):
     fb_width, fb_height = glfw.get_framebuffer_size(window)
     glViewport(0, 0, fb_width, fb_height)
 
-def update_toggles(shaders):
-    global config_data, running, tween_engine
-    logger.debug("Checking for events...")
-    if randomize_colors_event.is_set():
-        logger.info("Randomize Colors Event Detected")
-        new_c1 = [int(np.random.randint(0, 256)) for _ in range(3)]
-        new_c2 = [int(np.random.randint(0, 256)) for _ in range(3)]
-        randomize_colors_event.clear()
-        if tween_engine:
-            # Get current colors (from active tween or config)
-            if tween_engine.is_active('color'):
-                current = tween_engine.get('color')
-                old_c1 = [current[0], current[1], current[2]]
-                old_c2 = [current[3], current[4], current[5]]
-            else:
-                old_c1 = list(config_data['color1'])
-                old_c2 = list(config_data['color2'])
-            pending_c1 = list(new_c1)
-            pending_c2 = list(new_c2)
-            def on_color_complete():
-                config_data['color1'] = pending_c1
-                config_data['color2'] = pending_c2
-                op.update_config_file(CONFIG_PATH, **config_data)
-            tween_engine.start(
-                'color',
-                old_c1 + old_c2,
-                new_c1 + new_c2,
-                1.0,
-                'ease_in_out',
-                on_complete=on_color_complete
-            )
-        else:
-            config_data['color1'] = new_c1
-            config_data['color2'] = new_c2
-            op.update_config_file(CONFIG_PATH, **config_data)
-    if update_event.is_set():
-        logger.info("Update Event Detected")
-        update_event.clear()
-        config_data = op.read_config_file(CONFIG_PATH)
-    if toggle_shader_event.is_set():
-        logger.info("Toggle Shader Event Detected - Before toggle")
-        toggle_shader_event.clear()
-        if tween_engine:
-            _start_shader_fade()
-        else:
-            next_index = shaders.next_shader()
-            logger.info(f"Shader switched to index {next_index}")
-    if shutdown_event.is_set():
-        logger.info("Shutdown Event Detected")
-        running = False
-        return False
-
 def scroll_callback(window, xoffset, yoffset):
     """Handle mouse scroll for zoom."""
     global renderer, demo_controller
@@ -428,17 +376,9 @@ def key_callback(window, key, scancode, action, mods):
         elif key == glfw.KEY_RIGHT_BRACKET:
             if renderer:
                 renderer.set_edge_thickness(renderer.edge_thickness + 0.1)
-        # Camera controls
+        # Camera zoom/reset controls (panning handled via per-frame polling for 8-way input)
         elif renderer:
-            if key == glfw.KEY_W:
-                renderer.move_direction(0, 1)
-            elif key == glfw.KEY_S:
-                renderer.move_direction(0, -1)
-            elif key == glfw.KEY_A:
-                renderer.move_direction(-1, 0)
-            elif key == glfw.KEY_D:
-                renderer.move_direction(1, 0)
-            elif key == glfw.KEY_PAGE_UP:
+            if key == glfw.KEY_PAGE_UP:
                 renderer.zoom_by(1.1)
             elif key == glfw.KEY_PAGE_DOWN:
                 renderer.zoom_by(0.9)
@@ -454,10 +394,10 @@ def key_callback(window, key, scancode, action, mods):
             if renderer:
                 _start_shader_fade()
         elif key == glfw.KEY_TAB:
-            # Cycle interaction mode: select → cascade → ripple → mask_stamp
+            # Cycle interaction mode: select → ripple → symmetry
             if renderer and renderer.interaction_manager:
                 mode = renderer.interaction_manager.cycle_click_mode()
-                mode_names = ['select', 'cascade', 'ripple', 'mask_stamp']
+                mode_names = ['select', 'ripple', 'symmetry']
                 logger.info(f"Interaction mode: {mode_names[mode]}")
         elif key == glfw.KEY_C:
             # Clear all interaction state
@@ -702,12 +642,43 @@ def main():
             dt = max(0.0, min(dt, 0.1))  # Clamp to avoid large jumps
             prev_frame_time = current_time
 
+            # 8-way panning: poll WASD key state every frame for diagonal movement
+            if renderer:
+                pan_x = 0
+                pan_y = 0
+                if glfw.get_key(window, glfw.KEY_W) == glfw.PRESS:
+                    pan_y += 1
+                if glfw.get_key(window, glfw.KEY_S) == glfw.PRESS:
+                    pan_y -= 1
+                if glfw.get_key(window, glfw.KEY_A) == glfw.PRESS:
+                    pan_x -= 1
+                if glfw.get_key(window, glfw.KEY_D) == glfw.PRESS:
+                    pan_x += 1
+                if pan_x != 0 or pan_y != 0:
+                    # Normalize diagonal so it doesn't move faster than cardinal
+                    length = (pan_x ** 2 + pan_y ** 2) ** 0.5
+                    renderer.move_direction(pan_x / length, pan_y / length)
+
             # Handle events
             if randomize_colors_event.is_set():
                 randomize_colors_event.clear()
                 logger.info("COLOR EVENT: randomize_colors_event fired in main loop")
-                new_c1 = [int(np.random.randint(0, 256)) for _ in range(3)]
-                new_c2 = [int(np.random.randint(0, 256)) for _ in range(3)]
+                # Generate two colors with guaranteed hue and lightness separation
+                import colorsys
+                h1 = np.random.random()
+                s1 = np.random.uniform(0.5, 1.0)
+                l1 = np.random.uniform(0.3, 0.7)
+                # Force color2 hue at least 90° away (0.25 in [0,1])
+                h2 = (h1 + np.random.uniform(0.25, 0.75)) % 1.0
+                s2 = np.random.uniform(0.5, 1.0)
+                # Push lightness to opposite bracket
+                l2 = np.random.uniform(0.3, 0.7)
+                if abs(l2 - l1) < 0.15:
+                    l2 = 1.0 - l1  # flip to opposite end
+                r1, g1, b1 = colorsys.hls_to_rgb(h1, l1, s1)
+                r2, g2, b2 = colorsys.hls_to_rgb(h2, l2, s2)
+                new_c1 = [int(r1 * 255), int(g1 * 255), int(b1 * 255)]
+                new_c2 = [int(r2 * 255), int(g2 * 255), int(b2 * 255)]
                 # Get current colors (from active tween or config)
                 if tween_engine and tween_engine.is_active('color'):
                     current = tween_engine.get('color')

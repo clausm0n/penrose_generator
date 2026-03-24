@@ -60,12 +60,19 @@ void main() {
     float anim_type     = v_tile_data2.z;
     float tile_id       = v_tile_data2.w;
 
+    // Base color from tile type (kite vs dart)
+    vec3 baseColor = is_kite > 0.5 ? u_color1 : u_color2;
+
     vec3 tileColor;
     if (pattern_type > 0.9 && pattern_type < 1.1) {
-        tileColor = invertColor(blendColors(u_color1, u_color2, 0.3));
+        // Star pattern (kites): inversion of color1
+        tileColor = invertColor(u_color1);
     } else if (pattern_type > 1.9 && pattern_type < 2.1) {
-        tileColor = invertColor(blendColors(u_color1, u_color2, 0.7));
+        // Starburst pattern (darts): inversion of color2
+        tileColor = invertColor(u_color2);
     } else {
+        // Region blend: color purely from neighbor-diffused blend_factor
+        // 0 = dart-heavy neighborhood → color2, 1 = kite-heavy → color1
         tileColor = blendColors(u_color1, u_color2, blend_factor);
     }
 
@@ -80,6 +87,16 @@ void main() {
         float ripple = sin(anim_phase * 3.14159) * (1.0 - anim_phase);
         tileColor = mix(tileColor, vec3(0.8, 0.9, 1.0), ripple * 0.6);
         interactionAlpha = max(interactionAlpha, ripple * 0.5);
+    }
+
+    // 5-fold symmetry glow (anim_type == 5)
+    if (anim_type > 4.5 && anim_type < 5.5) {
+        float sym_intensity = sin(anim_phase * 3.14159) * (1.0 - anim_phase * 0.3);
+        // Golden color with per-tile shimmer
+        float shimmer = sin(u_time * 3.0 + tile_id * 6.283) * 0.1 + 0.9;
+        vec3 symColor = vec3(1.0, 0.85, 0.3) * shimmer;
+        tileColor = mix(tileColor, symColor, sym_intensity * 0.7);
+        interactionAlpha = max(interactionAlpha, sym_intensity * 0.8);
     }
 
     float edgeWidth = 0.0048 * u_edge_thickness;
