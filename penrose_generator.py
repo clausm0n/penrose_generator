@@ -321,28 +321,45 @@ def setup_window(fullscreen=False):
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
 
-    # Request OpenGL 3.2 context (macOS requires 3.2+ for modern OpenGL)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 2)
-    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
-    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-    
+    # Try OpenGL 3.2 Core first, fall back for Raspberry Pi (OpenGL ES / older GL)
+    contexts_to_try = [
+        {"major": 3, "minor": 2, "profile": glfw.OPENGL_CORE_PROFILE, "forward_compat": True},
+        {"major": 3, "minor": 1, "profile": None, "forward_compat": False},
+        {"major": 3, "minor": 0, "profile": None, "forward_compat": False},
+        {"major": 2, "minor": 1, "profile": None, "forward_compat": False},
+    ]
+
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()
-    
-    if fullscreen:
-        video_mode = glfw.get_video_mode(primary_monitor)
-        width, height = video_mode.size.width, video_mode.size.height
-        window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
-        # Hide cursor in fullscreen mode
-        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
-    else:
-        width, height = 1280, 720
-        window = glfw.create_window(width, height, "Penrose Tiling", None, None)
+    window = None
+
+    for ctx in contexts_to_try:
+        glfw.default_window_hints()
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, ctx["major"])
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, ctx["minor"])
+        if ctx["forward_compat"]:
+            glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
+        if ctx["profile"]:
+            glfw.window_hint(glfw.OPENGL_PROFILE, ctx["profile"])
+
+        if fullscreen:
+            video_mode = glfw.get_video_mode(primary_monitor)
+            width, height = video_mode.size.width, video_mode.size.height
+            window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+        else:
+            width, height = 1280, 720
+            window = glfw.create_window(width, height, "Penrose Tiling", None, None)
+
+        if window:
+            logger.info(f"OpenGL context created: {ctx['major']}.{ctx['minor']}")
+            break
 
     if not window:
         glfw.terminate()
-        raise Exception("GLFW window can't be created")
+        raise Exception("GLFW window can't be created (no supported OpenGL context)")
+
+    if fullscreen:
+        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
     
     # Register key callback
     glfw.set_key_callback(window, key_callback)
