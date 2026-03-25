@@ -1,6 +1,11 @@
 # penrose_generator.py
 # Only export Bluetooth components if not in local mode
 import os
+import sys
+
+# On Linux (Raspberry Pi), prefer EGL over GLX for hardware-accelerated GLES
+if sys.platform == 'linux' and 'PYOPENGL_PLATFORM' not in os.environ:
+    os.environ['PYOPENGL_PLATFORM'] = 'egl'
 if not os.environ.get('PENROSE_LOCAL_MODE'):
     try:
         from .PenroseBluetoothServer import run_bluetooth_server
