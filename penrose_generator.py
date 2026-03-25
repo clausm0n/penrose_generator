@@ -361,16 +361,10 @@ def setup_window(fullscreen=False):
         if fullscreen:
             video_mode = glfw.get_video_mode(primary_monitor)
             width, height = video_mode.size.width, video_mode.size.height
-            if ctx["es"]:
-                # On Pi/GLES: use borderless window instead of exclusive fullscreen
-                # to avoid compositor conflicts that hide the window
-                glfw.window_hint(glfw.DECORATED, glfw.FALSE)
-                glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
-                window = glfw.create_window(width, height, "Penrose Tiling", None, None)
-                if window:
-                    glfw.set_window_pos(window, 0, 0)
-            else:
-                window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
+            # Prevent compositor from auto-minimizing on focus loss
+            glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
+            glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
+            window = glfw.create_window(width, height, "Penrose Tiling", primary_monitor, None)
         else:
             width, height = 1280, 720
             window = glfw.create_window(width, height, "Penrose Tiling", None, None)
@@ -418,32 +412,19 @@ def toggle_fullscreen(window):
 
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()
-    from penrose_tools import gl_config
 
     if not fullscreen_mode:
         # Switch to fullscreen
         video_mode = glfw.get_video_mode(primary_monitor)
         width, height = video_mode.size.width, video_mode.size.height
-        if gl_config.use_gles:
-            # On Pi/GLES: resize + reposition borderless window to cover screen
-            # (avoids compositor conflicts with exclusive fullscreen)
-            glfw.set_window_size(window, width, height)
-            glfw.set_window_pos(window, 0, 0)
-            glfw.set_window_attrib(window, glfw.DECORATED, glfw.FALSE)
-        else:
-            glfw.set_window_monitor(window, primary_monitor, 0, 0, width, height, video_mode.refresh_rate)
+        glfw.set_window_monitor(window, primary_monitor, 0, 0, width, height, video_mode.refresh_rate)
         glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
         fullscreen_mode = True
         logger.info("Switched to fullscreen mode")
     else:
         # Switch to windowed mode
         width, height = 1280, 720
-        if gl_config.use_gles:
-            glfw.set_window_attrib(window, glfw.DECORATED, glfw.TRUE)
-            glfw.set_window_size(window, width, height)
-            glfw.set_window_pos(window, 100, 100)
-        else:
-            glfw.set_window_monitor(window, None, 100, 100, width, height, 0)
+        glfw.set_window_monitor(window, None, 100, 100, width, height, 0)
         glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
         fullscreen_mode = False
         logger.info("Switched to windowed mode")
