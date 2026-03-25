@@ -577,6 +577,11 @@ def key_callback(window, key, scancode, action, mods):
             if renderer and renderer.interaction_manager:
                 renderer.interaction_manager.clear_all()
                 logger.info("Cleared all interactions")
+        elif key == glfw.KEY_I:
+            # Toggle interaction overlay layer
+            if renderer:
+                renderer.interaction_overlay_enabled = not renderer.interaction_overlay_enabled
+                logger.info(f"Interaction overlay: {'ON' if renderer.interaction_overlay_enabled else 'OFF'}")
         elif key == glfw.KEY_M:
             # Toggle depth mask layer
             if renderer:
@@ -679,6 +684,7 @@ def main():
     parser.add_argument('--demo', action='store_true', help='Enable autonomous demo mode')
     parser.add_argument('--demo-idle', type=float, default=2.0, help='Idle timeout in minutes before demo resumes (default: 2.0)')
     parser.add_argument('--render-scale', type=float, default=0.5, help='Render resolution scale (0.25-1.0, default 0.5 = half res)')
+    parser.add_argument('--no-overlay', action='store_true', help='Disable interaction overlay layer (saves GPU/CPU)')
     args = parser.parse_args()
 
     # Set environment variable for local mode
@@ -727,6 +733,9 @@ def main():
         renderer = ProceduralRenderer()
         renderer.render_scale = max(0.25, min(1.0, args.render_scale))
         logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution)")
+        if args.no_overlay:
+            renderer.interaction_overlay_enabled = False
+            logger.info("Interaction overlay disabled via --no-overlay")
         initial_zoom = float(config_data.get('zoom', 1.0))
         renderer.set_zoom(initial_zoom)
         renderer.zoom = initial_zoom  # Skip interpolation for initial value
