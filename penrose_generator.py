@@ -675,6 +675,7 @@ def main():
     parser.add_argument('--audio-mode', choices=['stereo', 'surround'], default='stereo', help='Audio output mode: stereo or 5.1 surround')
     parser.add_argument('--demo', action='store_true', help='Enable autonomous demo mode')
     parser.add_argument('--demo-idle', type=float, default=2.0, help='Idle timeout in minutes before demo resumes (default: 2.0)')
+    parser.add_argument('--render-scale', type=float, default=0.5, help='Render resolution scale (0.25-1.0, default 0.5 = half res)')
     args = parser.parse_args()
 
     # Set environment variable for local mode
@@ -721,6 +722,8 @@ def main():
 
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()
+        renderer.render_scale = max(0.25, min(1.0, args.render_scale))
+        logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution)")
         initial_zoom = float(config_data.get('zoom', 1.0))
         renderer.set_zoom(initial_zoom)
         renderer.zoom = initial_zoom  # Skip interpolation for initial value

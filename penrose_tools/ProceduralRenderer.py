@@ -118,11 +118,22 @@ class ProceduralRenderer:
         # Tween engine reference for smooth visual transitions
         self.tween_engine = None
 
+        # Resolution scaling: render at fraction of screen res, upscale to display
+        # 0.5 = half res each axis = 4x fewer pixels through fragment shader
+        self.render_scale = 1.0
+        self._fbo = None
+        self._fbo_texture = None
+        self._fbo_width = 0
+        self._fbo_height = 0
+        self._upscale_program = None
+        self._upscale_uniforms = {}
+
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
 
         self._load_all_shaders()
         self._create_quad()
+        self._create_upscale_shader()
 
         # Initialize overlay + interaction system (always-on)
         try:
@@ -281,6 +292,90 @@ class ProceduralRenderer:
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, None)
         glBindVertexArray(0)
     
+    def _create_upscale_shader(self):
+        """Create a simple shader that samples an FBO texture to the screen."""
+        from penrose_tools.gl_config import patch_shader
+        vert_src = patch_shader("""
+#version 140
+in vec2 position;
+out vec2 v_uv;
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+    v_uv = position * 0.5 + 0.5;
+}
+""", is_fragment=False)
+        frag_src = patch_shader("""
+#version 140
+in vec2 v_uv;
+out vec4 fragColor;
+uniform sampler2D u_texture;
+void main() {
+    fragColor = texture(u_texture, v_uv);
+}
+""", is_fragment=True)
+        vert = glCreateShader(GL_VERTEX_SHADER)
+        glShaderSource(vert, vert_src)
+        glCompileShader(vert)
+        if not glGetShaderiv(vert, GL_COMPILE_STATUS):
+            self.logger.error(f"Upscale vert error: {glGetShaderInfoLog(vert)}")
+            return
+        frag = glCreateShader(GL_FRAGMENT_SHADER)
+        glShaderSource(frag, frag_src)
+        glCompileShader(frag)
+        if not glGetShaderiv(frag, GL_COMPILE_STATUS):
+            self.logger.error(f"Upscale frag error: {glGetShaderInfoLog(frag)}")
+            return
+        self._upscale_program = glCreateProgram()
+        glAttachShader(self._upscale_program, vert)
+        glAttachShader(self._upscale_program, frag)
+        glBindAttribLocation(self._upscale_program, 0, "position")
+        glLinkProgram(self._upscale_program)
+        if not glGetProgramiv(self._upscale_program, GL_LINK_STATUS):
+            self.logger.error(f"Upscale link error: {glGetProgramInfoLog(self._upscale_program)}")
+            self._upscale_program = None
+            return
+        glDeleteShader(vert)
+        glDeleteShader(frag)
+        self._upscale_uniforms['u_texture'] = glGetUniformLocation(self._upscale_program, 'u_texture')
+        self.logger.info("Upscale shader compiled")
+
+    def _ensure_fbo(self, width, height):
+        """Create or resize the offscreen FBO for reduced-resolution rendering."""
+        rw = max(1, int(width * self.render_scale))
+        rh = max(1, int(height * self.render_scale))
+        if self._fbo is not None and self._fbo_width == rw and self._fbo_height == rh:
+            return
+        # Clean up old
+        if self._fbo is not None:
+            glDeleteFramebuffers(1, [self._fbo])
+            glDeleteTextures([self._fbo_texture])
+        # Create texture
+        self._fbo_texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        # Create FBO
+        self._fbo = glGenFramebuffers(1)
+        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self._fbo_texture, 0)
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            self.logger.error(f"FBO incomplete: {status}")
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+            glDeleteFramebuffers(1, [self._fbo])
+            glDeleteTextures([self._fbo_texture])
+            self._fbo = None
+            self._fbo_texture = None
+            return
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        self._fbo_width = rw
+        self._fbo_height = rh
+        self.logger.info(f"FBO created: {rw}x{rh} (scale={self.render_scale})")
+
     def _use_overlay(self):
         """Check if current effect should use the overlay as its primary rendering path."""
         return (self.EFFECT_NAMES[self.effect_mode] in self.OVERLAY_EFFECTS
@@ -298,6 +393,22 @@ class ProceduralRenderer:
         """Render the Penrose tiling with the current effect shader."""
         # Update camera smoothing before rendering
         self.update()
+
+        # If render_scale < 1.0, render into FBO at reduced resolution then upscale
+        use_fbo = self.render_scale < 1.0 and self._upscale_program is not None
+        if use_fbo:
+            self._ensure_fbo(width, height)
+            if self._fbo is not None:
+                glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
+                glViewport(0, 0, self._fbo_width, self._fbo_height)
+                glClear(GL_COLOR_BUFFER_BIT)
+                # Pass reduced dimensions so shaders compute correct aspect ratio
+                render_w, render_h = self._fbo_width, self._fbo_height
+            else:
+                use_fbo = False
+                render_w, render_h = width, height
+        else:
+            render_w, render_h = width, height
 
         gamma = config_data.get('gamma', self.gamma)
         current_effect = self.EFFECT_NAMES[self.effect_mode]
@@ -336,7 +447,7 @@ class ProceduralRenderer:
         glUseProgram(program)
 
         if uniforms.get('u_resolution', -1) != -1:
-            glUniform2f(uniforms['u_resolution'], float(width), float(height))
+            glUniform2f(uniforms['u_resolution'], float(render_w), float(render_h))
         if uniforms.get('u_camera', -1) != -1:
             glUniform2f(uniforms['u_camera'], self.camera_x, self.camera_y)
         if uniforms.get('u_zoom', -1) != -1:
@@ -422,9 +533,23 @@ class ProceduralRenderer:
         overlay_config['color1'] = [c1_r * 255.0, c1_g * 255.0, c1_b * 255.0]
         overlay_config['color2'] = [c2_r * 255.0, c2_g * 255.0, c2_b * 255.0]
         if use_overlay:
-            self._update_overlay(width, height, gamma, overlay_config)
+            self._update_overlay(render_w, render_h, gamma, overlay_config)
         elif has_interaction:
-            self._update_interaction_overlay(width, height, gamma, overlay_config)
+            self._update_interaction_overlay(render_w, render_h, gamma, overlay_config)
+
+        # Upscale FBO to screen if we rendered at reduced resolution
+        if use_fbo and self._fbo is not None:
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+            glViewport(0, 0, width, height)
+            glUseProgram(self._upscale_program)
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
+            glUniform1i(self._upscale_uniforms['u_texture'], 0)
+            glBindVertexArray(self.vao)
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+            glBindVertexArray(0)
+            glBindTexture(GL_TEXTURE_2D, 0)
+            glUseProgram(0)
 
     def _process_overlay_updates(self, gamma, aspect):
         """Poll for background generation results and upload to GPU.
