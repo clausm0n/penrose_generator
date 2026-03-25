@@ -315,6 +315,29 @@ class OverlayRenderer:
     # Rendering
     # -------------------------------------------------------------------------
 
+    def render_depth_prepass(self, camera_x, camera_y, zoom, width, height):
+        """Render overlay tiles to depth buffer only (no color writes).
+
+        Used as a depth pre-pass so the procedural shader's expensive findTile
+        is skipped via early-Z for pixels already covered by overlay tiles.
+        On VideoCore VII's TBDR, this enables hidden surface removal.
+        """
+        if self.tile_count == 0 or self.shader_program is None:
+            return
+
+        aspect = float(width) / float(height)
+        glUseProgram(self.shader_program)
+
+        # Minimal uniforms — only what the vertex shader needs for clip-space transform
+        glUniform2f(self.uniforms['u_camera'], camera_x, camera_y)
+        glUniform1f(self.uniforms['u_zoom'], zoom)
+        glUniform1f(self.uniforms['u_aspect'], aspect)
+
+        glBindVertexArray(self.vao)
+        glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None, self.tile_count)
+        glBindVertexArray(0)
+        glUseProgram(0)
+
     def render(self, camera_x, camera_y, zoom, width, height,
                config_data, edge_thickness, time_val, overlay_mode=0):
         """Draw all tile instances.

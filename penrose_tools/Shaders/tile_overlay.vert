@@ -42,7 +42,7 @@ void main() {
     clip.x = (world_pos.x - u_camera.x) * u_zoom / (1.5 * u_aspect);
     clip.y = (world_pos.y - u_camera.y) * u_zoom / 1.5;
 
-    gl_Position = vec4(clip, 0.0, 1.0);
+    gl_Position = vec4(clip, -0.5, 1.0);  // z=-0.5 (closer) for depth pre-pass
 
     // Pass corners to fragment shader
     v_v0 = a_v0;

@@ -345,6 +345,7 @@ def setup_window(fullscreen=False):
 
     for ctx in contexts_to_try:
         glfw.default_window_hints()
+        glfw.window_hint(glfw.DEPTH_BITS, 16)  # Depth buffer for early-Z pre-pass
         if ctx["es"]:
             glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
             # Force EGL context — GLX on Pi uses software Mesa, EGL uses hardware V3D
@@ -837,7 +838,7 @@ def main():
         prev_frame_time = last_time
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
-            glClear(GL_COLOR_BUFFER_BIT)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
             # Calculate delta time for tween updates
             current_time = glfw.get_time()
