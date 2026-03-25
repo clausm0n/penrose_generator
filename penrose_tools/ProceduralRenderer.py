@@ -347,34 +347,52 @@ void main() {
             return
         # Clean up old
         if self._fbo is not None:
-            glDeleteFramebuffers(1, [self._fbo])
-            glDeleteTextures([self._fbo_texture])
-        # Create texture
-        self._fbo_texture = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        glBindTexture(GL_TEXTURE_2D, 0)
-        # Create FBO
-        self._fbo = glGenFramebuffers(1)
-        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self._fbo_texture, 0)
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-        if status != GL_FRAMEBUFFER_COMPLETE:
-            self.logger.error(f"FBO incomplete: {status}")
+            try:
+                glDeleteFramebuffers(1, [self._fbo])
+                glDeleteTextures([self._fbo_texture])
+            except Exception:
+                pass
+        self._fbo = None
+        self._fbo_texture = None
+        try:
+            # Create texture
+            self._fbo_texture = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
+            # Use GL_RGBA instead of GL_RGBA8 for broader GLES compat
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glBindTexture(GL_TEXTURE_2D, 0)
+            # Create FBO
+            self._fbo = glGenFramebuffers(1)
+            glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self._fbo_texture, 0)
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            if status != GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError(f"FBO incomplete: status={status}")
             glBindFramebuffer(GL_FRAMEBUFFER, 0)
-            glDeleteFramebuffers(1, [self._fbo])
-            glDeleteTextures([self._fbo_texture])
+            self._fbo_width = rw
+            self._fbo_height = rh
+            self.logger.info(f"FBO created: {rw}x{rh} (scale={self.render_scale})")
+        except Exception as e:
+            self.logger.error(f"FBO creation failed, falling back to direct render: {e}")
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+            if self._fbo is not None:
+                try:
+                    glDeleteFramebuffers(1, [self._fbo])
+                except Exception:
+                    pass
+            if self._fbo_texture is not None:
+                try:
+                    glDeleteTextures([self._fbo_texture])
+                except Exception:
+                    pass
             self._fbo = None
             self._fbo_texture = None
-            return
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
-        self._fbo_width = rw
-        self._fbo_height = rh
-        self.logger.info(f"FBO created: {rw}x{rh} (scale={self.render_scale})")
+            # Disable scaling so we don't keep retrying
+            self.render_scale = 1.0
 
     def _use_overlay(self):
         """Check if current effect should use the overlay as its primary rendering path."""
