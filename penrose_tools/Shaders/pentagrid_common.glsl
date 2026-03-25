@@ -105,12 +105,15 @@ TileData findTile(vec2 p, float gamma[5]) {
         if (tile.found) break;
         for (int s = r + 1; s < PN; s++) {
             if (tile.found) break;
-            for (int dr = -3; dr <= 3; dr++) {
+            // Only check the 4 nearest grid line intersections (floor/ceil of each index)
+            float base_kr = floor(pindex[r]);
+            float base_ks = floor(pindex[s]);
+            for (int dr = 0; dr <= 1; dr++) {
                 if (tile.found) break;
-                for (int ds = -3; ds <= 3; ds++) {
+                for (int ds = 0; ds <= 1; ds++) {
                     if (tile.found) break;
-                    float kr = floor(pindex[r]) + float(dr);
-                    float ks = floor(pindex[s]) + float(ds);
+                    float kr = base_kr + float(dr);
+                    float ks = base_ks + float(ds);
                     vec2 verts[4];
                     getRhombusVerts(r, s, kr, ks, verts);
                     if (pointInQuad(tile.rb_p, verts[0], verts[1], verts[2], verts[3])) {
