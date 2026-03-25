@@ -94,8 +94,19 @@ class ProceduralRenderer:
         # Generation tracking for two-pass pipeline
         self._chunk_gen_id = 0           # generation ID to match geometry with patterns
 
-        # Effects that use the overlay for their primary rendering (opaque overlay)
-        self.OVERLAY_EFFECTS = {'region_blend'}
+        # Effects that use the overlay for their primary rendering (opaque overlay).
+        # All simple effects render via overlay (zero findTile cost).
+        # Complex effects (eye_spy, plasmaball) still use procedural shader.
+        self.OVERLAY_EFFECTS = {'region_blend', 'no_effect', 'rainbow', 'pulse', 'sparkle'}
+
+        # Map effect name → overlay shader effect_mode uniform value
+        self.OVERLAY_EFFECT_MODE = {
+            'region_blend': 0,
+            'no_effect': 1,
+            'rainbow': 2,
+            'pulse': 3,
+            'sparkle': 4,
+        }
 
         # Depth mask layer (independent of effect mode — works with any effect)
         self.depth_mask_enabled = False
@@ -497,11 +508,15 @@ void main() {
             has_tile_data = self.overlay_renderer.tile_count > 0
 
         if use_overlay:
-            # === REGION_BLEND: overlay covers everything — skip procedural ===
+            # === OVERLAY PATH: renders tile effect directly — zero findTile cost ===
+            # All simple effects (no_effect, region_blend, rainbow, pulse, sparkle)
+            # render via instanced overlay tiles instead of expensive procedural shader.
+            effect_mode = self.OVERLAY_EFFECT_MODE.get(current_effect, 0)
             self.overlay_renderer.render(
                 self.camera_x, self.camera_y, self.zoom,
                 render_w, render_h, overlay_config,
-                self.edge_thickness, glfw.get_time(), overlay_mode=0)
+                self.edge_thickness, glfw.get_time(),
+                overlay_mode=0, effect_mode=effect_mode)
         else:
             # === NON-OVERLAY EFFECTS: depth pre-pass + procedural + interaction ===
 

@@ -1,5 +1,7 @@
-// region_blend_overlay.frag - Region blend using overlay tile data
-// Pattern data comes from per-instance attributes - no texture lookup needed
+// region_blend_overlay.frag - Multi-effect tile renderer
+// Renders ALL common effects via instanced overlay tiles — zero findTile cost.
+// Effect mode selects coloring: region_blend, no_effect, rainbow, pulse, sparkle.
+// Pattern data comes from per-instance attributes - no texture lookup needed.
 #version 140
 
 in vec2 v_world_pos;
@@ -16,15 +18,18 @@ uniform vec3 u_color1;
 uniform vec3 u_color2;
 uniform float u_edge_thickness;
 uniform float u_time;
-uniform float u_overlay_mode; // 0 = primary (opaque), 1 = interaction-only (alpha)
+uniform float u_overlay_mode;  // 0 = primary (opaque), 1 = interaction-only (alpha)
+uniform float u_effect_mode;   // 0=region_blend, 1=no_effect, 2=rainbow, 3=pulse, 4=sparkle
 
 // Depth mask support
 uniform sampler2D u_mask_texture;
-uniform float u_mask_enabled;     // 0.0 = off, 1.0 = on
-uniform vec2 u_mask_camera;       // camera position for mask UV mapping
-uniform float u_mask_zoom;        // zoom for mask UV mapping
-uniform float u_mask_aspect;      // viewport aspect ratio for mask UV mapping
-uniform vec3 u_mask_color;        // color to blend with mask (highlight color)
+uniform float u_mask_enabled;
+uniform vec2 u_mask_camera;
+uniform float u_mask_zoom;
+uniform float u_mask_aspect;
+uniform vec3 u_mask_color;
+
+// --- Helpers ---
 
 float distToSegment(vec2 p, vec2 a, vec2 b) {
     vec2 e = b - a;
@@ -42,13 +47,16 @@ float distToQuadEdge(vec2 p) {
     return min(min(d0, d1), min(d2, d3));
 }
 
-vec3 blendColors(vec3 col1, vec3 col2, float factor) {
-    return mix(col1, col2, clamp(factor, 0.0, 1.0));
+vec3 hsvToRgb(vec3 c) {
+    vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    return c.z * mix(vec3(1.0), rgb, c.y);
 }
 
-vec3 invertColor(vec3 color) {
-    return vec3(1.0) - color;
+float hash(float n) {
+    return fract(sin(n * 127.1 + 311.7) * 43758.5453);
 }
+
+// --- Main ---
 
 void main() {
     float is_kite      = v_tile_data1.x;
@@ -60,22 +68,55 @@ void main() {
     float anim_type     = v_tile_data2.z;
     float tile_id       = v_tile_data2.w;
 
-    // Base color from tile type (kite vs dart)
     vec3 baseColor = is_kite > 0.5 ? u_color1 : u_color2;
-
     vec3 tileColor;
-    if (pattern_type > 0.9 && pattern_type < 1.1) {
-        // Star pattern (kites): inversion of color1
-        tileColor = invertColor(u_color1);
-    } else if (pattern_type > 1.9 && pattern_type < 2.1) {
-        // Starburst pattern (darts): inversion of color2
-        tileColor = invertColor(u_color2);
+
+    // --- Effect-specific coloring ---
+    if (u_effect_mode < 0.5) {
+        // 0: region_blend — pattern-aware blending
+        if (pattern_type > 0.9 && pattern_type < 1.1) {
+            tileColor = vec3(1.0) - u_color1;  // star invert
+        } else if (pattern_type > 1.9 && pattern_type < 2.1) {
+            tileColor = vec3(1.0) - u_color2;  // starburst invert
+        } else {
+            tileColor = mix(u_color1, u_color2, clamp(blend_factor, 0.0, 1.0));
+        }
+    } else if (u_effect_mode < 1.5) {
+        // 1: no_effect — simple kite/dart coloring
+        tileColor = baseColor;
+    } else if (u_effect_mode < 2.5) {
+        // 2: rainbow — hue cycling per tile
+        float h = tile_id + u_time * 0.1;
+        float sat = is_kite > 0.5 ? 0.9 : 0.6;
+        tileColor = hsvToRgb(vec3(h, sat, 1.0));
+    } else if (u_effect_mode < 3.5) {
+        // 3: pulse — radial waves from origin
+        vec2 centroid = (v_v0 + v_v1 + v_v2 + v_v3) * 0.25 * 0.1;
+        float dist = length(centroid);
+        float pulse = sin(dist * 8.0 - u_time * 3.0) * 0.5 + 0.5;
+        tileColor = mix(baseColor * 0.3, baseColor, pulse);
     } else {
-        // Region blend: color purely from neighbor-diffused blend_factor
-        // 0 = dart-heavy neighborhood → color2, 1 = kite-heavy → color1
-        tileColor = blendColors(u_color1, u_color2, blend_factor);
+        // 4: sparkle — per-tile phase cycling
+        float randSpeed = hash(tile_id) * 0.1 + 0.2;
+        float randOffset = hash(tile_id + 73.0) * 6.28318;
+        float phase = fract(u_time * randSpeed * 0.3 + randOffset);
+
+        if (phase < 0.25) {
+            float t = smoothstep(0.0, 1.0, phase / 0.25);
+            tileColor = mix(u_color1, vec3(0.0), t);
+        } else if (phase < 0.5) {
+            float t = smoothstep(0.0, 1.0, (phase - 0.25) / 0.25);
+            tileColor = mix(vec3(0.0), u_color2, t);
+        } else if (phase < 0.75) {
+            float t = smoothstep(0.0, 1.0, (phase - 0.5) / 0.25);
+            tileColor = mix(u_color2, vec3(0.0), t);
+        } else {
+            float t = smoothstep(0.0, 1.0, (phase - 0.75) / 0.25);
+            tileColor = mix(vec3(0.0), u_color1, t);
+        }
     }
 
+    // --- Interaction effects (shared by all modes) ---
     if (selected > 0.5) tileColor = mix(tileColor, vec3(1.0, 1.0, 0.0), 0.3);
     if (hovered > 0.5) tileColor = mix(tileColor, vec3(1.0, 1.0, 1.0), 0.15);
 
@@ -89,16 +130,15 @@ void main() {
         interactionAlpha = max(interactionAlpha, ripple * 0.5);
     }
 
-    // 5-fold symmetry glow (anim_type == 5)
     if (anim_type > 4.5 && anim_type < 5.5) {
         float sym_intensity = sin(anim_phase * 3.14159) * (1.0 - anim_phase * 0.3);
-        // Golden color with per-tile shimmer
         float shimmer = sin(u_time * 3.0 + tile_id * 6.283) * 0.1 + 0.9;
         vec3 symColor = vec3(1.0, 0.85, 0.3) * shimmer;
         tileColor = mix(tileColor, symColor, sym_intensity * 0.7);
         interactionAlpha = max(interactionAlpha, sym_intensity * 0.8);
     }
 
+    // --- Edge rendering ---
     float edgeWidth = 0.0048 * u_edge_thickness;
     float aaWidth = 0.0012;
     float edgeDist = distToQuadEdge(v_world_pos);
@@ -106,10 +146,9 @@ void main() {
     vec3 edgeColor = tileColor * 0.15;
     vec3 finalColor = mix(edgeColor, tileColor, edgeFactor);
 
-    // --- Depth mask: per-tile brightness modulation using palette colors ---
+    // --- Depth mask ---
     float maskAlpha = 0.0;
     if (u_mask_enabled > 0.5) {
-        // Sample mask at tile centroid so each tile gets a uniform value
         vec2 tileCentroid = (v_v0 + v_v1 + v_v2 + v_v3) * 0.25;
         vec2 rel = tileCentroid - u_mask_camera;
         vec2 mask_uv;
@@ -121,25 +160,18 @@ void main() {
             maskVal = texture(u_mask_texture, mask_uv).r;
         }
 
-        // Use palette colors for depth effect:
-        // Background (maskVal ~0): darken tile significantly
-        // Foreground (maskVal ~1): brighten tile with color2 accent
         vec3 darkened = finalColor * 0.2;
         vec3 brightened = mix(finalColor, u_color2, 0.35) * 1.4;
         finalColor = mix(darkened, brightened, maskVal);
-
-        // Mask contributes to alpha so tiles become visible over any base effect
         maskAlpha = maskVal * 0.8;
     }
 
-    // Compute final alpha
+    // --- Alpha ---
     float finalAlpha;
     if (u_overlay_mode < 0.5) {
-        // Primary opaque overlay (region_blend): always fully visible
-        finalAlpha = 1.0;
+        finalAlpha = 1.0;  // Primary opaque
     } else {
-        // Interaction overlay: mask and interactions both contribute visibility
-        finalAlpha = max(interactionAlpha, maskAlpha);
+        finalAlpha = max(interactionAlpha, maskAlpha);  // Interaction-only
     }
 
     fragColor = vec4(finalColor, finalAlpha);
