@@ -386,11 +386,10 @@ def setup_window(fullscreen=False):
     
     glfw.make_context_current(window)
     
-    # Enable MSAA (Multi-Sample Anti-Aliasing)
-    glfw.window_hint(glfw.SAMPLES, 4)
-    
-    # After creating the window:
-    glDisable(GL_MULTISAMPLE)
+    # Disable MSAA (not supported in GLES)
+    if not used_es:
+        glfw.window_hint(glfw.SAMPLES, 4)
+        glDisable(GL_MULTISAMPLE)
 
     return window, used_es
 
@@ -687,6 +686,7 @@ def main():
     cycle_manager = None
     gui_overlay = None
     camera_manager = None
+    arcade_input = ArcadeInput()
 
     try:
         logger.info("Starting the penrose generator script.")
@@ -791,9 +791,6 @@ def main():
                     audio_manager = None
             else:
                 logger.warning("--audio requested but signalflow not installed (pip install signalflow)")
-
-        # Initialize arcade controller (Linux only, auto-detects DragonRise USB encoder)
-        arcade_input = ArcadeInput()
 
         logger.info("Controls: WASD=pan, PageUp/Down=zoom, Home=reset, SPACE=effect, G=gamma, R=colors, M=depth mask")
         logger.info("Interaction: Click=interact, TAB=cycle mode (select/cascade/ripple/mask_stamp), C=clear")
