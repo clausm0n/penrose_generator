@@ -162,6 +162,10 @@ class ProceduralRenderer:
 
     def _compile_shader_program(self, vert_src, frag_src, name):
         """Compile and link a shader program."""
+        from penrose_tools.gl_config import patch_shader
+        vert_src = patch_shader(vert_src, is_fragment=False)
+        frag_src = patch_shader(frag_src, is_fragment=True)
+
         # Compile vertex shader
         vert_shader = glCreateShader(GL_VERTEX_SHADER)
         glShaderSource(vert_shader, vert_src)

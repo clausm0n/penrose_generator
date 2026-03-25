@@ -324,20 +324,26 @@ def setup_window(fullscreen=False):
     if not glfw.init():
         raise Exception("GLFW can't be initialized")
 
-    # Try OpenGL 3.2 Core first, fall back for Raspberry Pi (OpenGL ES / older GL)
+    # Context strategies: try desktop GL 3.2 Core (macOS/desktop), then OpenGL ES 3.1/3.0
+    # (Raspberry Pi hardware GPU), then desktop GL fallbacks (software).
     contexts_to_try = [
-        {"major": 3, "minor": 2, "profile": glfw.OPENGL_CORE_PROFILE, "forward_compat": True},
-        {"major": 3, "minor": 1, "profile": None, "forward_compat": False},
-        {"major": 3, "minor": 0, "profile": None, "forward_compat": False},
-        {"major": 2, "minor": 1, "profile": None, "forward_compat": False},
+        {"major": 3, "minor": 2, "profile": glfw.OPENGL_CORE_PROFILE, "forward_compat": True, "es": False, "label": "GL 3.2 Core"},
+        {"major": 3, "minor": 1, "profile": None, "forward_compat": False, "es": True, "label": "GLES 3.1"},
+        {"major": 3, "minor": 0, "profile": None, "forward_compat": False, "es": True, "label": "GLES 3.0"},
+        {"major": 2, "minor": 0, "profile": None, "forward_compat": False, "es": True, "label": "GLES 2.0"},
     ]
 
     # Get the primary monitor
     primary_monitor = glfw.get_primary_monitor()
     window = None
+    used_es = False
 
     for ctx in contexts_to_try:
         glfw.default_window_hints()
+        if ctx["es"]:
+            glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
+        else:
+            glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_API)
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, ctx["major"])
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, ctx["minor"])
         if ctx["forward_compat"]:
@@ -354,8 +360,11 @@ def setup_window(fullscreen=False):
             window = glfw.create_window(width, height, "Penrose Tiling", None, None)
 
         if window:
-            logger.info(f"OpenGL context created: {ctx['major']}.{ctx['minor']}")
+            used_es = ctx["es"]
+            logger.info(f"OpenGL context created: {ctx['label']}")
             break
+        else:
+            logger.debug(f"Failed to create context: {ctx['label']}")
 
     if not window:
         glfw.terminate()
@@ -382,8 +391,8 @@ def setup_window(fullscreen=False):
     
     # After creating the window:
     glDisable(GL_MULTISAMPLE)
-    
-    return window
+
+    return window, used_es
 
 def toggle_fullscreen(window):
     """Toggle between fullscreen and windowed mode."""
@@ -682,7 +691,7 @@ def main():
     try:
         logger.info("Starting the penrose generator script.")
         logger.info("Using GPU procedural renderer (infinite mode)")
-        window = setup_window(fullscreen=args.fullscreen)
+        window, using_gles = setup_window(fullscreen=args.fullscreen)
 
         # Set initial fullscreen state
         fullscreen_mode = args.fullscreen
@@ -695,6 +704,10 @@ def main():
         # Setup viewport using framebuffer size (differs from window size on HiDPI/Retina)
         fb_width, fb_height = glfw.get_framebuffer_size(window)
         glViewport(0, 0, fb_width, fb_height)
+
+        # Set shared GL config before any renderer init
+        from penrose_tools import gl_config
+        gl_config.use_gles = using_gles
 
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()

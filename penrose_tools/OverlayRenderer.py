@@ -46,10 +46,12 @@ class OverlayRenderer:
         """Compile the overlay shader program."""
         shader_dir = os.path.join(os.path.dirname(__file__), 'Shaders')
 
+        from penrose_tools.gl_config import patch_shader
+
         with open(os.path.join(shader_dir, 'tile_overlay.vert'), 'r') as f:
-            vert_src = f.read()
+            vert_src = patch_shader(f.read(), is_fragment=False)
         with open(os.path.join(shader_dir, 'region_blend_overlay.frag'), 'r') as f:
-            frag_src = f.read()
+            frag_src = patch_shader(f.read(), is_fragment=True)
 
         # Compile vertex shader
         vert = glCreateShader(GL_VERTEX_SHADER)

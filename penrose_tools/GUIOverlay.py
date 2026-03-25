@@ -138,20 +138,25 @@ class GUIOverlay:
 
         fragment_shader_source = """
         #version 140
+        out vec4 fragColor;
 
         uniform vec4 color;
 
         void main()
         {
-            gl_FragColor = color;
+            fragColor = color;
         }
         """
         
+        from penrose_tools.gl_config import patch_shader
+        vertex_shader_source = patch_shader(vertex_shader_source, is_fragment=False)
+        fragment_shader_source = patch_shader(fragment_shader_source, is_fragment=True)
+
         # Compile vertex shader
         vertex_shader = glCreateShader(GL_VERTEX_SHADER)
         glShaderSource(vertex_shader, vertex_shader_source)
         glCompileShader(vertex_shader)
-        
+
         # Check vertex shader compilation
         if not glGetShaderiv(vertex_shader, GL_COMPILE_STATUS):
             error = glGetShaderInfoLog(vertex_shader)
@@ -160,12 +165,12 @@ class GUIOverlay:
             raise RuntimeError("Vertex shader compilation failed")
         else:
             self.logger.info("✓ Vertex shader compiled successfully")
-        
+
         # Compile fragment shader
         fragment_shader = glCreateShader(GL_FRAGMENT_SHADER)
         glShaderSource(fragment_shader, fragment_shader_source)
         glCompileShader(fragment_shader)
-        
+
         # Check fragment shader compilation
         if not glGetShaderiv(fragment_shader, GL_COMPILE_STATUS):
             error = glGetShaderInfoLog(fragment_shader)
@@ -174,7 +179,7 @@ class GUIOverlay:
             raise RuntimeError("Fragment shader compilation failed")
         else:
             self.logger.info("✓ Fragment shader compiled successfully")
-        
+
         # Create shader program
         self.shader_program = glCreateProgram()
         glAttachShader(self.shader_program, vertex_shader)
@@ -212,7 +217,7 @@ class GUIOverlay:
         uniform vec2 position;
         uniform vec2 size;
 
-        varying vec2 TexCoord;
+        out vec2 TexCoord;
 
         void main()
         {
@@ -227,17 +232,22 @@ class GUIOverlay:
 
         fragment_shader_source = """
         #version 140
-        varying vec2 TexCoord;
+        in vec2 TexCoord;
 
         uniform sampler2D textTexture;
         uniform vec4 color;
+        out vec4 fragColor;
 
         void main()
         {
-            vec4 texColor = texture2D(textTexture, TexCoord);
-            gl_FragColor = texColor * color;
+            vec4 texColor = texture(textTexture, TexCoord);
+            fragColor = texColor * color;
         }
         """
+
+        from penrose_tools.gl_config import patch_shader
+        vertex_shader_source = patch_shader(vertex_shader_source, is_fragment=False)
+        fragment_shader_source = patch_shader(fragment_shader_source, is_fragment=True)
 
         # Compile vertex shader
         vertex_shader = glCreateShader(GL_VERTEX_SHADER)
