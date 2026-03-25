@@ -128,6 +128,17 @@ class ProceduralRenderer:
         self._upscale_program = None
         self._upscale_uniforms = {}
 
+        # Adaptive render scale: dynamically adjusts render_scale to maintain target FPS
+        self.adaptive_scale_enabled = False
+        self.adaptive_scale_min = 0.25
+        self.adaptive_scale_max = 0.75
+        self.adaptive_target_fps = 30
+        self._frame_times = []          # rolling window of frame times
+        self._frame_time_window = 20    # number of frames to average
+        self._adaptive_last_adjust = 0.0
+        self._adaptive_adjust_interval = 0.5  # seconds between scale adjustments
+        self._adaptive_current_scale = 0.5    # smoothed working scale
+
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
 
@@ -1196,7 +1207,61 @@ void main() {
         log_target = np.log(self.target_zoom)
         log_new = log_current + (log_target - log_current) * zoom_lerp
         self.zoom = np.exp(log_new)
-    
+
+    def update_adaptive_scale(self, frame_time):
+        """Track frame times and adjust render_scale to maintain target FPS.
+
+        Call this every frame with the measured frame_time (seconds).
+        The render_scale is smoothly adjusted to keep frame rate near the target.
+        """
+        if not self.adaptive_scale_enabled:
+            return
+
+        # Track rolling frame times
+        self._frame_times.append(frame_time)
+        if len(self._frame_times) > self._frame_time_window:
+            self._frame_times.pop(0)
+
+        # Only adjust periodically to avoid oscillation
+        now = glfw.get_time()
+        if now - self._adaptive_last_adjust < self._adaptive_adjust_interval:
+            return
+        if len(self._frame_times) < 5:
+            return
+
+        self._adaptive_last_adjust = now
+
+        # Use 90th percentile frame time (not average) to avoid stutter spikes
+        sorted_times = sorted(self._frame_times)
+        p90_time = sorted_times[int(len(sorted_times) * 0.9)]
+        target_time = 1.0 / self.adaptive_target_fps
+
+        # Compute ratio: >1 means we're too slow, <1 means we have headroom
+        ratio = p90_time / target_time
+
+        if ratio > 1.1:
+            # Too slow — reduce scale. Scale pixel count proportionally.
+            # Pixel count scales as scale^2, so scale adjustment is sqrt of ratio
+            factor = 1.0 / (ratio ** 0.5)
+            self._adaptive_current_scale *= factor
+        elif ratio < 0.75:
+            # Headroom available — increase scale gradually (slower than decrease)
+            factor = 1.0 / (ratio ** 0.3)
+            self._adaptive_current_scale *= min(factor, 1.05)  # cap increase at 5% per step
+
+        # Clamp to configured bounds
+        self._adaptive_current_scale = max(self.adaptive_scale_min,
+                                           min(self.adaptive_scale_max,
+                                               self._adaptive_current_scale))
+
+        # Apply with snapping to avoid FBO churn on tiny changes
+        new_scale = round(self._adaptive_current_scale * 20.0) / 20.0  # snap to 0.05 increments
+        if abs(new_scale - self.render_scale) >= 0.05:
+            old = self.render_scale
+            self.render_scale = new_scale
+            self.logger.info(f"Adaptive scale: {old:.2f} -> {new_scale:.2f} "
+                           f"(p90={p90_time*1000:.1f}ms, target={target_time*1000:.1f}ms)")
+
     @property
     def camera(self):
         return self
