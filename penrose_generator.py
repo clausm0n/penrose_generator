@@ -684,6 +684,7 @@ def main():
     parser.add_argument('--demo', action='store_true', help='Enable autonomous demo mode')
     parser.add_argument('--demo-idle', type=float, default=2.0, help='Idle timeout in minutes before demo resumes (default: 2.0)')
     parser.add_argument('--render-scale', type=float, default=0.5, help='Render resolution scale (0.25-1.0, default 0.5 = half res)')
+    parser.add_argument('--fps', type=int, default=30, help='Target frame rate (default: 30, use 60 on powerful hardware)')
     parser.add_argument('--no-overlay', action='store_true', help='Disable interaction overlay layer (saves GPU/CPU)')
     args = parser.parse_args()
 
@@ -732,7 +733,8 @@ def main():
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()
         renderer.render_scale = max(0.25, min(1.0, args.render_scale))
-        logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution)")
+        target_fps = max(10, min(120, args.fps))
+        logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution), target FPS: {target_fps}")
         if args.no_overlay:
             renderer.interaction_overlay_enabled = False
             logger.info("Interaction overlay disabled via --no-overlay")
@@ -991,7 +993,7 @@ def main():
             glfw.swap_buffers(window)
 
             # Frame rate limiting — sleep to yield CPU to background threads
-            frame_target = last_time + 1.0 / 60.0
+            frame_target = last_time + 1.0 / target_fps
             remaining = frame_target - glfw.get_time()
             if remaining > 0.001:
                 time.sleep(remaining - 0.001)  # sleep most of the wait

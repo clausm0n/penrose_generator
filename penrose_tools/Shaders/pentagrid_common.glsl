@@ -5,26 +5,42 @@
 #define PI 3.14159265359
 #define PN 5
 
-vec2 grid[PN];
+// Precision macro: expands to mediump on GLES, nothing on desktop GL
+#ifdef GL_ES
+#define MEDIUMP mediump
+#else
+#define MEDIUMP
+#endif
+
+// Precomputed unit vectors at 72-degree intervals (2*PI*k/5 for k=0..4)
+// Constant across all pixels and frames — eliminates 10 trig calls per pixel
+const vec2 grid[PN] = vec2[PN](
+    vec2( 1.0,              0.0),             // k=0:   0 deg
+    vec2( 0.30901699437,    0.95105651629),   // k=1:  72 deg
+    vec2(-0.80901699437,    0.58778525229),   // k=2: 144 deg
+    vec2(-0.80901699437,   -0.58778525229),   // k=3: 216 deg
+    vec2( 0.30901699437,   -0.95105651629)    // k=4: 288 deg
+);
+
 float shift[PN];
 
-float random(vec2 st) {
+MEDIUMP float random(vec2 st) {
     return fract(sin(dot(st, vec2(12.9898, 78.233))) * 43758.5453123);
 }
 
-float noise(vec2 st) {
-    vec2 i = floor(st);
-    vec2 f = fract(st);
-    float a = random(i);
-    float b = random(i + vec2(1.0, 0.0));
-    float c = random(i + vec2(0.0, 1.0));
-    float d = random(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
+MEDIUMP float noise(vec2 st) {
+    MEDIUMP vec2 i = floor(st);
+    MEDIUMP vec2 f = fract(st);
+    MEDIUMP float a = random(i);
+    MEDIUMP float b = random(i + vec2(1.0, 0.0));
+    MEDIUMP float c = random(i + vec2(0.0, 1.0));
+    MEDIUMP float d = random(i + vec2(1.0, 1.0));
+    MEDIUMP vec2 u = f * f * (3.0 - 2.0 * f);
     return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
 }
 
-vec3 hsvToRgb(vec3 c) {
-    vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+MEDIUMP vec3 hsvToRgb(vec3 c) {
+    MEDIUMP vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
     return c.z * mix(vec3(1.0), rgb, c.y);
 }
 
@@ -95,8 +111,6 @@ TileData findTile(vec2 p, float gamma[5]) {
 
     for (int k = 0; k < PN; k++) {
         shift[k] = gamma[k];
-        float theta = PI * 2.0 / float(PN) * float(k);
-        grid[k] = vec2(cos(theta), sin(theta));
         pindex[k] = dot(p, grid[k]) + shift[k];
         tile.rb_p += grid[k] * pindex[k];
     }
@@ -136,11 +150,11 @@ TileData findTile(vec2 p, float gamma[5]) {
     return tile;
 }
 
-// Apply edge rendering to tile color
+// Apply edge rendering to tile color (mediump safe — visual blending only)
 vec3 applyEdge(vec3 tileColor, float edgeDist, float edgeThickness) {
-    float edgeWidth = 0.012 * edgeThickness;
-    float aaWidth = 0.003;
-    float edgeFactor = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
-    vec3 edgeColor = tileColor * 0.15;
+    MEDIUMP float edgeWidth = 0.012 * edgeThickness;
+    MEDIUMP float aaWidth = 0.003;
+    MEDIUMP float edgeFactor = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
+    MEDIUMP vec3 edgeColor = tileColor * 0.15;
     return mix(edgeColor, tileColor, edgeFactor);
 }
