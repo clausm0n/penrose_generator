@@ -342,6 +342,8 @@ def setup_window(fullscreen=False):
         glfw.default_window_hints()
         if ctx["es"]:
             glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
+            # Force EGL context — GLX on Pi uses software Mesa, EGL uses hardware V3D
+            glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
         else:
             glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_API)
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, ctx["major"])
@@ -361,7 +363,12 @@ def setup_window(fullscreen=False):
 
         if window:
             used_es = ctx["es"]
+            glfw.make_context_current(window)
+            gl_renderer = glGetString(GL_RENDERER)
+            gl_version = glGetString(GL_VERSION)
             logger.info(f"OpenGL context created: {ctx['label']}")
+            logger.info(f"GL Renderer: {gl_renderer}")
+            logger.info(f"GL Version: {gl_version}")
             break
         else:
             logger.debug(f"Failed to create context: {ctx['label']}")
@@ -383,8 +390,6 @@ def setup_window(fullscreen=False):
     glfw.set_mouse_button_callback(window, mouse_button_callback)
     glfw.set_cursor_pos_callback(window, cursor_position_callback)
     glfw.set_cursor_enter_callback(window, cursor_enter_callback)
-    
-    glfw.make_context_current(window)
     
     # Disable MSAA (not supported in GLES)
     if not used_es:
