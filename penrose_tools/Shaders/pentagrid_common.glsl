@@ -136,16 +136,13 @@ TileData findTile(vec2 p, float gamma[5]) {
                            - GRID[s] * (kr - gamma[r]);
             vec2 pI = vec2(-crossTerm.y, crossTerm.x) * invD;
 
-            // Compute vertex sum: all 5 ceil terms, then fix r and s
-            // (branchless — avoids if(k!=r && k!=s) loop)
-            vec2 sum = GRID[0] * ceil(dot(pI, GRID[0]) + gamma[0])
-                     + GRID[1] * ceil(dot(pI, GRID[1]) + gamma[1])
-                     + GRID[2] * ceil(dot(pI, GRID[2]) + gamma[2])
-                     + GRID[3] * ceil(dot(pI, GRID[3]) + gamma[3])
-                     + GRID[4] * ceil(dot(pI, GRID[4]) + gamma[4]);
-            // Replace the r,s ceil terms with exact kr,ks
-            sum += GRID[r] * (kr - ceil(dot(pI, GRID[r]) + gamma[r]))
-                 + GRID[s] * (ks - ceil(dot(pI, GRID[s]) + gamma[s]));
+            // Compute dual vertex sum (skip r and s, use kr/ks directly)
+            vec2 sum = GRID[r] * kr + GRID[s] * ks;
+            for (int k = 0; k < PN; k++) {
+                if (k != r && k != s) {
+                    sum += GRID[k] * ceil(dot(pI, GRID[k]) + gamma[k]);
+                }
+            }
 
             vec2 v0 = sum;
             vec2 v1 = sum + GRID[r];
