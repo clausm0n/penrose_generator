@@ -5,42 +5,26 @@
 #define PI 3.14159265359
 #define PN 5
 
-// Precision macro: expands to mediump on GLES, nothing on desktop GL
-#ifdef GL_ES
-#define MEDIUMP mediump
-#else
-#define MEDIUMP
-#endif
-
-// Precomputed unit vectors at 72-degree intervals (2*PI*k/5 for k=0..4)
-// Constant across all pixels and frames — eliminates 10 trig calls per pixel
-const vec2 grid[PN] = vec2[PN](
-    vec2( 1.0,              0.0),             // k=0:   0 deg
-    vec2( 0.30901699437,    0.95105651629),   // k=1:  72 deg
-    vec2(-0.80901699437,    0.58778525229),   // k=2: 144 deg
-    vec2(-0.80901699437,   -0.58778525229),   // k=3: 216 deg
-    vec2( 0.30901699437,   -0.95105651629)    // k=4: 288 deg
-);
-
+vec2 grid[PN];
 float shift[PN];
 
-MEDIUMP float random(vec2 st) {
+float random(vec2 st) {
     return fract(sin(dot(st, vec2(12.9898, 78.233))) * 43758.5453123);
 }
 
-MEDIUMP float noise(vec2 st) {
-    MEDIUMP vec2 i = floor(st);
-    MEDIUMP vec2 f = fract(st);
-    MEDIUMP float a = random(i);
-    MEDIUMP float b = random(i + vec2(1.0, 0.0));
-    MEDIUMP float c = random(i + vec2(0.0, 1.0));
-    MEDIUMP float d = random(i + vec2(1.0, 1.0));
-    MEDIUMP vec2 u = f * f * (3.0 - 2.0 * f);
+float noise(vec2 st) {
+    vec2 i = floor(st);
+    vec2 f = fract(st);
+    float a = random(i);
+    float b = random(i + vec2(1.0, 0.0));
+    float c = random(i + vec2(0.0, 1.0));
+    float d = random(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
     return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
 }
 
-MEDIUMP vec3 hsvToRgb(vec3 c) {
-    MEDIUMP vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+vec3 hsvToRgb(vec3 c) {
+    vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
     return c.z * mix(vec3(1.0), rgb, c.y);
 }
 
@@ -101,30 +85,7 @@ struct TileData {
     vec2 rb_p;
 };
 
-// Helper: test a single rhombus candidate and populate tile if found
-bool tryRhombus(inout TileData tile, int r, int s, float kr, float ks) {
-    vec2 verts[4];
-    getRhombusVerts(r, s, kr, ks, verts);
-    if (pointInQuad(tile.rb_p, verts[0], verts[1], verts[2], verts[3])) {
-        tile.found = true;
-        tile.r = r; tile.s = s;
-        tile.kr = kr; tile.ks = ks;
-        tile.verts = verts;
-        tile.center = (verts[0] + verts[1] + verts[2] + verts[3]) * 0.25;
-        tile.tileCentroid = tile.center * 0.1;
-        int diff = s - r;
-        tile.isFat = (diff == 1 || diff == PN - 1);
-        tile.tileId = random(vec2(kr + float(r) * 100.0, ks + float(s) * 100.0));
-        tile.edgeDist = distToQuadEdge(tile.rb_p, verts[0], verts[1], verts[2], verts[3]);
-        return true;
-    }
-    return false;
-}
-
 // Find the tile containing point p
-// Optimized: tests the most likely (kr,ks) candidate first per (r,s) pair,
-// using round() to pick the nearest grid intersection before checking others.
-// This finds the tile in ~1 test per pair instead of 4, reducing average work ~50%.
 TileData findTile(vec2 p, float gamma[5]) {
     TileData tile;
     tile.found = false;
@@ -134,6 +95,8 @@ TileData findTile(vec2 p, float gamma[5]) {
 
     for (int k = 0; k < PN; k++) {
         shift[k] = gamma[k];
+        float theta = PI * 2.0 / float(PN) * float(k);
+        grid[k] = vec2(cos(theta), sin(theta));
         pindex[k] = dot(p, grid[k]) + shift[k];
         tile.rb_p += grid[k] * pindex[k];
     }
@@ -142,33 +105,42 @@ TileData findTile(vec2 p, float gamma[5]) {
         if (tile.found) break;
         for (int s = r + 1; s < PN; s++) {
             if (tile.found) break;
-
+            // Only check the 4 nearest grid line intersections (floor/ceil of each index)
             float base_kr = floor(pindex[r]);
             float base_ks = floor(pindex[s]);
-            float fr = fract(pindex[r]);
-            float fs = fract(pindex[s]);
-
-            // Test most likely candidate first: round to nearest grid intersection
-            int dr0 = fr > 0.5 ? 1 : 0;
-            int ds0 = fs > 0.5 ? 1 : 0;
-            if (tryRhombus(tile, r, s, base_kr + float(dr0), base_ks + float(ds0))) break;
-
-            // Test remaining 3 candidates only if first didn't match
-            int dr1 = 1 - dr0;
-            if (tryRhombus(tile, r, s, base_kr + float(dr1), base_ks + float(ds0))) break;
-            if (tryRhombus(tile, r, s, base_kr + float(dr0), base_ks + float(1 - ds0))) break;
-            if (tryRhombus(tile, r, s, base_kr + float(dr1), base_ks + float(1 - ds0))) break;
+            for (int dr = 0; dr <= 1; dr++) {
+                if (tile.found) break;
+                for (int ds = 0; ds <= 1; ds++) {
+                    if (tile.found) break;
+                    float kr = base_kr + float(dr);
+                    float ks = base_ks + float(ds);
+                    vec2 verts[4];
+                    getRhombusVerts(r, s, kr, ks, verts);
+                    if (pointInQuad(tile.rb_p, verts[0], verts[1], verts[2], verts[3])) {
+                        tile.found = true;
+                        tile.r = r; tile.s = s;
+                        tile.kr = kr; tile.ks = ks;
+                        tile.verts = verts;
+                        tile.center = (verts[0] + verts[1] + verts[2] + verts[3]) * 0.25;
+                        tile.tileCentroid = tile.center * 0.1;
+                        int diff = s - r;
+                        tile.isFat = (diff == 1 || diff == PN - 1);
+                        tile.tileId = random(vec2(kr + float(r) * 100.0, ks + float(s) * 100.0));
+                        tile.edgeDist = distToQuadEdge(tile.rb_p, verts[0], verts[1], verts[2], verts[3]);
+                    }
+                }
+            }
         }
     }
 
     return tile;
 }
 
-// Apply edge rendering to tile color (mediump safe — visual blending only)
+// Apply edge rendering to tile color
 vec3 applyEdge(vec3 tileColor, float edgeDist, float edgeThickness) {
-    MEDIUMP float edgeWidth = 0.012 * edgeThickness;
-    MEDIUMP float aaWidth = 0.003;
-    MEDIUMP float edgeFactor = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
-    MEDIUMP vec3 edgeColor = tileColor * 0.15;
+    float edgeWidth = 0.012 * edgeThickness;
+    float aaWidth = 0.003;
+    float edgeFactor = smoothstep(edgeWidth - aaWidth, edgeWidth, edgeDist);
+    vec3 edgeColor = tileColor * 0.15;
     return mix(edgeColor, tileColor, edgeFactor);
 }

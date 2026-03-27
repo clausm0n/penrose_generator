@@ -102,7 +102,6 @@ class OverlayRenderer:
             'u_edge_thickness': glGetUniformLocation(self.shader_program, 'u_edge_thickness'),
             'u_time': glGetUniformLocation(self.shader_program, 'u_time'),
             'u_overlay_mode': glGetUniformLocation(self.shader_program, 'u_overlay_mode'),
-            'u_effect_mode': glGetUniformLocation(self.shader_program, 'u_effect_mode'),
             # Depth mask uniforms
             'u_mask_texture': glGetUniformLocation(self.shader_program, 'u_mask_texture'),
             'u_mask_enabled': glGetUniformLocation(self.shader_program, 'u_mask_enabled'),
@@ -316,34 +315,10 @@ class OverlayRenderer:
     # Rendering
     # -------------------------------------------------------------------------
 
-    def render_depth_prepass(self, camera_x, camera_y, zoom, width, height):
-        """Render overlay tiles to depth buffer only (no color writes).
-
-        Used as a depth pre-pass so the procedural shader's expensive findTile
-        is skipped via early-Z for pixels already covered by overlay tiles.
-        On VideoCore VII's TBDR, this enables hidden surface removal.
-        """
-        if self.tile_count == 0 or self.shader_program is None:
-            return
-
-        aspect = float(width) / float(height)
-        glUseProgram(self.shader_program)
-
-        # Minimal uniforms — only what the vertex shader needs for clip-space transform
-        glUniform2f(self.uniforms['u_camera'], camera_x, camera_y)
-        glUniform1f(self.uniforms['u_zoom'], zoom)
-        glUniform1f(self.uniforms['u_aspect'], aspect)
-
-        glBindVertexArray(self.vao)
-        glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None, self.tile_count)
-        glBindVertexArray(0)
-        glUseProgram(0)
-
     def render(self, camera_x, camera_y, zoom, width, height,
-               config_data, edge_thickness, time_val, overlay_mode=0, effect_mode=0):
+               config_data, edge_thickness, time_val, overlay_mode=0):
         """Draw all tile instances.
-        overlay_mode: 0 = primary (opaque), 1 = interaction-only (alpha blended)
-        effect_mode: 0=region_blend, 1=no_effect, 2=rainbow, 3=pulse, 4=sparkle
+        overlay_mode: 0 = primary (opaque, region_blend), 1 = interaction-only (alpha blended)
         """
         if self.tile_count == 0 or self.shader_program is None:
             return
@@ -360,8 +335,6 @@ class OverlayRenderer:
         glUniform1f(self.uniforms['u_edge_thickness'], edge_thickness)
         if self.uniforms.get('u_overlay_mode', -1) != -1:
             glUniform1f(self.uniforms['u_overlay_mode'], float(overlay_mode))
-        if self.uniforms.get('u_effect_mode', -1) != -1:
-            glUniform1f(self.uniforms['u_effect_mode'], float(effect_mode))
 
         c1 = config_data.get('color1', [255, 255, 255])
         c2 = config_data.get('color2', [0, 0, 255])

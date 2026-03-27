@@ -94,19 +94,8 @@ class ProceduralRenderer:
         # Generation tracking for two-pass pipeline
         self._chunk_gen_id = 0           # generation ID to match geometry with patterns
 
-        # Effects that use the overlay for their primary rendering (opaque overlay).
-        # All simple effects render via overlay (zero findTile cost).
-        # Complex effects (eye_spy, plasmaball) still use procedural shader.
-        self.OVERLAY_EFFECTS = {'region_blend', 'no_effect', 'rainbow', 'pulse', 'sparkle'}
-
-        # Map effect name → overlay shader effect_mode uniform value
-        self.OVERLAY_EFFECT_MODE = {
-            'region_blend': 0,
-            'no_effect': 1,
-            'rainbow': 2,
-            'pulse': 3,
-            'sparkle': 4,
-        }
+        # Effects that use the overlay for their primary rendering (opaque overlay)
+        self.OVERLAY_EFFECTS = {'region_blend'}
 
         # Depth mask layer (independent of effect mode — works with any effect)
         self.depth_mask_enabled = False
@@ -134,22 +123,10 @@ class ProceduralRenderer:
         self.render_scale = 1.0
         self._fbo = None
         self._fbo_texture = None
-        self._fbo_depth = None
         self._fbo_width = 0
         self._fbo_height = 0
         self._upscale_program = None
         self._upscale_uniforms = {}
-
-        # Adaptive render scale: dynamically adjusts render_scale to maintain target FPS
-        self.adaptive_scale_enabled = False
-        self.adaptive_scale_min = 0.25
-        self.adaptive_scale_max = 0.75
-        self.adaptive_target_fps = 30
-        self._frame_times = []          # rolling window of frame times
-        self._frame_time_window = 20    # number of frames to average
-        self._adaptive_last_adjust = 0.0
-        self._adaptive_adjust_interval = 0.5  # seconds between scale adjustments
-        self._adaptive_current_scale = 0.5    # smoothed working scale
 
         if not glfw.get_current_context():
             raise RuntimeError("ProceduralRenderer requires an active OpenGL context")
@@ -373,33 +350,25 @@ void main() {
             try:
                 glDeleteFramebuffers(1, [self._fbo])
                 glDeleteTextures([self._fbo_texture])
-                if self._fbo_depth is not None:
-                    glDeleteRenderbuffers(1, [self._fbo_depth])
             except Exception:
                 pass
         self._fbo = None
         self._fbo_texture = None
-        self._fbo_depth = None
         try:
-            # Create color texture
+            # Create texture
             self._fbo_texture = glGenTextures(1)
             glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
+            # Use GL_RGBA instead of GL_RGBA8 for broader GLES compat
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
             glBindTexture(GL_TEXTURE_2D, 0)
-            # Create depth renderbuffer for depth pre-pass
-            self._fbo_depth = glGenRenderbuffers(1)
-            glBindRenderbuffer(GL_RENDERBUFFER, self._fbo_depth)
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, rw, rh)
-            glBindRenderbuffer(GL_RENDERBUFFER, 0)
-            # Create FBO with color + depth
+            # Create FBO
             self._fbo = glGenFramebuffers(1)
             glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self._fbo_texture, 0)
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self._fbo_depth)
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
             if status != GL_FRAMEBUFFER_COMPLETE:
                 raise RuntimeError(f"FBO incomplete: status={status}")
@@ -439,17 +408,7 @@ void main() {
                 and self.interaction_manager is not None)
 
     def render(self, width, height, config_data):
-        """Render the Penrose tiling with flattened render passes.
-
-        Rendering strategy:
-        - region_blend: overlay only (skip expensive procedural shader entirely)
-        - other effects: depth pre-pass with overlay tiles → procedural with
-          early-Z rejection (95%+ pixels skip findTile) → interaction overlay
-
-        On VideoCore VII's TBDR, the depth pre-pass enables hardware hidden
-        surface removal, so the expensive procedural fragment shader only runs
-        for the ~5% of pixels in gaps between overlay tiles.
-        """
+        """Render the Penrose tiling with the current effect shader."""
         # Update camera smoothing before rendering
         self.update()
 
@@ -460,7 +419,8 @@ void main() {
             if self._fbo is not None:
                 glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
                 glViewport(0, 0, self._fbo_width, self._fbo_height)
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+                glClear(GL_COLOR_BUFFER_BIT)
+                # Pass reduced dimensions so shaders compute correct aspect ratio
                 render_w, render_h = self._fbo_width, self._fbo_height
             else:
                 use_fbo = False
@@ -477,156 +437,128 @@ void main() {
         if has_interaction:
             dt = glfw.get_time() - self._last_render_time
             self._last_render_time = glfw.get_time()
-            dt = max(0.0, min(dt, 0.1))
+            dt = max(0.0, min(dt, 0.1))  # clamp
             self.interaction_manager.update_animations(dt)
+            # Partial GPU upload for changed tiles only
             self._flush_interaction_dirty()
 
-        # --- Prepare colors (shared by all passes) ---
+        # --- PASS 1: Procedural base layer ---
+        # For overlay effects, render a simple base as the safety net;
+        # for non-overlay effects, render the normal procedural shader.
+        if use_overlay:
+            base_index = 0  # no_effect as base for all overlay effects
+        else:
+            base_index = self.effect_mode
+
+        program = self.shader_programs[base_index]
+        if program is None:
+            for i, p in enumerate(self.shader_programs):
+                if p is not None:
+                    program = p
+                    base_index = i
+                    break
+            if program is None:
+                self.logger.error("No valid shader programs available")
+                return
+
+        uniforms = self.uniform_locations[base_index]
+        glUseProgram(program)
+
+        if uniforms.get('u_resolution', -1) != -1:
+            glUniform2f(uniforms['u_resolution'], float(render_w), float(render_h))
+        if uniforms.get('u_camera', -1) != -1:
+            glUniform2f(uniforms['u_camera'], self.camera_x, self.camera_y)
+        if uniforms.get('u_zoom', -1) != -1:
+            glUniform1f(uniforms['u_zoom'], self.zoom)
+        if uniforms.get('u_time', -1) != -1:
+            glUniform1f(uniforms['u_time'], glfw.get_time())
+
         c1 = config_data.get('color1', [255, 255, 255])
         c2 = config_data.get('color2', [0, 0, 255])
 
+        # Apply color tween if active (smooth color transitions)
         if self.tween_engine:
             color_tween = self.tween_engine.get('color')
             if color_tween is not None:
+                # color tween value is [c1_r, c1_g, c1_b, c2_r, c2_g, c2_b] in 0-255 range
                 c1 = [color_tween[0], color_tween[1], color_tween[2]]
                 c2 = [color_tween[3], color_tween[4], color_tween[5]]
+                self.logger.debug(f"Color tween active: c1={c1}, c2={c2}")
 
+        # Apply brightness multiplier from tween engine (for fade-to-black transitions)
         brightness = self.tween_engine.brightness_multiplier if self.tween_engine else 1.0
+        if brightness < 1.0:
+            self.logger.debug(f"Brightness multiplier: {brightness:.3f}")
+
         c1_r, c1_g, c1_b = c1[0] / 255.0 * brightness, c1[1] / 255.0 * brightness, c1[2] / 255.0 * brightness
         c2_r, c2_g, c2_b = c2[0] / 255.0 * brightness, c2[1] / 255.0 * brightness, c2[2] / 255.0 * brightness
 
+        if uniforms.get('u_color1', -1) != -1:
+            glUniform3f(uniforms['u_color1'], c1_r, c1_g, c1_b)
+        if uniforms.get('u_color2', -1) != -1:
+            glUniform3f(uniforms['u_color2'], c2_r, c2_g, c2_b)
+        if uniforms.get('u_edge_thickness', -1) != -1:
+            glUniform1f(uniforms['u_edge_thickness'], self.edge_thickness)
+        if uniforms.get('u_gamma', -1) != -1:
+            gamma_array = (GLfloat * 5)(*gamma)
+            glUniform1fv(uniforms['u_gamma'], 5, gamma_array)
+
+        # Depth camera uniforms for depth-interactive effects
+        if current_effect in self.DEPTH_EFFECTS and uniforms.get('u_depth_enabled', -1) != -1:
+            if self._depth_data_available and self._depth_texture_procedural is not None:
+                glUniform1f(uniforms['u_depth_enabled'], 1.0)
+                glUniform1f(uniforms['u_depth_coverage'], self._depth_coverage)
+                glUniform2f(uniforms['u_depth_centroid'],
+                            self._depth_centroid[0], self._depth_centroid[1])
+                if uniforms.get('u_depth_motion', -1) != -1:
+                    glUniform1f(uniforms['u_depth_motion'], self._depth_motion)
+                if uniforms.get('u_depth_texture', -1) != -1:
+                    glActiveTexture(GL_TEXTURE1)
+                    glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
+                    glUniform1i(uniforms['u_depth_texture'], 1)
+            else:
+                glUniform1f(uniforms['u_depth_enabled'], 0.0)
+                glUniform1f(uniforms['u_depth_coverage'], 0.3)
+                glUniform2f(uniforms['u_depth_centroid'], 0.5, 0.5)
+                if uniforms.get('u_depth_motion', -1) != -1:
+                    glUniform1f(uniforms['u_depth_motion'], 0.0)
+
+        # Old texture-based region_blend fallback (used when overlay isn't available)
+        if current_effect == 'region_blend' and not use_overlay:
+            self._update_pattern_data_if_needed(width, height, gamma)
+            if self.pattern_texture is not None and uniforms.get('u_pattern_texture', -1) != -1:
+                glActiveTexture(GL_TEXTURE0)
+                glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
+                glUniform1i(uniforms['u_pattern_texture'], 0)
+
+        glBindVertexArray(self.vao)
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+        glBindVertexArray(0)
+
+        # Unbind depth texture if it was bound
+        if current_effect in self.DEPTH_EFFECTS and self._depth_texture_procedural is not None:
+            glActiveTexture(GL_TEXTURE1)
+            glBindTexture(GL_TEXTURE_2D, 0)
+            glActiveTexture(GL_TEXTURE0)
+
+        glUseProgram(0)
+
+        # --- PASS 2: Overlay layer ---
+        # For region_blend: full opaque overlay (primary rendering)
+        # For all other effects: interaction-only overlay (hover/select/anim visuals)
+        # Pass tweened colors (with brightness applied) so overlays match the base layer
         overlay_config = dict(config_data)
         overlay_config['color1'] = [c1_r * 255.0, c1_g * 255.0, c1_b * 255.0]
         overlay_config['color2'] = [c2_r * 255.0, c2_g * 255.0, c2_b * 255.0]
-
-        # --- Process overlay tile updates once (shared by all paths) ---
-        has_tile_data = (self.tile_manager is not None
-                         and self.overlay_renderer is not None)
-        if has_tile_data:
-            aspect = float(render_w) / float(render_h)
-            self._process_overlay_updates(gamma, aspect)
-            has_tile_data = self.overlay_renderer.tile_count > 0
-
         if use_overlay:
-            # === OVERLAY PATH: renders tile effect directly — zero findTile cost ===
-            # All simple effects (no_effect, region_blend, rainbow, pulse, sparkle)
-            # render via instanced overlay tiles instead of expensive procedural shader.
-            effect_mode = self.OVERLAY_EFFECT_MODE.get(current_effect, 0)
-            self.overlay_renderer.render(
-                self.camera_x, self.camera_y, self.zoom,
-                render_w, render_h, overlay_config,
-                self.edge_thickness, glfw.get_time(),
-                overlay_mode=0, effect_mode=effect_mode)
-        else:
-            # === NON-OVERLAY EFFECTS: depth pre-pass + procedural + interaction ===
+            self._update_overlay(render_w, render_h, gamma, overlay_config)
+        elif has_interaction:
+            self._update_interaction_overlay(render_w, render_h, gamma, overlay_config)
 
-            # STEP 1: Depth pre-pass — overlay tiles write depth only (no color)
-            # This blocks the expensive procedural findTile for covered pixels.
-            if has_tile_data:
-                glEnable(GL_DEPTH_TEST)
-                glDepthFunc(GL_LESS)
-                glDepthMask(GL_TRUE)
-                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE)
-
-                self.overlay_renderer.render_depth_prepass(
-                    self.camera_x, self.camera_y, self.zoom,
-                    render_w, render_h)
-
-                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE)
-                glDepthMask(GL_FALSE)  # procedural doesn't write depth
-
-            # STEP 2: Procedural shader — depth tested, covered pixels rejected
-            base_index = self.effect_mode
-            program = self.shader_programs[base_index]
-            if program is None:
-                for i, p in enumerate(self.shader_programs):
-                    if p is not None:
-                        program = p
-                        base_index = i
-                        break
-                if program is None:
-                    self.logger.error("No valid shader programs available")
-                    if has_tile_data:
-                        glDisable(GL_DEPTH_TEST)
-                        glDepthMask(GL_TRUE)
-                    return
-
-            uniforms = self.uniform_locations[base_index]
-            glUseProgram(program)
-
-            if uniforms.get('u_resolution', -1) != -1:
-                glUniform2f(uniforms['u_resolution'], float(render_w), float(render_h))
-            if uniforms.get('u_camera', -1) != -1:
-                glUniform2f(uniforms['u_camera'], self.camera_x, self.camera_y)
-            if uniforms.get('u_zoom', -1) != -1:
-                glUniform1f(uniforms['u_zoom'], self.zoom)
-            if uniforms.get('u_time', -1) != -1:
-                glUniform1f(uniforms['u_time'], glfw.get_time())
-            if uniforms.get('u_color1', -1) != -1:
-                glUniform3f(uniforms['u_color1'], c1_r, c1_g, c1_b)
-            if uniforms.get('u_color2', -1) != -1:
-                glUniform3f(uniforms['u_color2'], c2_r, c2_g, c2_b)
-            if uniforms.get('u_edge_thickness', -1) != -1:
-                glUniform1f(uniforms['u_edge_thickness'], self.edge_thickness)
-            if uniforms.get('u_gamma', -1) != -1:
-                gamma_array = (GLfloat * 5)(*gamma)
-                glUniform1fv(uniforms['u_gamma'], 5, gamma_array)
-
-            # Depth camera uniforms
-            if current_effect in self.DEPTH_EFFECTS and uniforms.get('u_depth_enabled', -1) != -1:
-                if self._depth_data_available and self._depth_texture_procedural is not None:
-                    glUniform1f(uniforms['u_depth_enabled'], 1.0)
-                    glUniform1f(uniforms['u_depth_coverage'], self._depth_coverage)
-                    glUniform2f(uniforms['u_depth_centroid'],
-                                self._depth_centroid[0], self._depth_centroid[1])
-                    if uniforms.get('u_depth_motion', -1) != -1:
-                        glUniform1f(uniforms['u_depth_motion'], self._depth_motion)
-                    if uniforms.get('u_depth_texture', -1) != -1:
-                        glActiveTexture(GL_TEXTURE1)
-                        glBindTexture(GL_TEXTURE_2D, self._depth_texture_procedural)
-                        glUniform1i(uniforms['u_depth_texture'], 1)
-                else:
-                    glUniform1f(uniforms['u_depth_enabled'], 0.0)
-                    glUniform1f(uniforms['u_depth_coverage'], 0.3)
-                    glUniform2f(uniforms['u_depth_centroid'], 0.5, 0.5)
-                    if uniforms.get('u_depth_motion', -1) != -1:
-                        glUniform1f(uniforms['u_depth_motion'], 0.0)
-
-            # Old texture-based region_blend fallback
-            if current_effect == 'region_blend' and not use_overlay:
-                self._update_pattern_data_if_needed(width, height, gamma)
-                if self.pattern_texture is not None and uniforms.get('u_pattern_texture', -1) != -1:
-                    glActiveTexture(GL_TEXTURE0)
-                    glBindTexture(GL_TEXTURE_2D, self.pattern_texture)
-                    glUniform1i(uniforms['u_pattern_texture'], 0)
-
-            glBindVertexArray(self.vao)
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
-            glBindVertexArray(0)
-
-            if current_effect in self.DEPTH_EFFECTS and self._depth_texture_procedural is not None:
-                glActiveTexture(GL_TEXTURE1)
-                glBindTexture(GL_TEXTURE_2D, 0)
-                glActiveTexture(GL_TEXTURE0)
-
-            glUseProgram(0)
-
-            # STEP 3: Disable depth, render interaction overlay if needed
-            if has_tile_data:
-                glDisable(GL_DEPTH_TEST)
-                glDepthMask(GL_TRUE)
-
-            if has_interaction and self._has_active_interactions():
-                self.overlay_renderer.render(
-                    self.camera_x, self.camera_y, self.zoom,
-                    render_w, render_h, overlay_config,
-                    self.edge_thickness, glfw.get_time(), overlay_mode=1)
-
-        # --- Upscale FBO to screen ---
+        # Upscale FBO to screen if we rendered at reduced resolution
         if use_fbo and self._fbo is not None:
             glBindFramebuffer(GL_FRAMEBUFFER, 0)
             glViewport(0, 0, width, height)
-            glDisable(GL_DEPTH_TEST)
             glUseProgram(self._upscale_program)
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_2D, self._fbo_texture)
@@ -1264,61 +1196,7 @@ void main() {
         log_target = np.log(self.target_zoom)
         log_new = log_current + (log_target - log_current) * zoom_lerp
         self.zoom = np.exp(log_new)
-
-    def update_adaptive_scale(self, frame_time):
-        """Track frame times and adjust render_scale to maintain target FPS.
-
-        Call this every frame with the measured frame_time (seconds).
-        The render_scale is smoothly adjusted to keep frame rate near the target.
-        """
-        if not self.adaptive_scale_enabled:
-            return
-
-        # Track rolling frame times
-        self._frame_times.append(frame_time)
-        if len(self._frame_times) > self._frame_time_window:
-            self._frame_times.pop(0)
-
-        # Only adjust periodically to avoid oscillation
-        now = glfw.get_time()
-        if now - self._adaptive_last_adjust < self._adaptive_adjust_interval:
-            return
-        if len(self._frame_times) < 5:
-            return
-
-        self._adaptive_last_adjust = now
-
-        # Use 90th percentile frame time (not average) to avoid stutter spikes
-        sorted_times = sorted(self._frame_times)
-        p90_time = sorted_times[int(len(sorted_times) * 0.9)]
-        target_time = 1.0 / self.adaptive_target_fps
-
-        # Compute ratio: >1 means we're too slow, <1 means we have headroom
-        ratio = p90_time / target_time
-
-        if ratio > 1.1:
-            # Too slow — reduce scale. Scale pixel count proportionally.
-            # Pixel count scales as scale^2, so scale adjustment is sqrt of ratio
-            factor = 1.0 / (ratio ** 0.5)
-            self._adaptive_current_scale *= factor
-        elif ratio < 0.75:
-            # Headroom available — increase scale gradually (slower than decrease)
-            factor = 1.0 / (ratio ** 0.3)
-            self._adaptive_current_scale *= min(factor, 1.05)  # cap increase at 5% per step
-
-        # Clamp to configured bounds
-        self._adaptive_current_scale = max(self.adaptive_scale_min,
-                                           min(self.adaptive_scale_max,
-                                               self._adaptive_current_scale))
-
-        # Apply with snapping to avoid FBO churn on tiny changes
-        new_scale = round(self._adaptive_current_scale * 20.0) / 20.0  # snap to 0.05 increments
-        if abs(new_scale - self.render_scale) >= 0.05:
-            old = self.render_scale
-            self.render_scale = new_scale
-            self.logger.info(f"Adaptive scale: {old:.2f} -> {new_scale:.2f} "
-                           f"(p90={p90_time*1000:.1f}ms, target={target_time*1000:.1f}ms)")
-
+    
     @property
     def camera(self):
         return self

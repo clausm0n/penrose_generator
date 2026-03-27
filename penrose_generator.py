@@ -345,7 +345,6 @@ def setup_window(fullscreen=False):
 
     for ctx in contexts_to_try:
         glfw.default_window_hints()
-        glfw.window_hint(glfw.DEPTH_BITS, 16)  # Depth buffer for early-Z pre-pass
         if ctx["es"]:
             glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
             # Force EGL context — GLX on Pi uses software Mesa, EGL uses hardware V3D
@@ -685,10 +684,6 @@ def main():
     parser.add_argument('--demo', action='store_true', help='Enable autonomous demo mode')
     parser.add_argument('--demo-idle', type=float, default=2.0, help='Idle timeout in minutes before demo resumes (default: 2.0)')
     parser.add_argument('--render-scale', type=float, default=0.5, help='Render resolution scale (0.25-1.0, default 0.5 = half res)')
-    parser.add_argument('--fps', type=int, default=30, help='Target frame rate (default: 30, use 60 on powerful hardware)')
-    parser.add_argument('--adaptive-scale', action='store_true', help='Dynamically adjust render scale to maintain target FPS')
-    parser.add_argument('--scale-min', type=float, default=0.25, help='Minimum render scale for adaptive mode (default: 0.25)')
-    parser.add_argument('--scale-max', type=float, default=0.75, help='Maximum render scale for adaptive mode (default: 0.75)')
     parser.add_argument('--no-overlay', action='store_true', help='Disable interaction overlay layer (saves GPU/CPU)')
     args = parser.parse_args()
 
@@ -737,16 +732,7 @@ def main():
         # Initialize ProceduralRenderer after OpenGL context is created
         renderer = ProceduralRenderer()
         renderer.render_scale = max(0.25, min(1.0, args.render_scale))
-        target_fps = max(10, min(120, args.fps))
-        if args.adaptive_scale:
-            renderer.adaptive_scale_enabled = True
-            renderer.adaptive_scale_min = max(0.15, min(0.5, args.scale_min))
-            renderer.adaptive_scale_max = max(0.3, min(1.0, args.scale_max))
-            renderer.adaptive_target_fps = target_fps
-            renderer._adaptive_current_scale = renderer.render_scale
-            logger.info(f"Adaptive scale: {renderer.adaptive_scale_min:.2f}-{renderer.adaptive_scale_max:.2f}, target FPS: {target_fps}")
-        else:
-            logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution), target FPS: {target_fps}")
+        logger.info(f"Render scale: {renderer.render_scale} ({int(renderer.render_scale*100)}% resolution)")
         if args.no_overlay:
             renderer.interaction_overlay_enabled = False
             logger.info("Interaction overlay disabled via --no-overlay")
@@ -838,7 +824,7 @@ def main():
         prev_frame_time = last_time
         while not glfw.window_should_close(window) and running:
             glfw.poll_events()
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glClear(GL_COLOR_BUFFER_BIT)
 
             # Calculate delta time for tween updates
             current_time = glfw.get_time()
@@ -1004,14 +990,9 @@ def main():
 
             glfw.swap_buffers(window)
 
-            # Measure actual frame time and feed adaptive scale
-            frame_end = glfw.get_time()
-            actual_frame_time = frame_end - last_time
-            renderer.update_adaptive_scale(actual_frame_time)
-
             # Frame rate limiting — sleep to yield CPU to background threads
-            frame_target = last_time + 1.0 / target_fps
-            remaining = frame_target - frame_end
+            frame_target = last_time + 1.0 / 60.0
+            remaining = frame_target - glfw.get_time()
             if remaining > 0.001:
                 time.sleep(remaining - 0.001)  # sleep most of the wait
             while glfw.get_time() < frame_target:  # spin only the last ~1ms for accuracy
